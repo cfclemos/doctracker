@@ -1,0 +1,31 @@
+{# The icon comes before the link: on branches it opens/closes the branch, the name navigates.
+   Packages show a folder, modules (files) a file, other entities their kind symbol. #}
+{% macro icon(item) %}
+<span class="icon icon-{{ item.role }}">{{ item.symbol }}</span>
+{% endmacro %}
+{% macro link(item) %}
+<a href="/wiki/{{ item.path }}" hx-get="/wiki/{{ item.path }}" hx-target="#content" hx-push-url="true"
+   class="role-{{ item.role }}{% if item.current %} current{% endif %}" {% if item.current %}aria-current="page"{% endif %}>
+  {{- item.name -}}
+</a>
+{% endmacro %}
+{% macro node(item) %}
+<li>
+  {% if item.children %}
+  {# Packages and modules start open; classes open only on the path to the current page. #}
+  <details data-path="{{ item.path }}" {% if item.open or item.role != "class" %}open{% endif %}>
+    <summary>{{ icon(item) }}{{ link(item) }}</summary>
+    <ul>
+      {% for child in item.children %}{{ node(child) }}{% endfor %}
+    </ul>
+  </details>
+  {% else %}
+  <div class="leaf">{{ icon(item) }}{{ link(item) }}</div>
+  {% endif %}
+</li>
+{% endmacro %}
+<nav id="tree" {% if oob %}hx-swap-oob="true"{% endif %}>
+  <ul>
+    {% for item in tree %}{{ node(item) }}{% endfor %}
+  </ul>
+</nav>

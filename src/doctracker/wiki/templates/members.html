@@ -1,0 +1,18 @@
+{% for group in members_by_group(state, entity) %}
+<details class="block{% if divider %} divider{% endif %} block-{{ group.role | replace(' ', '-') }}" data-section="{{ group.label | lower }}" open>
+  <summary class="badge badge-{{ group.role | replace(' ', '-') }}">{{ group.label }} <span class="count">{{ group["items"] | length }}</span></summary>
+  <ul class="members">
+    {% for item in group["items"] %}
+    <li>
+      <a class="member" href="/wiki/{{ item.path }}" hx-get="/wiki/{{ item.path }}" hx-target="#content" hx-push-url="true">
+        <span class="icon icon-{{ item.role | replace(' ', '-') }}">{{ item.symbol }}</span>
+        <span class="member-body">
+          <code class="member-signature"><span class="name role-{{ item.role | replace(' ', '-') }}">{{ item.name }}</span><span class="details">{{ item.details }}</span></code>
+          {% if item.summary %}<span class="summary">{{ item.summary }}</span>{% endif %}
+        </span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endfor %}

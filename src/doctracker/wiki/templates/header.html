@@ -1,0 +1,20 @@
+{% set role = page_role(state, entity) %}
+<header class="page-header">
+  <p class="crumbs">
+    {% for crumb in breadcrumbs %}
+    <a href="/wiki/{{ crumb.path }}" hx-get="/wiki/{{ crumb.path }}" hx-target="#content" hx-push-url="true">{{ crumb.name }}</a>
+    <span class="sep">›</span>
+    {% endfor %}
+  </p>
+  <h1>
+    <span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbols.get(role, "") }}</span>
+    <span class="name role-{{ role | replace(' ', '-') }}">{{ entity.name }}</span>
+    <span class="kind">{{ role }}</span>
+  </h1>
+  <p class="meta">
+    <code class="path">{{ entity.path }}</code>
+    {% if entity.filepath %}
+    <span class="location">{{ entity.filepath }}{% if entity.lineno and entity.kind != "module" %}:{{ entity.lineno }}–{{ entity.endlineno }}{% endif %}</span>
+    {% endif %}
+  </p>
+</header>

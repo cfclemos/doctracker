@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ path or "doctracker" }} · doctracker</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" id="code-theme" href="/code-theme/{{ code_theme }}.css" data-default="{{ code_theme }}">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/live.js" defer></script>
+</head>
+<body>
+  <header id="topbar">
+    <button id="tree-toggle" type="button" title="Show/hide the tree" aria-label="Show/hide the tree">☰</button>
+    <a class="brand" href="/">doctracker</a>
+    <div class="search" id="search">
+      <div class="search-field">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="search-input" type="search" name="q" placeholder="Search modules, classes, functions…"
+               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="search-results"
+               hx-get="/search" hx-trigger="input changed delay:150ms, focus" hx-target="#search-results">
+        <button id="search-clear" type="button" aria-label="Clear" hidden>×</button>
+      </div>
+      <div id="search-results" class="search-popup"></div>
+    </div>
+  </header>
+  {% include "tree.html" %}
+  <div id="tree-resizer" title="Drag to resize"></div>
+  <main id="content">
+    {% include "fragment_content.html" %}
+  </main>
+</body>
+</html>

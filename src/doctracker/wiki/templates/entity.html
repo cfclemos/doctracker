@@ -1,0 +1,97 @@
+{% include "header.html" %}
+{% set role = page_role(state, entity) | replace(' ', '-') %}
+
+<details class="block divider block-description" data-section="description" open>
+  <summary class="badge badge-description">Description</summary>
+  {% set texts = other_sections(entity) | selectattr("kind", "equalto", "text") | list %}
+  {% if texts %}
+  <div class="docstring">{% for section in texts %}{{ section.text | markdown | safe }}{% endfor %}</div>
+  {% else %}
+  <p class="empty">No docstring.</p>
+  {% endif %}
+</details>
+
+<details class="block divider block-{{ role }}" data-section="signature" open>
+  <summary class="badge badge-{{ role }}">Signature</summary>
+  {% if entity.decorators %}
+  <p class="chips decorators">{% for decorator in entity.decorators %}<code class="chip">@{{ decorator }}</code>{% endfor %}</p>
+  {% endif %}
+  <pre class="signature code-block"><code>{{ signature(entity) | highlight }}</code></pre>
+  {% if entity.kind == "class" and entity.bases %}
+  <p class="bases">Bases: {% for base in entity.bases %}<code class="chip">{{ base }}</code>{% endfor %}</p>
+  {% endif %}
+</details>
+
+{% set rows = parameter_rows(entity) %}
+{% if rows %}
+<details class="block divider block-{{ role }}" data-section="parameters" open>
+  <summary class="badge badge-{{ role }}">Parameters <span class="count">{{ rows | length }}</span></summary>
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><code class="param-name">{{ row.name }}</code></td>
+        <td>{% if row.annotation %}<code>{{ row.annotation }}</code>{% else %}<span class="empty">-</span>{% endif %}</td>
+        <td>{% if row.default %}<code>{{ row.default }}</code>{% else %}<span class="empty">-</span>{% endif %}</td>
+        <td>{% if row.description %}{{ row.description | markdown | safe }}{% else %}<span class="empty">-</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+{% set documented = other_sections(entity) | rejectattr("kind", "equalto", "text") | list %}
+{% if entity.kind == "function" and entity.returns and not documented | selectattr("kind", "equalto", "returns") | list %}
+<details class="block divider block-returns" data-section="returns" open>
+  <summary class="badge badge-returns">Returns</summary>
+  <p><code>{{ entity.returns }}</code></p>
+</details>
+{% endif %}
+
+{% for section in documented %}
+{% set kind = section.kind | replace(' ', '-') %}
+<details class="block divider block-{{ kind }}" data-section="{{ kind }}" open>
+  <summary class="badge badge-{{ kind }}">{{ section.title or section.kind }}{% if section["items"] | length > 1 %} <span class="count">{{ section["items"] | length }}</span>{% endif %}</summary>
+  {% if section.text %}{{ section.text | markdown | safe }}{% endif %}
+  {% if section["items"] %}
+  <ul class="items">
+    {% for item in section["items"] %}
+    <li>
+      {% if item.is_code %}
+      <pre class="code-block"><code>{{ item.description | highlight }}</code></pre>
+      {% else %}
+      {% if item.name or item.annotation %}
+      <code class="item-head">
+        {%- if item.name %}<span class="param-name">{{ item.name }}</span>{% endif %}
+        {%- if item.name and item.annotation %}<span class="type">: {{ item.annotation }}</span>
+        {%- elif item.annotation %}<span class="param-name">{{ item.annotation }}</span>{% endif %}
+      </code>
+      {% endif %}
+      {{ item.description | markdown | safe }}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</details>
+{% endfor %}
+
+{% if entity.kind == "class" %}
+{% with divider = true %}{% include "members.html" %}{% endwith %}
+{% endif %}
+
+{# Open by default; the code is fetched right after the page is shown, so the page itself stays light. #}
+<details class="block divider block-source" data-section="source" open
+         hx-get="/source/{{ entity.path }}" hx-trigger="load" hx-target="find .code">
+  <summary class="badge badge-source">Source</summary>
+  {# Changing the theme saves it to doc/config/config.json. #}
+  <label class="theme-picker">Code theme
+    <select class="code-theme-select" name="code_theme"
+            hx-post="/settings/code-theme" hx-trigger="change" hx-swap="none">
+      {% for name in code_themes %}<option value="{{ name }}"{% if name == code_theme %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="code"><p class="empty">Loading…</p></div>
+</details>

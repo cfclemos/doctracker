@@ -1,0 +1,6 @@
+<h1>Not found</h1>
+<p>No documented entity is called <code>{{ path }}</code>.</p>
+{% if state.errors %}
+<h2>Loading errors</h2>
+<ul>{% for error in state.errors %}<li><code>{{ error }}</code></li>{% endfor %}</ul>
+{% endif %}

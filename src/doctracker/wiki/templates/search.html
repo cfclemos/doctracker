@@ -1,0 +1,21 @@
+{% if query.strip() %}
+<ul class="search-options" role="listbox">
+  {% for item in results %}
+  <li role="option" aria-selected="false">
+    <a class="search-link" href="/wiki/{{ item.path }}" hx-get="/wiki/{{ item.path }}" hx-target="#content" hx-push-url="true">
+      <span class="icon icon-{{ item.role | replace(' ', '-') }}">{{ item.symbol }}</span>
+      <span class="search-text">
+        <span class="search-name">{{ item.before }}<mark>{{ item.match }}</mark>{{ item.after }}</span>
+        <span class="search-path">{{ item.path }}</span>
+        {% if item.snippet %}
+        <span class="search-snippet">{{ item.snippet.before }}<mark>{{ item.snippet.match }}</mark>{{ item.snippet.after }}</span>
+        {% endif %}
+      </span>
+      <span class="search-kind">{{ item.role }}</span>
+    </a>
+  </li>
+  {% else %}
+  <li class="search-empty">No results</li>
+  {% endfor %}
+</ul>
+{% endif %}

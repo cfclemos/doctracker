@@ -1,0 +1,44 @@
+[project]
+name = "doctracker"
+version = "0.1.0"
+description = "MCP server that centralizes the documentation of Python projects developed with LLM agents."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/doctracker/wiki/static/htmx-LICENSE.txt"]
+authors = [
+    { name = "Carlos Filipe de Castro Lemos", email = "carlos.lemos.dev@gmail.com" }
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Documentation",
+]
+dependencies = [
+    "click>=8.5.0",
+    "griffe>=2.4.1",
+    "jinja2>=3.1.6",
+    "markdown-it-py>=4.2.0",
+    "mcp>=2.3.0,<3",
+    "pygments>=2.21.0",
+    "starlette>=1.10.0",
+    "uvicorn>=0.54.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cfclemos/doctracker"
+Repository = "https://github.com/cfclemos/doctracker"
+Issues = "https://github.com/cfclemos/doctracker/issues"
+
+[project.scripts]
+doctracker = "doctracker.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"

@@ -1,0 +1,19 @@
+{% include "header.html" %}
+
+<details class="block block-description" data-section="description" open>
+  <summary class="badge badge-description">Description</summary>
+  {% if entity.docstring %}
+  <div class="docstring">{{ entity.docstring | markdown | safe }}</div>
+  {% else %}
+  <p class="empty">No docstring.</p>
+  {% endif %}
+</details>
+
+{% if entity.exports %}
+<details class="block block-exports" data-section="exports" open>
+  <summary class="badge badge-exports">Public API <code>__all__</code></summary>
+  <p class="chips">{% for name in entity.exports %}<code class="chip">{{ name }}</code>{% endfor %}</p>
+</details>
+{% endif %}
+
+{% include "members.html" %}
