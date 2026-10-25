@@ -9,8 +9,8 @@ from pathlib import Path
 
 import griffe
 
-# Members griffe can report for each kind of object, in display order.
 MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
+"""Kinds of members kept from griffe; anything else (e.g. aliases created by imports) is skipped."""
 
 
 def extract_project(
@@ -20,7 +20,22 @@ def extract_project(
     docstring_style: str,
     show_private: bool,
 ) -> dict:
-    """Load every package and return `{"roots": [...], "entities": {path: entity}}`."""
+    """Load every package statically and turn it into plain data.
+
+    Runs in a worker process, so it takes and returns only built-in types.
+    The project's code is read, never imported or executed.
+
+    Args:
+        project_root: Root of the documented project.
+        packages: Top-level packages to load.
+        search_paths: Folders where the packages are found, relative to `project_root`.
+        docstring_style: `google`, `numpy` or `sphinx`.
+        show_private: Keep `_private` members.
+
+    Returns:
+        `roots` (paths of the loaded packages), `entities` (every entity by path) and
+        `errors` (packages that could not be loaded, with the reason).
+    """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
     paths = [str(root / path) for path in search_paths]
@@ -43,8 +58,18 @@ def extract_project(
     return {"roots": roots, "entities": entities, "errors": errors}
 
 
-def _collect(obj, root: Path, style: str, show_private: bool, entities: dict) -> None:
-    """Add `obj` and its members (recursively) to `entities`."""
+def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, entities: dict) -> None:
+    """Add `obj` and its members (recursively) to `entities`.
+
+    Aliases (names imported from elsewhere) are skipped.
+
+    Args:
+        obj: Module, class, function or attribute loaded by griffe.
+        root: Project root, for relative file paths.
+        style: Docstring style.
+        show_private: Keep `_private` members.
+        entities: Collected entities by path; filled in place.
+    """
     entity = _to_entity(obj, root, style)
     members = []
     for member in obj.members.values():
@@ -60,8 +85,18 @@ def _collect(obj, root: Path, style: str, show_private: bool, entities: dict) ->
     entities[obj.path] = entity
 
 
-def _to_entity(obj, root: Path, style: str) -> dict:
-    """Convert one griffe object to a plain dict."""
+def _to_entity(obj: griffe.Object, root: Path, style: str) -> dict:
+    """Convert one griffe object to a plain dict (without its members).
+
+    Args:
+        obj: Module, class, function or attribute loaded by griffe.
+        root: Project root, for the relative file path.
+        style: Docstring style.
+
+    Returns:
+        Common keys (path, kind, location, docstring, sections, decorators) plus the
+        ones of its kind: parameters and returns, bases, annotation and value, or exports.
+    """
     entity = {
         "path": obj.path,
         "name": obj.name,
@@ -92,7 +127,15 @@ def _to_entity(obj, root: Path, style: str) -> dict:
     return entity
 
 
-def _parameter(parameter) -> dict:
+def _parameter(parameter: griffe.Parameter) -> dict:
+    """Convert a function parameter to a plain dict.
+
+    Args:
+        parameter: Parameter loaded by griffe.
+
+    Returns:
+        Name, annotation, default (empty when there is none) and kind (e.g. `keyword-only`).
+    """
     kind = parameter.kind.value
     # griffe fills `*args`/`**kwargs` with `()`/`{}`, which are not real defaults.
     variadic = kind in ("variadic positional", "variadic keyword")
@@ -104,8 +147,17 @@ def _parameter(parameter) -> dict:
     }
 
 
-def _sections(docstring, style: str) -> list[dict]:
-    """Parse a docstring into a list of `{"kind", "title", "text", "items"}` sections."""
+def _sections(docstring: griffe.Docstring | None, style: str) -> list[dict]:
+    """Parse a docstring into a list of `{"kind", "title", "text", "items"}` sections.
+
+    Args:
+        docstring: Docstring loaded by griffe, or `None` when the object has none.
+        style: Docstring style.
+
+    Returns:
+        Sections in docstring order; text sections use `text`, the others `items`
+        (name, annotation, description, and `is_code` for examples).
+    """
     if docstring is None:
         return []
     sections = []
@@ -129,7 +181,15 @@ def _sections(docstring, style: str) -> list[dict]:
     return sections
 
 
-def _section_item(item) -> dict:
+def _section_item(item: griffe.DocstringElement) -> dict:
+    """Convert one item of a docstring section (a parameter, a raised exception...) to a plain dict.
+
+    Args:
+        item: Item parsed by griffe; not every kind has a name or an annotation.
+
+    Returns:
+        Name, annotation and description, empty strings when missing.
+    """
     annotation = getattr(item, "annotation", None)
     return {
         "name": getattr(item, "name", "") or "",
@@ -138,8 +198,16 @@ def _section_item(item) -> dict:
     }
 
 
-def _relative(filepath, root: Path) -> str:
-    """Path of the source file relative to the project root, with forward slashes."""
+def _relative(filepath: Path | list[Path], root: Path) -> str:
+    """Make the path of a source file relative to the project root, with forward slashes.
+
+    Args:
+        filepath: File of the object; namespace packages have a list of folders, the first is used.
+        root: Project root.
+
+    Returns:
+        The relative path, or the absolute one when the file is outside the project.
+    """
     if isinstance(filepath, list):  # namespace packages have several folders
         filepath = filepath[0]
     try:

@@ -1,18 +1,17 @@
+{% import "macros.html" as ui %}
 {% include "header.html" %}
-{% set role = page_role(state, entity) | replace(' ', '-') %}
+{% set role = page_role(state, entity) %}
 
-<details class="block divider block-description" data-section="description" open>
-  <summary class="badge badge-description">Description</summary>
+{% call ui.section("description", "Description", divider=true) %}
   {% set texts = other_sections(entity) | selectattr("kind", "equalto", "text") | list %}
   {% if texts %}
   <div class="docstring">{% for section in texts %}{{ section.text | markdown | safe }}{% endfor %}</div>
   {% else %}
   <p class="empty">No docstring.</p>
   {% endif %}
-</details>
+{% endcall %}
 
-<details class="block divider block-{{ role }}" data-section="signature" open>
-  <summary class="badge badge-{{ role }}">Signature</summary>
+{% call ui.section(role, "Signature", name="signature", divider=true) %}
   {% if entity.decorators %}
   <p class="chips decorators">{% for decorator in entity.decorators %}<code class="chip">@{{ decorator }}</code>{% endfor %}</p>
   {% endif %}
@@ -20,12 +19,11 @@
   {% if entity.kind == "class" and entity.bases %}
   <p class="bases">Bases: {% for base in entity.bases %}<code class="chip">{{ base }}</code>{% endfor %}</p>
   {% endif %}
-</details>
+{% endcall %}
 
 {% set rows = parameter_rows(entity) %}
 {% if rows %}
-<details class="block divider block-{{ role }}" data-section="parameters" open>
-  <summary class="badge badge-{{ role }}">Parameters <span class="count">{{ rows | length }}</span></summary>
+{% call ui.section(role, "Parameters", count=rows | length, name="parameters", divider=true) %}
   <table>
     <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
     <tbody>
@@ -39,21 +37,19 @@
       {% endfor %}
     </tbody>
   </table>
-</details>
+{% endcall %}
 {% endif %}
 
 {% set documented = other_sections(entity) | rejectattr("kind", "equalto", "text") | list %}
 {% if entity.kind == "function" and entity.returns and not documented | selectattr("kind", "equalto", "returns") | list %}
-<details class="block divider block-returns" data-section="returns" open>
-  <summary class="badge badge-returns">Returns</summary>
+{% call ui.section("returns", "Returns", divider=true) %}
   <p><code>{{ entity.returns }}</code></p>
-</details>
+{% endcall %}
 {% endif %}
 
 {% for section in documented %}
-{% set kind = section.kind | replace(' ', '-') %}
-<details class="block divider block-{{ kind }}" data-section="{{ kind }}" open>
-  <summary class="badge badge-{{ kind }}">{{ section.title or section.kind }}{% if section["items"] | length > 1 %} <span class="count">{{ section["items"] | length }}</span>{% endif %}</summary>
+{% set count = section["items"] | length %}
+{% call ui.section(section.kind, section.title or section.kind, count=count if count > 1 else none, divider=true) %}
   {% if section.text %}{{ section.text | markdown | safe }}{% endif %}
   {% if section["items"] %}
   <ul class="items">
@@ -75,7 +71,7 @@
     {% endfor %}
   </ul>
   {% endif %}
-</details>
+{% endcall %}
 {% endfor %}
 
 {% if entity.kind == "class" %}
@@ -83,9 +79,8 @@
 {% endif %}
 
 {# Open by default; the code is fetched right after the page is shown, so the page itself stays light. #}
-<details class="block divider block-source" data-section="source" open
-         hx-get="/source/{{ entity.path }}" hx-trigger="load" hx-target="find .code">
-  <summary class="badge badge-source">Source</summary>
+{% set source_attrs = 'hx-get="/source/%s" hx-trigger="load" hx-target="find .code"' | format(entity.path | e) %}
+{% call ui.section("source", "Source", divider=true, attrs=source_attrs) %}
   {# Changing the theme saves it to doc/config/config.json. #}
   <label class="theme-picker">Code theme
     <select class="code-theme-select" name="code_theme"
@@ -94,4 +89,4 @@
     </select>
   </label>
   <div class="code"><p class="empty">Loading…</p></div>
-</details>
+{% endcall %}

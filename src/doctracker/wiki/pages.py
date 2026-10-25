@@ -1,5 +1,6 @@
 """Turn extracted entities into the data the wiki templates display."""
 
+import re
 from pathlib import Path
 
 from markdown_it import MarkdownIt
@@ -13,12 +14,17 @@ from pygments.token import Token
 from doctracker.server.state import DocState
 
 _markdown = MarkdownIt("commonmark", {"html": False})
-# Only the token spans: the template provides <pre><code>, the CSS provides the colors.
-_formatter = HtmlFormatter(nowrap=True)
-_python = PythonLexer()
-_console = PythonConsoleLexer()
+"""Markdown renderer for docstrings; raw HTML is disabled, so it is escaped."""
 
-# Order and labels of member groups on module and class pages.
+_formatter = HtmlFormatter(nowrap=True)
+"""Outputs only the token spans: the template provides `<pre><code>`, the CSS provides the colors."""
+
+_python = PythonLexer()
+"""Lexer for Python source code."""
+
+_console = PythonConsoleLexer()
+"""Lexer for interactive sessions (`>>>` examples)."""
+
 GROUPS = (
     ("module", "Modules"),
     ("class", "Classes"),
@@ -26,21 +32,38 @@ GROUPS = (
     ("attribute", "Attributes"),
     ("type alias", "Type aliases"),
 )
+"""Order and labels of the member groups on module and class pages, as `(kind, label)`."""
 
 
 def render_markdown(text: str) -> str:
-    """Render docstring text as HTML (raw HTML in docstrings is escaped)."""
+    """Render docstring text (Markdown) as HTML; raw HTML in docstrings is escaped.
+
+    Args:
+        text: Markdown text; empty or `None` gives an empty string.
+
+    Returns:
+        The HTML.
+    """
     return _markdown.render(text or "")
 
 
 CODE_THEMES = sorted(get_all_styles())
+"""Names of every Pygments theme, offered in the "Code theme" select of the Source block."""
 
 
 SOURCE_SELECTOR = ".block-source .code-block"
+"""CSS selector the code theme applies to: only the source code, not signatures or examples."""
 
 
 def code_theme_css(name: str) -> str:
-    """CSS for one Pygments theme, applied only to the Source block, with its text and background colors."""
+    """Build the CSS of one Pygments theme, applied only to the Source block.
+
+    Args:
+        name: Theme name, one of `CODE_THEMES`.
+
+    Returns:
+        Rules for the theme's tokens plus its text and background colors, all scoped to `SOURCE_SELECTOR`.
+    """
     style = get_style_by_name(name)
     text = style.style_for_token(Token.Text)["color"] or ("dddddd" if _is_dark(style.background_color) else "1f2328")
     rules = HtmlFormatter(style=name).get_style_defs(SOURCE_SELECTOR)
@@ -50,6 +73,14 @@ def code_theme_css(name: str) -> str:
 
 
 def _is_dark(color: str) -> bool:
+    """Tell whether a background color is dark, to pick a readable default text color.
+
+    Args:
+        color: Hex color such as `#272822` or `#fff`; empty means white.
+
+    Returns:
+        True when the perceived brightness is below half.
+    """
     color = (color or "#ffffff").lstrip("#")
     if len(color) == 3:
         color = "".join(c * 2 for c in color)
@@ -58,13 +89,27 @@ def _is_dark(color: str) -> bool:
 
 
 def highlight(code: str) -> Markup:
-    """Python code as HTML with syntax highlighting. `>>>` sessions use the console lexer."""
+    """Turn Python code into HTML with syntax highlighting.
+
+    Args:
+        code: Python source, or an interactive session starting with `>>>` (console lexer).
+
+    Returns:
+        Token spans with Pygments classes, safe to insert in a template.
+    """
     lexer = _console if code.lstrip().startswith(">>>") else _python
     return Markup(pygments_highlight(code, lexer, _formatter).rstrip("\n"))
 
 
 def signature(entity: dict) -> str:
-    """One-line signature of a function, class or attribute."""
+    """Write the one-line signature of a function, class or attribute.
+
+    Args:
+        entity: Extracted entity.
+
+    Returns:
+        `def name(params) -> type`, `class Name(bases)`, `name: type = value`, or the path for modules.
+    """
     kind = entity["kind"]
     if kind == "function":
         result = f"def {entity['name']}({_parameters(entity['parameters'])})"
@@ -85,6 +130,14 @@ def signature(entity: dict) -> str:
 
 
 def _parameters(parameters: list[dict]) -> str:
+    """Write a parameter list as in Python source, with the `/` and `*` markers where they belong.
+
+    Args:
+        parameters: Parameters of a function, in order.
+
+    Returns:
+        The list without the parentheses, e.g. `x: int, /, *, flag: bool = False`.
+    """
     parts = []
     keyword_only_marked = False
     for index, parameter in enumerate(parameters):
@@ -110,20 +163,71 @@ def _parameters(parameters: list[dict]) -> str:
 
 
 def summary(entity: dict) -> str:
-    """First line of the docstring."""
-    return entity["docstring"].strip().split("\n", 1)[0] if entity["docstring"] else ""
+    """Get the summary of an entity: the first line of its docstring.
+
+    Args:
+        entity: Extracted entity.
+
+    Returns:
+        The first line, or an empty string without a docstring.
+    """
+    return _first_line(entity["docstring"])
 
 
-# Symbol shown before each item, by role (packages and modules use folder/file icons).
+def _first_line(text: str) -> str:
+    """Get the first line of a text, without surrounding blanks.
+
+    Args:
+        text: Docstring or description; empty gives an empty string.
+
+    Returns:
+        The first line.
+    """
+    return text.strip().split("\n", 1)[0] if text else ""
+
+
+def _section_items(entity: dict, kinds: tuple[str, ...]) -> list[dict]:
+    """Collect the items of the docstring sections of the given kinds, in docstring order.
+
+    Args:
+        entity: Extracted entity.
+        kinds: Section kinds, e.g. `("parameters", "other parameters")` or `("attributes",)`.
+
+    Returns:
+        The items (name, annotation, description) of every matching section.
+    """
+    return [item for section in entity["sections"] if section["kind"] in kinds for item in section["items"]]
+
+
 SYMBOLS = {"class": "C", "function": "f", "method": "m", "attribute": "a", "type alias": "t"}
+"""Symbol shown before each item in the tree and on pages, by role (packages and modules use folder/file icons)."""
 
 
 def tree(state: DocState, current: str) -> list[dict]:
-    """Navigation tree: packages and modules, with their classes, functions and methods."""
+    """Build the navigation tree: packages and modules, with their classes, functions and methods.
+
+    Args:
+        state: Extracted entities.
+        current: Path of the page being shown; its branch starts open and it is marked.
+
+    Returns:
+        One node per root package, with nested `children`.
+    """
     return [_tree_node(state, path, current, "package") for path in state.roots if path in state.entities]
 
 
 def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
+    """Build one node of the navigation tree and, recursively, its children.
+
+    Args:
+        state: Extracted entities.
+        path: Entity of this node.
+        current: Path of the page being shown.
+        role: Role of this node (`package`, `subpackage`, `module`, `class`, `function`, `method`).
+
+    Returns:
+        Path, name, role, symbol, children, and whether it is the current page or on its branch.
+    """
     entity = state.entities[path]
     children = []
     for member_path in entity["members"]:
@@ -142,7 +246,15 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
 
 
 def _role(parent: dict, member: dict) -> str:
-    """Role of a member in the tree: subpackage, module, class, function or method."""
+    """Tell the role of a member: subpackage, module, class, function or method.
+
+    Args:
+        parent: Entity that contains the member.
+        member: The member.
+
+    Returns:
+        `subpackage` for packages inside packages, `method` for functions inside classes, otherwise its kind.
+    """
     if member["kind"] == "module" and member.get("is_package"):
         return "subpackage"
     if member["kind"] == "function" and parent["kind"] == "class":
@@ -155,6 +267,14 @@ def members_by_group(state: DocState, entity: dict) -> list[dict]:
 
     Attributes without a docstring of their own take the description from the
     parent's `Attributes` docstring section.
+
+    Args:
+        state: Extracted entities.
+        entity: Module or class whose members are listed.
+
+    Returns:
+        Groups in `GROUPS` order (functions of a class are labeled "Methods"), each with
+        its role and its rows: path, name, role, symbol, signature details and summary.
     """
     documented = _documented_attributes(entity)
     groups = []
@@ -187,7 +307,14 @@ def members_by_group(state: DocState, entity: dict) -> list[dict]:
 
 
 def signature_details(entity: dict) -> str:
-    """The part of the signature after the name: `(params) -> type`, `(bases)` or `: type = value`."""
+    """Get the part of the signature after the name, shown muted next to the name in member lists.
+
+    Args:
+        entity: Extracted entity.
+
+    Returns:
+        `(params) -> type`, `(bases)`, `: type = value`, or an empty string for modules.
+    """
     full = signature(entity)
     kind = entity["kind"]
     if kind == "function":
@@ -200,7 +327,15 @@ def signature_details(entity: dict) -> str:
 
 
 def page_role(state: DocState, entity: dict) -> str:
-    """Role of the entity shown on a page, used for its icon: package, subpackage, module, class..."""
+    """Tell the role of the entity shown on a page, used for its icon and badge colors.
+
+    Args:
+        state: Extracted entities.
+        entity: Entity of the page.
+
+    Returns:
+        `package` for root packages, otherwise its role inside its parent (see `_role`).
+    """
     if entity["path"] in state.roots:
         return "package"
     parent = state.entities.get(entity["parent"] or "")
@@ -208,12 +343,22 @@ def page_role(state: DocState, entity: dict) -> str:
 
 
 def parameter_rows(entity: dict) -> list[dict]:
-    """Parameters table: signature data merged with descriptions from the docstring."""
-    described = {}
-    for section in entity["sections"]:
-        if section["kind"] in ("parameters", "other parameters"):
-            for item in section["items"]:
-                described[item["name"].lstrip("*")] = item
+    """Build the parameters table: signature data merged with descriptions from the docstring.
+
+    For classes, parameters not described in `Args` take the description of the
+    attribute with the same name, so dataclass fields documented in `Attributes`
+    also appear in the table.
+
+    Args:
+        entity: Function, method or class (whose parameters are those of `__init__`).
+
+    Returns:
+        One row per parameter (without `self`/`cls`): name, annotation, default and description.
+    """
+    described = {item["name"].lstrip("*"): item for item in _section_items(entity, ("parameters", "other parameters"))}
+    if entity["kind"] == "class":
+        for item in _section_items(entity, ("attributes",)):
+            described.setdefault(item["name"], item)
     rows = []
     for parameter in entity.get("parameters", []):
         if parameter["name"] in ("self", "cls"):
@@ -231,13 +376,15 @@ def parameter_rows(entity: dict) -> list[dict]:
 
 
 def _documented_attributes(entity: dict) -> dict[str, str]:
-    """First line of each attribute description in the `Attributes` docstring section."""
-    descriptions = {}
-    for section in entity["sections"]:
-        if section["kind"] == "attributes":
-            for item in section["items"]:
-                descriptions[item["name"]] = item["description"].strip().split("\n", 1)[0]
-    return descriptions
+    """Collect the first line of each attribute description in the `Attributes` docstring section.
+
+    Args:
+        entity: Module or class.
+
+    Returns:
+        Description by attribute name.
+    """
+    return {item["name"]: _first_line(item["description"]) for item in _section_items(entity, ("attributes",))}
 
 
 def other_sections(entity: dict) -> list[dict]:
@@ -245,6 +392,12 @@ def other_sections(entity: dict) -> list[dict]:
 
     Parameters have their own table; on modules and classes, documented attributes
     are merged into the members list.
+
+    Args:
+        entity: Extracted entity.
+
+    Returns:
+        The remaining sections, in docstring order.
     """
     hidden = {"parameters", "other parameters"}
     if entity["kind"] in ("module", "class"):
@@ -253,7 +406,15 @@ def other_sections(entity: dict) -> list[dict]:
 
 
 def breadcrumbs(state: DocState, path: str) -> list[dict]:
-    """Links to the parents of an entity, from the root package down."""
+    """List the parents of an entity, from the root package down, for the page's breadcrumbs.
+
+    Args:
+        state: Extracted entities.
+        path: Entity of the page.
+
+    Returns:
+        Path and name of each parent.
+    """
     crumbs = []
     parent = state.entities[path]["parent"]
     while parent and parent in state.entities:
@@ -263,59 +424,111 @@ def breadcrumbs(state: DocState, path: str) -> list[dict]:
 
 
 SNIPPET_CONTEXT = 40
+"""Characters of description shown on each side of a match in search results."""
 
 
-def search(state: DocState, query: str, limit: int = 12) -> list[dict]:
-    """Entities matching `query`, best first.
+def ranked_results(state: DocState, ranked: list[tuple[str, float]], query: str) -> list[dict]:
+    """Turn search results (any mode) into the rows of the search box.
 
-    Order: exact name, name prefix, name contains, path contains, description contains.
-    The description is the docstring plus the descriptions of its parameters, returns,
-    raises and other sections.
+    The name and a description snippet are highlighted around the typed text, or,
+    when it is not found as a whole, around the first query word found. Semantic
+    matches may share no word with the query; then the summary is shown instead.
+
+    Args:
+        state: Extracted entities.
+        ranked: `(path, score)` pairs, best first, from `SearchEngine`.
+        query: Text typed in the search box.
+
+    Returns:
+        Rows with path, role, symbol, highlighted name, snippet and score; entities that
+        no longer exist are skipped.
     """
-    query = query.strip().lower()
-    if not query:
-        return []
-    scored = []
-    for path, entity in state.entities.items():
-        name = entity["name"].lower()
-        if name == query:
-            score = 0
-        elif name.startswith(query):
-            score = 1
-        elif query in name:
-            score = 2
-        elif query in path.lower():
-            score = 3
-        elif query in _description_text(entity).lower():
-            score = 4
-        else:
-            continue
-        scored.append((score, len(path), path))
+    phrase = query.strip().lower()
+    terms = [phrase] + [word for word in re.findall(r"[a-z0-9]+", phrase) if len(word) > 1]
     results = []
-    for score, _, path in sorted(scored)[:limit]:
-        entity = state.entities[path]
-        parent = state.entities.get(entity["parent"] or "")
-        role = "package" if path in state.roots else (_role(parent, entity) if parent else entity["kind"])
-        name_parts = _split_match(entity["name"], query)
-        result = {
-            "path": path,
-            "role": role,
-            "symbol": SYMBOLS.get(role, ""),
-            "name": entity["name"],
-            # Name split around the first match, to highlight it.
-            "before": name_parts[0],
-            "match": name_parts[1],
-            "after": name_parts[2],
-            "snippet": None,
-        }
-        if score == 4:
-            result["snippet"] = _snippet(_description_text(entity), query)
-        results.append(result)
+    for path, score in ranked:
+        entity = state.entities.get(path)
+        if entity is None:
+            continue
+        role = page_role(state, entity)
+        name_term = next((term for term in terms if term and term in entity["name"].lower()), "")
+        before, match, after = _split_match(entity["name"], name_term) if name_term else (entity["name"], "", "")
+        description = description_text(entity)
+        text_term = next((term for term in terms if term and term in description.lower()), "")
+        if name_term and name_term == text_term == phrase:
+            snippet = None  # the name already shows the match
+        elif text_term:
+            snippet = _snippet(description, text_term)
+        else:
+            snippet = {"before": summary(entity), "match": "", "after": ""} if summary(entity) else None
+        results.append(
+            {
+                "path": path,
+                "role": role,
+                "symbol": SYMBOLS.get(role, ""),
+                "before": before,
+                "match": match,
+                "after": after,
+                "snippet": snippet,
+                "score": score,
+            }
+        )
     return results
 
 
-def _description_text(entity: dict) -> str:
-    """All the descriptive text of an entity, as one line (parsed sections, without their headings)."""
+PAGINATION_SIBLINGS = 1
+"""Page numbers shown on each side of the current page in the search pagination."""
+
+
+def pagination(total: int, offset: int, limit: int) -> dict | None:
+    """Build the page buttons of the search box (MUI `Pagination` style: `‹ 1 … 4 5 6 … 9 ›`).
+
+    The first and last pages are always shown, plus `PAGINATION_SIBLINGS` pages on
+    each side of the current one; gaps become an ellipsis.
+
+    Args:
+        total: Results across all pages.
+        offset: Position of the first result of the current page.
+        limit: Results per page.
+
+    Returns:
+        `current`, `count`, `previous` and `next` page numbers (`None` at the ends), `pages`
+        (numbers, with `None` for an ellipsis), and `first`, `last`, `total` for the
+        "11–20 of 87" label; `None` when everything fits in one page.
+    """
+    count = -(-total // limit) if limit else 0
+    if count <= 1:
+        return None
+    current = offset // limit + 1
+    shown = {1, count} | set(range(current - PAGINATION_SIBLINGS, current + PAGINATION_SIBLINGS + 1))
+    pages: list[int | None] = []
+    for number in sorted(n for n in shown if 1 <= n <= count):
+        if pages and number - pages[-1] > 1:
+            pages.append(None)
+        pages.append(number)
+    return {
+        "current": current,
+        "count": count,
+        "previous": current - 1 if current > 1 else None,
+        "next": current + 1 if current < count else None,
+        "pages": pages,
+        "first": offset + 1,
+        "last": min(offset + limit, total),
+        "total": total,
+    }
+
+
+def description_text(entity: dict) -> str:
+    """Join all the descriptive text of an entity in one line, without section headings.
+
+    Used by the search box and by the semantic search index.
+
+    Args:
+        entity: Extracted entity.
+
+    Returns:
+        Text of the parsed docstring sections (or the raw docstring when nothing was parsed).
+    """
     parts = [] if entity["sections"] else [entity["docstring"]]
     for section in entity["sections"]:
         parts.append(section["text"])
@@ -324,7 +537,15 @@ def _description_text(entity: dict) -> str:
 
 
 def _split_match(text: str, query: str) -> tuple[str, str, str]:
-    """`text` split as (before, match, after) around the first case-insensitive match."""
+    """Split `text` around the first case-insensitive match of `query`, to highlight it.
+
+    Args:
+        text: Text to split.
+        query: Lowercase text to find.
+
+    Returns:
+        `(before, match, after)`; `(text, "", "")` when there is no match.
+    """
     start = text.lower().find(query)
     if start < 0:
         return text, "", ""
@@ -332,7 +553,15 @@ def _split_match(text: str, query: str) -> tuple[str, str, str]:
 
 
 def _snippet(text: str, query: str) -> dict:
-    """A short piece of `text` around the first match, split for highlighting."""
+    """Cut a short piece of `text` around the first match, for a search result.
+
+    Args:
+        text: Description that contains `query`.
+        query: Lowercase text that was found.
+
+    Returns:
+        `before`, `match` and `after`, with "…" where the text was cut.
+    """
     start = text.lower().find(query)
     left = max(0, start - SNIPPET_CONTEXT)
     right = min(len(text), start + len(query) + SNIPPET_CONTEXT)
@@ -345,7 +574,15 @@ def _snippet(text: str, query: str) -> dict:
 
 
 def source_code(project_root: Path, entity: dict) -> str:
-    """Source lines of an entity, read from disk when the user asks for them."""
+    """Read the source lines of an entity from disk, when the Source block asks for them.
+
+    Args:
+        project_root: Root of the documented project; files outside it are never read.
+        entity: Extracted entity, with its file and line numbers.
+
+    Returns:
+        The lines of the entity, or an empty string when the location is unknown or outside the project.
+    """
     if not entity["filepath"] or not entity["lineno"]:
         return ""
     path = (project_root / entity["filepath"]).resolve()

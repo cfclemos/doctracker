@@ -56,10 +56,18 @@ EXAMPLES = {
     :raises CityNotFound: When the city is unknown.
     """''',
 }
+"""The same documented function in each docstring style, shown in the guide."""
 
 
 def documentation_guide(config: Config) -> str:
-    """The guide in Markdown, filled in with this project's settings."""
+    """Build the guide in Markdown, filled in with this project's settings.
+
+    Args:
+        config: Project settings; the docstring style and `show_private` change the text.
+
+    Returns:
+        The guide, with an example in the project's docstring style.
+    """
     template = files("doctracker.server").joinpath("guide.md").read_text(encoding="utf-8")
     return template.format(
         docstring_style=config.docstring_style,

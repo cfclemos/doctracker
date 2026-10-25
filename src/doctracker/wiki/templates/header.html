@@ -1,13 +1,14 @@
+{% import "macros.html" as ui %}
 {% set role = page_role(state, entity) %}
 <header class="page-header">
   <p class="crumbs">
     {% for crumb in breadcrumbs %}
-    <a href="/wiki/{{ crumb.path }}" hx-get="/wiki/{{ crumb.path }}" hx-target="#content" hx-push-url="true">{{ crumb.name }}</a>
+    <a {{ ui.nav(crumb.path) }}>{{ crumb.name }}</a>
     <span class="sep">›</span>
     {% endfor %}
   </p>
   <h1>
-    <span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbols.get(role, "") }}</span>
+    {{ ui.icon(role, symbols.get(role, "")) }}
     <span class="name role-{{ role | replace(' ', '-') }}">{{ entity.name }}</span>
     <span class="kind">{{ role }}</span>
   </h1>

@@ -108,8 +108,38 @@ body.tree-hidden #tree, body.tree-hidden #tree-resizer { visibility: hidden; ove
 main { grid-area: main; }
 
 /* Search: outlined field with a floating options list (MUI Autocomplete style). */
-.search { position: relative; flex: 1; max-width: 34rem; margin-left: auto; }
+.search { position: relative; flex: 1; max-width: 46rem; margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+
+/* Search mode: joined toggle buttons (MUI ToggleButtonGroup style). */
+.search-modes { display: inline-flex; flex: none; }
+.search-modes button {
+  height: 2.4rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font: 600 0.78rem system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.search-modes button + button { margin-left: -1px; }
+.search-modes button:first-child { border-radius: 4px 0 0 4px; }
+.search-modes button:last-child { border-radius: 0 4px 4px 0; }
+.search-modes button:hover { background: var(--panel); color: var(--fg); }
+.search-modes button[aria-checked="true"] {
+  position: relative;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  color: var(--accent);
+}
+.search-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; flex: none; }
+.search-score { color: var(--muted); font: 0.72rem ui-monospace, monospace; }
+.search-error { color: var(--raises); font-size: 0.85rem; }
+
 .search-field {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   height: 2.4rem;
@@ -175,6 +205,37 @@ main { grid-area: main; }
 .search-snippet mark { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); color: inherit; border-radius: 2px; padding: 0 1px; }
 .search-kind { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .search-empty { padding: 0.6rem 1rem; color: var(--muted); }
+
+/* Search pagination (MUI Pagination style): round page buttons, the current one filled.
+   It stays fixed at the bottom of the results box while the list scrolls above it. */
+.search-pagination {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr; /* range on the left, page numbers centered */
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.search-pagination .range { justify-self: start; color: var(--muted); font-size: 0.8rem; }
+.search-pagination .pages { display: flex; align-items: center; gap: 0.15rem; }
+.search-pagination .page {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg);
+  font: 0.85rem system-ui, sans-serif;
+  cursor: pointer;
+}
+.search-pagination .page:hover:not(:disabled) { background: var(--panel); }
+.search-pagination .page.current { background: var(--accent); color: var(--bg); font-weight: 600; }
+.search-pagination .page:disabled { color: var(--muted); opacity: 0.4; cursor: default; }
+.search-pagination .ellipsis { min-width: 1.5rem; text-align: center; color: var(--muted); }
 #tree ul { list-style: none; margin: 0; padding-left: 0; }
 #tree ul ul { margin-left: 0.55rem; padding-left: 0.55rem; border-left: 1px solid var(--border); }
 
@@ -206,10 +267,7 @@ main { grid-area: main; }
 .icon-package::before { content: "📦"; font-size: 0.85rem; }
 .icon-subpackage::before { content: "📁"; font-size: 0.85rem; }
 .icon-module::before { content: "📄"; font-size: 0.85rem; }
-.icon-class { color: var(--class); }
-.icon-function { color: var(--function); }
-.icon-method { color: var(--method); }
-.icon-attribute, .icon-type-alias { color: var(--attribute); }
+.icon { color: var(--tint, inherit); }
 
 main { padding: 1.5rem 2.5rem; max-width: 60rem; min-width: 0; }
 h1 { font-size: 1.5rem; margin: 0.2rem 0; overflow-wrap: anywhere; }
@@ -268,7 +326,7 @@ h2 .count {
   gap: 0.35rem;
   padding: 0.12rem 0.7rem;
   border-radius: 999px;
-  background: var(--muted);
+  background: var(--tint, var(--muted));
   color: var(--bg);
   font-size: 0.78rem;
   font-weight: 700;
@@ -287,30 +345,23 @@ details.block:not([open]) {
   border-radius: 0;
   background: none;
 }
-/* Badge filled with the color of the kind it lists. */
-.badge-class { background: var(--class); }
-.badge-function { background: var(--function); }
-.badge-method { background: var(--method); }
-.badge-attribute, .badge-type-alias { background: var(--attribute); }
-.badge-module, .badge-subpackage, .badge-description { background: var(--accent); }
-.badge-exports { background: var(--exports); }
-.badge-attributes { background: var(--attribute); }
-.badge-returns, .badge-yields, .badge-receives { background: var(--returns); }
-.badge-raises, .badge-deprecated { background: var(--raises); }
-.badge-admonition, .badge-warns { background: var(--note); }
-.badge-examples, .badge-source { background: var(--neutral); }
+/* Color of each kind, set once as --tint: icons use it as text color, badges as background,
+   blocks for their light background and border. */
+.icon-class, .badge-class, .block-class { --tint: var(--class); }
+.icon-function, .badge-function, .block-function { --tint: var(--function); }
+.icon-method, .badge-method, .block-method { --tint: var(--method); }
+.icon-attribute, .icon-type-alias, .badge-attribute, .badge-type-alias, .badge-attributes,
+.block-attribute, .block-type-alias, .block-attributes { --tint: var(--attribute); }
+.badge-module, .badge-subpackage, .badge-description,
+.block-module, .block-subpackage, .block-description { --tint: var(--accent); }
+.badge-exports, .block-exports { --tint: var(--exports); }
+.badge-returns, .badge-yields, .badge-receives,
+.block-returns, .block-yields, .block-receives { --tint: var(--returns); }
+.badge-raises, .badge-deprecated, .block-raises, .block-deprecated { --tint: var(--raises); }
+.badge-admonition, .badge-warns, .block-admonition, .block-warns { --tint: var(--note); }
+.badge-examples, .badge-source, .block-examples, .block-source { --tint: var(--neutral); }
 
 /* Block tinted with the color of its kind: light background, colored border. */
-.block-class { --tint: var(--class); }
-.block-function { --tint: var(--function); }
-.block-method { --tint: var(--method); }
-.block-attribute, .block-attributes, .block-type-alias { --tint: var(--attribute); }
-.block-module, .block-subpackage, .block-description { --tint: var(--accent); }
-.block-exports { --tint: var(--exports); }
-.block-returns, .block-yields, .block-receives { --tint: var(--returns); }
-.block-raises, .block-deprecated { --tint: var(--raises); }
-.block-admonition, .block-warns { --tint: var(--note); }
-.block-examples, .block-source { --tint: var(--neutral); }
 .block[class*="block-"] {
   background: color-mix(in srgb, var(--tint) 6%, var(--bg));
   border-color: color-mix(in srgb, var(--tint) 45%, var(--bg));
@@ -418,6 +469,7 @@ td p { margin: 0; }
 @media (max-width: 720px) {
   body, body.tree-hidden { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; grid-template-areas: "top" "tree" "main"; }
   #topbar .brand { display: none; }
+  .search-modes button { padding: 0 0.45rem; font-size: 0.68rem; }
   #tree-resizer { display: none; }
   #tree { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   main { padding: 1rem; }

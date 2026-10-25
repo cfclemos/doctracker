@@ -3,34 +3,37 @@
 const events = new EventSource("/events");
 events.addEventListener("changed", () => htmx.trigger(document.body, "docs-changed"));
 
-// Tree: remember which branches the user opened or closed, so they stay that way
-// when the tree is re-rendered (navigation or live update).
-const TREE_KEY = "doctracker-tree";
-
-function loadTree() {
+// Browser storage for small preferences, as JSON. Storage can be unavailable
+// (private mode, blocked site data): reads then return the fallback, writes do nothing.
+function load(storage, key, fallback) {
   try {
-    return JSON.parse(sessionStorage.getItem(TREE_KEY)) || {};
+    const value = JSON.parse(storage.getItem(key));
+    return value === null ? fallback : value;
   } catch {
-    return {};
+    return fallback;
   }
 }
 
-function saveTree(state) {
+function save(storage, key, value) {
   try {
-    sessionStorage.setItem(TREE_KEY, JSON.stringify(state));
+    storage.setItem(key, JSON.stringify(value));
   } catch {}
 }
+
+// Tree: remember which branches the user opened or closed (per tab), so they stay that way
+// when the tree is re-rendered (navigation or live update).
+const TREE_KEY = "doctracker-tree";
 
 document.addEventListener("toggle", (event) => {
   const branch = event.target;
   if (!branch.matches || !branch.matches("#tree details")) return;
-  const state = loadTree();
+  const state = load(sessionStorage, TREE_KEY, {});
   state[branch.dataset.path] = branch.open;
-  saveTree(state);
+  save(sessionStorage, TREE_KEY, state);
 }, true);
 
 function restoreTree() {
-  const state = loadTree();
+  const state = load(sessionStorage, TREE_KEY, {});
   for (const branch of document.querySelectorAll("#tree details")) {
     const containsCurrent = branch.querySelector("a.current") !== null;
     if (branch.dataset.path in state && !containsCurrent) branch.open = state[branch.dataset.path];
@@ -50,20 +53,6 @@ function setTreeWidth(pixels) {
   const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, pixels));
   document.documentElement.style.setProperty("--tree-width", `${width}px`);
   return width;
-}
-
-function readSetting(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeSetting(key, value) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
 }
 
 // Code theme: the select in the Source block swaps the stylesheet of the source code right away;
@@ -96,6 +85,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (chosen) chosen.scrollIntoView({ block: "nearest" });
   };
   const selected = () => options().findIndex((option) => option.getAttribute("aria-selected") === "true");
+
+  // Search mode buttons: pick the mode, then search again with the text already typed.
+  const mode = document.getElementById("search-mode");
+  for (const button of document.querySelectorAll(".search-modes button")) {
+    button.addEventListener("click", () => {
+      for (const other of document.querySelectorAll(".search-modes button")) {
+        other.setAttribute("aria-checked", String(other === button));
+      }
+      mode.value = button.dataset.mode;
+      input.placeholder = button.dataset.placeholder;
+      input.focus();
+      if (input.value) htmx.trigger(input, "search-mode-changed");
+    });
+  }
 
   input.addEventListener("input", () => { clear.hidden = !input.value; });
   results.addEventListener("htmx:afterSwap", () => {
@@ -152,13 +155,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
-  const savedWidth = Number(readSetting(WIDTH_KEY));
+  const savedWidth = load(localStorage, WIDTH_KEY, null);
   if (savedWidth) setTreeWidth(savedWidth);
-  if (readSetting(HIDDEN_KEY) === "true") document.body.classList.add("tree-hidden");
+  if (load(localStorage, HIDDEN_KEY, false)) document.body.classList.add("tree-hidden");
 
   document.getElementById("tree-toggle").addEventListener("click", () => {
     const hidden = document.body.classList.toggle("tree-hidden");
-    writeSetting(HIDDEN_KEY, String(hidden));
+    save(localStorage, HIDDEN_KEY, hidden);
   });
 
   document.getElementById("tree-resizer").addEventListener("pointerdown", (event) => {
@@ -170,7 +173,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document.body.classList.remove("resizing");
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", stop);
-      if (width) writeSetting(WIDTH_KEY, String(width));
+      if (width) save(localStorage, WIDTH_KEY, width);
     };
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", stop);

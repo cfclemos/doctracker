@@ -1,19 +1,18 @@
+{% import "macros.html" as ui %}
 {% include "header.html" %}
 
-<details class="block block-description" data-section="description" open>
-  <summary class="badge badge-description">Description</summary>
+{% call ui.section("description", "Description") %}
   {% if entity.docstring %}
   <div class="docstring">{{ entity.docstring | markdown | safe }}</div>
   {% else %}
   <p class="empty">No docstring.</p>
   {% endif %}
-</details>
+{% endcall %}
 
 {% if entity.exports %}
-<details class="block block-exports" data-section="exports" open>
-  <summary class="badge badge-exports">Public API <code>__all__</code></summary>
+{% call ui.section("exports", "Public API") %}
   <p class="chips">{% for name in entity.exports %}<code class="chip">{{ name }}</code>{% endfor %}</p>
-</details>
+{% endcall %}
 {% endif %}
 
 {% include "members.html" %}

@@ -9,27 +9,52 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response, Stream
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from doctracker.config import Config, update_config_value
+from doctracker.config import Config, set_config_value
+from doctracker.search import DEFAULT_LIMIT, MODES, WIKI_WAIT_SECONDS, SearchEngine
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
 
 KEEPALIVE_SECONDS = 15
+"""Seconds between keepalive messages on an idle live-update (SSE) connection."""
 
 
 def _same_origin(request: Request) -> bool:
-    """Writes are accepted only from pages served by this server (blocks other sites in the browser)."""
+    """Check that a write request comes from a page served by this server.
+
+    Blocks other sites open in the browser from changing settings.
+
+    Args:
+        request: Incoming request.
+
+    Returns:
+        True when the `Origin` header matches this server's address.
+    """
     origin = request.headers.get("origin")
     return origin is not None and origin == f"{request.url.scheme}://{request.headers.get('host', '')}"
 
 
-def web_routes(state: DocState, project_root: Path, config: Config) -> list[BaseRoute]:
-    """Build the frontend routes served next to the MCP endpoint."""
+def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine) -> list[BaseRoute]:
+    """Build the frontend routes served next to the MCP endpoint.
+
+    `/wiki/<path>`, `/source/<path>`, `/search` (modes `default`, `bm25`, `semantic`, `hybrid`),
+    `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
+
+    Args:
+        state: Extracted entities shown by the wiki.
+        project_root: Root of the documented project, to read source code and save settings.
+        config: Project settings; the code theme chosen in the wiki is saved here.
+        search: Search engine behind the search box (the same one the MCP tools use).
+
+    Returns:
+        The routes, to add to the server app.
+    """
     templates = Environment(loader=PackageLoader("doctracker.wiki", "templates"), autoescape=select_autoescape())
     templates.filters["markdown"] = pages.render_markdown
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
+        search_modes=MODES,
         signature=pages.signature,
         summary=pages.summary,
         page_role=pages.page_role,
@@ -69,10 +94,20 @@ def web_routes(state: DocState, project_root: Path, config: Config) -> list[Base
         code = pages.source_code(project_root, entity)
         return HTMLResponse(templates.get_template("source.html").render(code=code))
 
-    async def search(request: Request) -> Response:
+    async def search_box(request: Request) -> Response:
         query = request.query_params.get("q", "")
-        results = pages.search(state, query)
-        return HTMLResponse(templates.get_template("search.html").render(results=results, query=query))
+        mode = request.query_params.get("mode", "default")
+        page = int(request.query_params.get("page", "1")) if request.query_params.get("page", "1").isdigit() else 1
+        context = {"query": query, "mode": mode, "show_score": mode != "default", "results": [], "preparing": None}
+        if query.strip():
+            offset = DEFAULT_LIMIT * (max(1, page) - 1)
+            outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset)
+            if outcome.ready:
+                context["results"] = pages.ranked_results(state, outcome.results, query)
+                context["pagination"] = pages.pagination(outcome.total, outcome.offset, DEFAULT_LIMIT)
+            else:
+                context["preparing"] = outcome.status
+        return HTMLResponse(templates.get_template("search.html").render(**context))
 
     async def theme(request: Request) -> Response:
         name = request.path_params["name"]
@@ -87,9 +122,8 @@ def web_routes(state: DocState, project_root: Path, config: Config) -> list[Base
         name = (await request.form()).get("code_theme", "")
         if name not in pages.CODE_THEMES:
             return Response("", status_code=400)
-        config.code_theme = name
+        set_config_value(project_root, config, "code_theme", name)
         templates.globals["code_theme"] = name
-        update_config_value(project_root, "code_theme", name)
         return Response("", status_code=204)
 
     async def events(request: Request) -> Response:
@@ -112,7 +146,7 @@ def web_routes(state: DocState, project_root: Path, config: Config) -> list[Base
         Route("/", index),
         Route("/wiki/{path:path}", wiki),
         Route("/source/{path:path}", source),
-        Route("/search", search),
+        Route("/search", search_box),
         Route("/code-theme/{name}.css", theme),
         Route("/settings/code-theme", set_code_theme, methods=["POST"]),
         Route("/events", events),

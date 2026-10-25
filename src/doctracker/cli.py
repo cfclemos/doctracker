@@ -17,7 +17,15 @@ def main() -> None:
 @main.command()
 @click.option("--force", is_flag=True, help="Overwrite an existing configuration.")
 def init(force: bool) -> None:
-    """Create doc/config/config.json in the current project."""
+    """Create doc/config/config.json in the current project.
+
+    \f
+    Args:
+        force: Overwrite the configuration if it already exists.
+
+    Raises:
+        click.ClickException: When the configuration exists and `force` is not set.
+    """
     project_root = Path.cwd()
     if (project_root / CONFIG_PATH).exists() and not force:
         raise click.ClickException(f"{CONFIG_PATH.as_posix()} already exists (use --force to overwrite).")
@@ -28,7 +36,18 @@ def init(force: bool) -> None:
 @click.option("--host", help="Override the host from the configuration.")
 @click.option("--port", type=int, help="Override the port from the configuration.")
 def start(host: str | None, port: int | None) -> None:
-    """Start the server (MCP endpoint, wiki and watcher) for the current project."""
+    """Start the server (MCP endpoint, wiki and watcher) for the current project.
+
+    \f
+    Runs `init` first when the project has no configuration yet.
+
+    Args:
+        host: Address to listen on instead of the configured one.
+        port: Port to listen on instead of the configured one.
+
+    Raises:
+        click.ClickException: When the configuration lists no packages.
+    """
     from doctracker.server.app import run
 
     project_root = Path.cwd()
@@ -48,6 +67,11 @@ def start(host: str | None, port: int | None) -> None:
 
 
 def _initialize(project_root: Path) -> None:
+    """Write a default configuration with the packages found in the project.
+
+    Args:
+        project_root: Root of the project to configure.
+    """
     config = Config()
     config.packages = detect_packages(project_root, config.search_paths)
     write_config(project_root, config)

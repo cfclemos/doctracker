@@ -14,11 +14,21 @@
     <button id="tree-toggle" type="button" title="Show/hide the tree" aria-label="Show/hide the tree">☰</button>
     <a class="brand" href="/">doctracker</a>
     <div class="search" id="search">
+      {# Search modes come from search.MODES: the same searches as the MCP tools. #}
+      <div class="search-modes" role="radiogroup" aria-label="Search mode">
+        {% for mode, texts in search_modes.items() %}
+        <button type="button" role="radio" data-mode="{{ mode }}" data-placeholder="{{ texts.placeholder }}"
+                aria-checked="{{ 'true' if loop.first else 'false' }}" title="{{ texts.title }}">{{ texts.label }}</button>
+        {% endfor %}
+      </div>
+      {% set first_mode = search_modes | first %}
+      <input id="search-mode" type="hidden" name="mode" value="{{ first_mode }}">
       <div class="search-field">
         <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="search-input" type="search" name="q" placeholder="Search modules, classes, functions…"
+        <input id="search-input" type="search" name="q" placeholder="{{ search_modes[first_mode].placeholder }}"
                autocomplete="off" role="combobox" aria-expanded="false" aria-controls="search-results"
-               hx-get="/search" hx-trigger="input changed delay:150ms, focus" hx-target="#search-results">
+               hx-get="/search" hx-include="#search-mode" hx-target="#search-results"
+               hx-trigger="input changed delay:250ms, focus, search-mode-changed">
         <button id="search-clear" type="button" aria-label="Clear" hidden>×</button>
       </div>
       <div id="search-results" class="search-popup"></div>

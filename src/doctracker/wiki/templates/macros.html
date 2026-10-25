@@ -1,0 +1,24 @@
+{# Pieces shared by every wiki template. Import with: {% import "macros.html" as ui %} #}
+
+{# Attributes of a link that opens a wiki page inside the content panel (htmx) and updates the URL. #}
+{% macro nav(path) -%}
+href="/wiki/{{ path }}" hx-get="/wiki/{{ path }}" hx-target="#content" hx-push-url="true"
+{%- endmacro %}
+
+{# Icon of an entity role: folder/file emoji for packages and modules, colored symbol for the rest. #}
+{% macro icon(role, symbol="") -%}
+<span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbol }}</span>
+{%- endmacro %}
+
+{# Collapsible section: a badge sitting on the top border; clicking the badge folds the section.
+   kind: color of the section (an entity role or a docstring section kind).
+   name: identifies the section (data-section); defaults to kind.
+   divider: only the top line (entity pages) instead of a box (module pages).
+   attrs: extra attributes of the <details> element (e.g. htmx loading). #}
+{% macro section(kind, label, count=none, name=none, divider=false, open=true, attrs="") -%}
+{%- set kind = kind | replace(' ', '-') -%}
+<details class="block{% if divider %} divider{% endif %} block-{{ kind }}" data-section="{{ name or kind }}"{% if open %} open{% endif %} {{ attrs | safe }}>
+  <summary class="badge badge-{{ kind }}">{{ label }}{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</summary>
+  {{ caller() }}
+</details>
+{%- endmacro %}

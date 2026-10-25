@@ -1,9 +1,18 @@
+{% import "macros.html" as ui %}
 {% if query.strip() %}
 <ul class="search-options" role="listbox">
+  {% if preparing %}
+  {# Semantic or hybrid search is getting ready (download, start or indexing): show the progress. #}
+  <li class="search-empty">
+    Preparing the embedding model: <strong>{{ preparing.state }}</strong>
+    {% if preparing.error %}<br><span class="search-error">{{ preparing.error }}</span>{% endif %}
+    <br>Type again in a moment.
+  </li>
+  {% else %}
   {% for item in results %}
   <li role="option" aria-selected="false">
-    <a class="search-link" href="/wiki/{{ item.path }}" hx-get="/wiki/{{ item.path }}" hx-target="#content" hx-push-url="true">
-      <span class="icon icon-{{ item.role | replace(' ', '-') }}">{{ item.symbol }}</span>
+    <a class="search-link" {{ ui.nav(item.path) }}>
+      {{ ui.icon(item.role, item.symbol) }}
       <span class="search-text">
         <span class="search-name">{{ item.before }}<mark>{{ item.match }}</mark>{{ item.after }}</span>
         <span class="search-path">{{ item.path }}</span>
@@ -11,11 +20,33 @@
         <span class="search-snippet">{{ item.snippet.before }}<mark>{{ item.snippet.match }}</mark>{{ item.snippet.after }}</span>
         {% endif %}
       </span>
-      <span class="search-kind">{{ item.role }}</span>
+      <span class="search-meta">
+        <span class="search-kind">{{ item.role }}</span>
+        {% if show_score %}<span class="search-score">{{ "%.3f" | format(item.score) }}</span>{% endif %}
+      </span>
     </a>
   </li>
   {% else %}
   <li class="search-empty">No results</li>
   {% endfor %}
+  {% endif %}
 </ul>
+{% if pagination %}
+{# Page buttons: each one runs the same search again, for another page. #}
+{% macro page_button(number, label, current=false, aria="") -%}
+<button type="button" class="page{% if current %} current{% endif %}"{% if number is none %} disabled{% endif %}
+        {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
+        hx-get="/search?page={{ number }}" hx-include="#search-input, #search-mode" hx-target="#search-results">{{ label }}</button>
+{%- endmacro %}
+<nav class="search-pagination" aria-label="Search result pages">
+  <span class="range">{{ pagination.first }}–{{ pagination.last }} of {{ pagination.total }}</span>
+  <span class="pages">
+    {{ page_button(pagination.previous, "‹", aria="Previous page") }}
+    {% for number in pagination.pages %}
+    {% if number is none %}<span class="ellipsis">…</span>{% else %}{{ page_button(number, number, current=number == pagination.current) }}{% endif %}
+    {% endfor %}
+    {{ page_button(pagination.next, "›", aria="Next page") }}
+  </span>
+</nav>
+{% endif %}
 {% endif %}

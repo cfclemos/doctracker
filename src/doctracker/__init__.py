@@ -3,3 +3,4 @@
 from importlib.metadata import version
 
 __version__ = version("doctracker")
+"""Installed version of the package."""

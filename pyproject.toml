@@ -1,6 +1,6 @@
 [project]
 name = "doctracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that centralizes the documentation of Python projects developed with LLM agents."
 readme = "README.md"
 license = "MIT"
@@ -23,10 +23,13 @@ classifiers = [
 dependencies = [
     "click>=8.5.0",
     "griffe>=2.4.1",
+    "httpx2>=2.16.0",
     "jinja2>=3.1.6",
     "markdown-it-py>=4.2.0",
     "mcp>=2.3.0,<3",
+    "numpy>=2.4.6",
     "pygments>=2.21.0",
+    "sqlite-vec>=0.1.9",
     "starlette>=1.10.0",
     "uvicorn>=0.54.0",
 ]

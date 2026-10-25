@@ -8,9 +8,9 @@ sync. Documentation Tracker (doctracker) centralizes it. It runs an [MCP](https:
 server that any agent (Claude Code, OpenCode, …) can connect to, and serves a live
 wiki of the project in your browser.
 
-> **Status: alpha (0.1).** This first version builds the technical reference of the
-> code. Notes, commit history and LLM summaries come in the next versions (see
-> [Roadmap](#roadmap)).
+> **Status: alpha (0.2).** doctracker builds the technical reference of the code
+> and searches it by words and by meaning. Notes, commit history and LLM summaries
+> come in the next versions (see [Roadmap](#roadmap)).
 
 ## Features
 
@@ -20,9 +20,14 @@ wiki of the project in your browser.
 - **Static analysis only** — the code is read with [griffe](https://mkdocstrings.github.io/griffe/),
   never imported or executed.
 - **Live wiki** — edit a file and the open page updates by itself.
-- **MCP server** — agents can list and read the documentation, and get a guide on
-  how to document the code so the wiki stays complete.
-- **Search** — by name, path and description, with keyboard navigation.
+- **Four kinds of search**, the same for agents and in the wiki:
+  plain text, **BM25** (words in any order), **semantic** (meaning, in any
+  language) and **hybrid** (both combined), with paging.
+- **Local embeddings** — semantic search runs on your machine with
+  [llama.cpp](https://github.com/ggml-org/llama.cpp) (downloaded and managed by
+  doctracker, on the GPU when there is one) or on your own [vLLM](https://github.com/vllm-project/vllm) server.
+- **MCP server** — agents can list, read and search the documentation, and get a
+  guide on how to document the code so the wiki stays complete.
 - **Everything in one folder** — doctracker keeps its files in `doc/` inside your
   project and never touches anything else.
 - **Cross-platform** — Windows and Linux, Python 3.11+.
@@ -104,11 +109,48 @@ same URL.
 | `list_entities` | tool | Lists documented entities, filtered by path prefix and kind. |
 | `get_entity` | tool | Full technical reference of one entity. |
 | `status` | tool | Whether the documentation is built, and loading errors. |
+| `bm25_search` | tool | Finds entities by the words they share with the query. |
+| `semantic_search` | tool | Finds entities by meaning, in any language. |
+| `hybrid_search` | tool | BM25 and semantic search combined; usually the best choice. |
+| `embedding_status` | tool | State of the embedding backend: model, device, download progress, index size. |
+| `set_embedding_model` | tool | Changes the embedding model and saves it in `config.json`. |
+| `set_models_dir` | tool | Changes the folder of models and llama.cpp binaries. |
 | `documentation_guide` | tool | How to document this project's code (adapted to its settings). |
 | `doctracker://guide` | resource | The same guide, as a Markdown resource. |
 
-The server's instructions tell the agent to read the guide before writing or
+The search tools take `limit` and `offset` (paging) and return `total`. The
+server's instructions tell the agent to read the guide before writing or
 changing docstrings.
+
+## Search
+
+| Mode | Finds | Needs the embedding model |
+| --- | --- | --- |
+| Default | the text as typed, in names, paths and descriptions | no |
+| BM25 | entities sharing words with the query, in any order; rare words and matches in names weigh more; identifiers are split (`get_weather` → `get`, `weather`) | no |
+| Semantic | entities close in meaning, in any language ("what happens when the city does not exist?") | yes |
+| Hybrid | BM25 and semantic combined (reciprocal rank fusion) | yes |
+
+Semantic and hybrid searches return at most 100 results. The indexes live in
+`doc/sqlite/doctracker.db` and are updated incrementally, when a search needs
+them: only entities whose text changed are processed again.
+
+### The embedding model
+
+Nothing is downloaded until the first semantic or hybrid search. Then doctracker:
+
+1. downloads the model (default: [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), Q8, ~640 MB);
+2. downloads the llama.cpp build for your machine (`device: "auto"` tries CUDA,
+   then any other GPU through Vulkan, then the CPU; NVIDIA libraries are never
+   downloaded, the installed CUDA runtime is used);
+3. starts `llama-server` and embeds every entity.
+
+On a recent GPU this takes about 25 seconds the first time, about 1 second when
+the files are already there, and each search then takes a few milliseconds. The
+server stops after `idle_timeout` seconds without use and starts again when needed.
+
+To use your own **vLLM** server instead, set `embeddings.vllm_url` (and
+`vllm_model`); it takes precedence and nothing is downloaded.
 
 ## The wiki
 
@@ -120,7 +162,8 @@ changing docstrings.
   highlighting. Every section can be collapsed from its badge.
 - **Code theme** — choose among the Pygments themes in the Source section; the
   choice is saved in `config.json`.
-- **Search** — press `/` anywhere, type, use ↑/↓ and Enter.
+- **Search** — pick a mode (Default, BM25, Semantic, Hybrid), press `/` anywhere,
+  type, use ↑/↓ and Enter; pages are at the bottom of the results.
 
 ## Configuration
 
@@ -137,18 +180,36 @@ changing docstrings.
 | `code_theme` | `"default"` | Pygments theme of the source code. |
 | `ssl_certfile` / `ssl_keyfile` | `null` | Certificate and key files; when both are set, the server uses HTTPS. |
 | `watch_interval` | `1.0` | Seconds between checks for changed files. |
+| `embeddings` | see below | Settings of the embedding model. |
+
+`embeddings` section:
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `vllm_url` | `null` | Base URL of a running vLLM server; when set, it is used instead of llama.cpp. |
+| `vllm_model` | `"Qwen/Qwen3-Embedding-0.6B"` | Model name served by vLLM. |
+| `model` | `"Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf"` | GGUF model for llama.cpp: `owner/repo/file.gguf` on Hugging Face, or a local file. |
+| `models_dir` | `null` | Folder for models and llama.cpp binaries; `null` means `doc/models`. Point several projects to the same folder to download once. |
+| `device` | `"auto"` | `auto` (CUDA, then Vulkan, then CPU), `cuda`, `vulkan` or `cpu`. |
+| `llama_cpp_release` | `"b11887"` | llama.cpp release to download, or `latest`. |
+| `port` | `8790` | Port of the managed `llama-server`. |
+| `idle_timeout` | `600` | Seconds without use before `llama-server` is stopped. |
+| `query_instruction` | (Qwen3 instruction) | Text added before every search query. |
 
 ### The `doc/` folder
 
 ```text
 doc/
-├── .gitignore        # keeps local data out of git
-└── config/
-    └── config.json   # commit this file
+├── .gitignore          # keeps local data out of git
+├── config/
+│   └── config.json     # commit this file
+├── sqlite/
+│   └── doctracker.db   # search indexes (created on first search)
+└── models/             # embedding model and llama.cpp (created on first semantic search)
 ```
 
-Other folders (local data, models) are created only when a feature needs them, and
-are ignored by `doc/.gitignore`.
+`sqlite/` and `models/` are created only when a feature needs them, and are
+ignored by `doc/.gitignore`.
 
 ## Documenting your code
 
@@ -193,10 +254,12 @@ Agents get the complete guide from the `documentation_guide` tool.
 - Commit history linked to each function and class, with LLM summaries
   (llama.cpp or vLLM).
 - Knowledge graph of the code: callers, callees, dead code.
-- Semantic search.
+- Documentation coverage report (undocumented entities and parameters).
 - Editing the documentation from the wiki.
 
 ## License
 
 [MIT](LICENSE). The bundled [htmx](https://htmx.org) is distributed under the
-Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`).
+Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`). The
+embedding model and llama.cpp are downloaded on use and keep their own licenses
+(Apache-2.0 and MIT).
