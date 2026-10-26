@@ -43,5 +43,16 @@
   <main id="content">
     {% include "fragment_content.html" %}
   </main>
+  {# The one confirmation modal: every hx-confirm of the wiki asks through it (see live.js). #}
+  <dialog id="confirm-dialog" class="notes-dialog confirm-dialog">
+    <form method="dialog">
+      <header class="confirm-head"><i class="confirm-icon"></i><span class="confirm-title">Confirm</span></header>
+      <p class="confirm-text"></p>
+      <footer class="confirm-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="ok" type="submit" class="primary confirm-ok">Confirm</button>
+      </footer>
+    </form>
+  </dialog>
 </body>
 </html>

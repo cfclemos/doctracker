@@ -10,9 +10,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 
 from doctracker import __version__
-from doctracker.config import Config
+from doctracker.config import NOTES_DATABASE_PATH, Config
 from doctracker.embeddings.service import EmbeddingService
+from doctracker.notes import NoteStore
 from doctracker.search import SearchEngine
+from doctracker.server.note_tools import register_note_tools
 from doctracker.server.state import DocState
 from doctracker.server.tools import register_tools
 from doctracker.server.watcher import watch
@@ -26,8 +28,8 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     """Create the ASGI app with every service the server provides.
 
     MCP endpoint at `/mcp`, the wiki routes, the file watcher, the embedding
-    service (prepared on demand, stopped with the server) and the search engine
-    shared by the MCP tools and the wiki.
+    service (prepared on demand, stopped with the server), and the search engine
+    and the notes store, both shared by the MCP tools and the wiki.
 
     Args:
         project_root: Root of the documented project.
@@ -39,6 +41,9 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     state = DocState()
     embeddings = EmbeddingService(project_root, config, state)
     search = SearchEngine(state, embeddings)
+    # Until the first extraction ends, entity paths cannot be checked, so they are accepted.
+    notes = NoteStore(project_root / NOTES_DATABASE_PATH, lambda path: not state.ready or path in state.entities,
+                      state.notify)
     mcp = MCPServer(
         name="doctracker",
         version=__version__,
@@ -51,9 +56,10 @@ def create_app(project_root: Path, config: Config) -> Starlette:
         ),
     )
     register_tools(mcp, state, config, search)
+    register_note_tools(mcp, notes)
 
     app = mcp.streamable_http_app(host=config.host, transport_security=_transport_security(config))
-    app.router.routes.extend(web_routes(state, project_root, config, search))
+    app.router.routes.extend(web_routes(state, project_root, config, search, notes))
 
     mcp_lifespan = app.router.lifespan_context
 

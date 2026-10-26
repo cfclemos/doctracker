@@ -1,0 +1,26 @@
+{# Notes of a group as a tree: each type folds (closed at first; live.js keeps open the ones opened); its notes below it. A click on a note shows it in the
+   right panel. Sent again, out of band, after a change made in the panel. #}
+<div class="notes-tree" id="notes-tree"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for name in tree_types %}
+  {% set of_type = notes | selectattr("type", "equalto", name) | list %}
+  <details class="tree-type type-{{ name }}" data-type="{{ name }}">
+    <summary>
+      <span class="notes-swatch type-{{ name }}"></span><strong>{{ name }}</strong>
+      <span class="tree-count">{{ of_type | length }}</span>
+      <span class="tree-description">{{ note_types[name] }}</span>
+    </summary>
+    <ul>
+      {% for note in of_type %}
+      <li class="tree-note{% if 'note:' ~ note.id == selected %} current{% endif %}{% if note.status == 'superseded' %} superseded{% endif %}"
+          data-note="note:{{ note.id }}" hx-get="/notes/form?note={{ note.id }}&panel=1&tab={{ tab }}&selected=note:{{ note.id }}"
+          hx-target="#planner-detail" title="{{ note.statement }}{% if note.why %}&#10;&#10;Why: {{ note.why }}{% endif %}">
+        <span class="tree-text">{{ note.statement }}</span>
+        {% if note.entities %}<span class="tree-meta">{{ note.entities | length }} entit{{ "ies" if note.entities | length > 1 else "y" }}</span>{% endif %}
+      </li>
+      {% else %}
+      <li class="tree-empty">No {{ name }} notes{% if note_status %} ({{ note_status }}){% endif %}.</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endfor %}
+</div>

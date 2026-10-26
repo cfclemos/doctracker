@@ -1,0 +1,19 @@
+{% import "macros.html" as ui %}
+{# The plan cards on top of the planner: a click adds a plan to the chosen ones or takes it out. Sent
+   again, out of band, after a change made in the panel, so the progress shown stays right. #}
+{% macro open_form(query, label, extra="") -%}
+<button type="button" class="notes-button {{ extra }}" hx-target="#notes-dialog-body"
+        hx-get="/notes/form?{{ query }}&tab={{ tab }}&plans={{ plans }}&selected={{ selected }}">{{ label }}</button>
+{%- endmacro %}
+<div class="plan-cards" id="plan-cards"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for card in cards %}
+  <a class="plan-card state-{{ card.state }}{% if card.chosen %} chosen{% endif %}" title="{% if card.chosen %}Hide{% else %}Show{% endif %} this plan"
+     {{ ui.nav_url("/notes?tab=planner&plans=" ~ (card.toggle or "none")) }}>
+    <span class="plan-card-check">{% if card.chosen %}☑{% else %}☐{% endif %}</span>
+    <span class="plan-card-title">{{ card.title }}</span>
+    <span class="plan-card-facts"><span class="planner-state">{{ card.state }}</span> · {{ card.done }}/{{ card.total }} tasks{% if card.due %} · ⏱ {{ card.due }}{% endif %}</span>
+    <span class="plan-card-bar"><i style="width: {{ (100 * card.done / card.total) | round if card.total else 0 }}%"></i></span>
+  </a>
+  {% endfor %}
+  {{ open_form("kind=plan", "+ New plan", "primary plan-card-new") }}
+</div>

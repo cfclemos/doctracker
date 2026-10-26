@@ -1,0 +1,17 @@
+{# Head of a modal or of the planner's panel: what is open and, for the panel, whether the last change
+   was saved. Sent alone (out of band) after a change that saves by itself. #}
+{% macro state(value) %}<span class="notes-pill state-{{ value }}">{{ value }}</span>{% endmacro %}
+<div class="dialog-head{% if item or note %} panel-head{% endif %}"{% if item or note %} id="panel-head"{% endif %}{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h2>
+    {% if item %}{{ state(item.state) }} <i class="level-icon level-{{ kind }}" title="{{ kind }}"></i> {{ kind }} <code>{{ item.item }}</code>
+    {% elif note %}<span class="notes-pill type-{{ note.type }}">{{ note.type }}</span> Note #{{ note.id }}
+    {% elif kind == "note" %}New note
+    {% else %}<i class="level-icon level-{{ kind }}"></i> New {{ kind }}{% endif %}
+  </h2>
+  {% if item or note %}
+  <span class="save-status{% if error %} failed{% endif %}" title="{{ error }}">
+    {% if error %}Not saved: {{ error }}{% elif saved %}Saved {{ saved }}{% endif %}
+  </span>
+  {% endif %}
+  {% if not panel %}<button type="button" class="dialog-close" aria-label="Close" title="Close">×</button>{% endif %}
+</div>

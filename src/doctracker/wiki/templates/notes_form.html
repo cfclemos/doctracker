@@ -1,0 +1,291 @@
+{# Content of a modal of the notes page, or of the planner's right panel (panel: one plan, feature or
+   task). Every form posts to /notes/<action> (the same methods as the MCP tools, source "wiki") and the
+   page comes back redrawn, with the same plans and item, which also closes a modal. #}
+{# A form sent from the panel answers into the panel; deleting the item shown (`whole`) answers with the page. #}
+{% macro post(action, confirm="", title="", whole=False) -%}
+hx-post="/notes/{{ action }}" hx-target="{% if panel and not whole %}#planner-detail{% else %}#content{% endif %}"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
+{%- endmacro %}
+{# A form that saves by itself: when a field changes (a text field when it is left), only the head and
+   the plan cards come back, so nothing moves under the user. #}
+{% macro autosave(action) -%}
+hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
+{%- endmacro %}
+{% macro keep() -%}
+<input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="filter_type" value="{{ note_type }}">
+<input type="hidden" name="filter_status" value="{{ note_status }}"><input type="hidden" name="plans" value="{{ plans }}">
+<input type="hidden" name="selected" value="{{ selected }}">{% if panel %}<input type="hidden" name="panel" value="1">{% endif %}
+{%- endmacro %}
+{% macro lines(items) %}{{ items | join("\n") }}{% endmacro %}
+{% macro when(stamp) %}<time datetime="{{ stamp }}">{{ stamp | local_time }}</time>{% endmacro %}
+{% macro state(value) %}<span class="notes-pill state-{{ value }}">{{ value }}</span>{% endmacro %}
+{# A section of the panel that folds; live.js remembers which ones were folded. #}
+{% macro section(name, title) -%}
+<details class="panel-section" data-section="{{ name }}" open>
+  <summary>{{ title }}</summary>
+  <div class="panel-section-body">{{ caller() }}</div>
+</details>
+{%- endmacro %}
+{# A button that opens the creation modal of the page. #}
+{% macro create_button(query, label) -%}
+<button type="button" class="notes-button add-button" hx-target="#notes-dialog-body"
+        hx-get="/notes/form?{{ query }}&tab=planner&plans={{ plans }}&selected={{ selected }}">{{ label }}</button>
+{%- endmacro %}
+{# One feature or task of the list: its state and title, a pencil to open it here, a bin to delete it. #}
+{% macro child_row(child, kind) -%}
+<li class="child-row">
+  {{ state(child.state) }} <span class="child-title" data-show="{{ child.item }}" title="Show it in the drawing">{{ child.title }}</span>
+  <button type="button" class="icon-button" title="Edit this {{ kind }}" aria-label="Edit"
+          hx-get="/notes/form?item={{ child.item }}&panel=1&tab=planner&plans={{ plans }}" hx-target="#planner-detail"><i class="tool-icon tool-edit"></i></button>
+  <form {{ post("delete_item", "Delete the " ~ kind ~ " “" ~ child.title ~ "”" ~ (" with all its tasks" if kind == "feature" else " with its annotations and evidence") ~ "? This cannot be undone.", "Delete " ~ kind) }} class="inline-form">{{ keep() }}
+    <input type="hidden" name="item" value="{{ child.item }}">
+    <button type="submit" class="icon-button" title="Delete this {{ kind }}" aria-label="Delete"><i class="tool-icon tool-delete"></i></button>
+  </form>
+</li>
+{%- endmacro %}
+{# Deleting, apart at the bottom; it asks first (the shared confirmation modal). #}
+{% macro danger(action, field, value, label, question) -%}
+<form {{ post(action, question, label, whole=True) }} class="panel-danger">{{ keep() }}
+  <input type="hidden" name="{{ field }}" value="{{ value }}"><button type="submit" class="danger">{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% macro dependencies(item, choices) %}
+{% call section("waits", "Waits for") %}
+  {% if item.depends_on %}
+  <ul class="dialog-list">
+    {% for dependency in item.depends_on %}
+    <li class="child-row">{{ state(dependency.state) }}
+      <span class="child-title" data-show="{{ dependency.item }}" title="Show it in the drawing">{{ titles.get(dependency.item, dependency.item) }} <span class="notes-meta">— {{ dependency.reason }}</span></span>
+      <form {{ post("remove_dependency", "Stop waiting for “" ~ titles.get(dependency.item, dependency.item) ~ "”?", "Remove dependency") }} class="inline-form">{{ keep() }}
+        <input type="hidden" name="item" value="{{ item.item }}"><input type="hidden" name="depends_on" value="{{ dependency.item }}">
+        <button type="submit" class="icon-button" title="Remove this dependency" aria-label="Remove"><i class="tool-icon tool-delete"></i></button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="notes-meta">Nothing.</p>{% endif %}
+  {# Autocomplete with several values: type part of a name, pick items (Enter or click), each becomes
+     a tag; one reason for all of them. The choices come as JSON; see live.js. #}
+  <form {{ post("add_dependency") }} class="waits-form">{{ keep() }}
+    <input type="hidden" name="item" value="{{ item.item }}">
+    <div class="waits-input" data-choices="{{ choices | tojson | forceescape }}">
+      <span class="waits-chips"></span>
+      <input type="text" class="waits-search" placeholder="Waits for… type a plan, feature or task" autocomplete="off"
+             role="combobox" aria-expanded="false" aria-autocomplete="list">
+    </div>
+    <ul class="waits-suggestions" role="listbox" hidden></ul>
+    <div class="dialog-row">
+      <input name="reason" placeholder="Why it waits for them" required>
+      <button type="submit" class="primary">Add dependencies</button>
+    </div>
+  </form>
+{% endcall %}
+{% endmacro %}
+
+{% include "notes_head.html" %}
+{% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+
+{# --- New plan, feature or task #}
+{% if not item and kind == "plan" %}
+<form {{ post("create_plan") }} class="notes-form">{{ keep() }}
+  <label>Title <textarea name="title" rows="1" class="grow-line" required autofocus></textarea></label>
+  <label>Goal <textarea name="goal" rows="2"></textarea></label>
+  <label>Requirements <small>one per line</small><textarea name="requirements" rows="3"></textarea></label>
+  <label>Decisions <small>one per line</small><textarea name="decisions" rows="3"></textarea></label>
+  <label>Branches <small>one per line</small><textarea name="branches" rows="2"></textarea></label>
+  <label>Due <input type="date" name="due"></label>
+  <p class="notes-meta">It starts with one feature and one task of the same title; add more from the plan.</p>
+  <button type="submit" class="primary">Create plan</button>
+</form>
+{% elif not item and kind == "feature" %}
+<form {{ post("add_feature") }} class="notes-form">{{ keep() }}
+  <input type="hidden" name="plan_id" value="{{ query.plan_id }}">
+  <label>Title <textarea name="title" rows="1" class="grow-line" required autofocus></textarea></label>
+  <label>Description <textarea name="description" rows="2"></textarea></label>
+  <label>Branch <input name="branch"></label>
+  <label>Due <input type="date" name="due"></label>
+  <p class="notes-meta">It starts with one task of the same title.</p>
+  <button type="submit" class="primary">Add feature</button>
+</form>
+{% elif not item and kind == "task" %}
+<form {{ post("add_task") }} class="notes-form">{{ keep() }}
+  <input type="hidden" name="feature_id" value="{{ query.feature_id }}">
+  <label>Title <textarea name="title" rows="1" class="grow-line" required autofocus></textarea></label>
+  <label>Criteria <small>what "done" means, one per line</small><textarea name="criteria" rows="3"></textarea></label>
+  <label>Branch <input name="branch"></label>
+  <label>Due <input type="date" name="due"></label>
+  <button type="submit" class="primary">Add task</button>
+</form>
+
+{# --- An existing plan #}
+{% elif item and kind == "plan" %}
+{% call section("general", "General") %}
+<form {{ autosave("update_plan") }} id="general-{{ item.item }}" class="notes-form">{{ keep() }}<input type="hidden" name="autosave" value="1">
+  <input type="hidden" name="plan_id" value="{{ item.id }}">
+  <label>Title <textarea name="title" rows="1" class="grow-line" required>{{ item.title }}</textarea></label>
+  <label>Goal <textarea name="goal" rows="2">{{ item.goal }}</textarea></label>
+  <label>Requirements <small>one per line</small><textarea name="requirements" rows="3">{{ lines(item.requirements) }}</textarea></label>
+  <label>Decisions <small>one per line</small><textarea name="decisions" rows="3">{{ lines(item.decisions) }}</textarea></label>
+  <label>Branches <small>one per line</small><textarea name="branches" rows="2">{{ lines(item.branches) }}</textarea></label>
+  <label>Due <input type="date" name="due" value="{{ item.due }}"></label>
+</form>
+<p class="notes-meta">Created {{ when(item.created) }} by {{ item.source }} · updated {{ when(item.updated) }}</p>
+{% endcall %}
+{% call section("features", "Features") %}
+<ul class="dialog-list child-list">{% for feature in item.features %}{{ child_row(feature, "feature") }}{% endfor %}</ul>
+{{ create_button("kind=feature&plan_id=" ~ item.id, "+ Add feature") }}
+{% endcall %}
+{{ dependencies(item, choices) }}
+{{ danger("delete_item", "item", item.item, "Delete plan", "Delete the plan “" ~ item.title ~ "” with all its features and tasks? This cannot be undone.") }}
+
+{# --- An existing feature #}
+{% elif item and kind == "feature" %}
+{% call section("general", "General") %}
+<form {{ autosave("update_feature") }} id="general-{{ item.item }}" class="notes-form">{{ keep() }}<input type="hidden" name="autosave" value="1">
+  <input type="hidden" name="feature_id" value="{{ item.id }}">
+  <label>Title <textarea name="title" rows="1" class="grow-line" required>{{ item.title }}</textarea></label>
+  <label>Description <textarea name="description" rows="2">{{ item.description }}</textarea></label>
+  <label>Branch <input name="branch" value="{{ item.branch }}"></label>
+  <label>Due <input type="date" name="due" value="{{ item.due }}"></label>
+</form>
+<p class="notes-meta">Created {{ when(item.created) }} by {{ item.source }} · updated {{ when(item.updated) }}</p>
+{% endcall %}
+{% call section("tasks", "Tasks") %}
+<ul class="dialog-list child-list">{% for task in item.tasks %}{{ child_row(task, "task") }}{% endfor %}</ul>
+{{ create_button("kind=task&feature_id=" ~ item.id, "+ Add task") }}
+{% endcall %}
+{{ dependencies(item, choices) }}
+{{ danger("delete_item", "item", item.item, "Delete feature", "Delete the feature “" ~ item.title ~ "” with all its tasks? This cannot be undone.") }}
+
+{# --- An existing task #}
+{% elif item and kind == "task" %}
+{% call section("general", "General") %}
+<form {{ autosave("update_task") }} id="general-{{ item.item }}" class="notes-form">{{ keep() }}<input type="hidden" name="autosave" value="1">
+  <input type="hidden" name="task_id" value="{{ item.id }}">
+  <label>Title <textarea name="title" rows="1" class="grow-line" required>{{ item.title }}</textarea></label>
+  <label>Criteria <small>one per line; kept lines keep their tick</small><textarea name="criteria" rows="3">{{ lines(item.criteria | map(attribute="text")) }}</textarea></label>
+  <label>Branch <input name="branch" value="{{ item.branch }}"></label>
+  <label>Due <input type="date" name="due" value="{{ item.due }}"></label>
+  <label>Status
+    <select name="status">{% for value in ("todo", "doing", "done") %}<option value="{{ value }}"{% if value == item.status %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+  </label>
+</form>
+<p class="notes-meta">Created {{ when(item.created) }} by {{ item.source }} · updated {{ when(item.updated) }}</p>
+{% endcall %}
+{% call section("criteria", "Criteria") %}
+{% if item.criteria %}
+<ul class="dialog-list criteria-list">
+  {% for criterion in item.criteria %}
+  <li>
+    <form {{ post("check_criterion") }} hx-trigger="change" class="inline-form">{{ keep() }}
+      <input type="hidden" name="task_id" value="{{ item.id }}"><input type="hidden" name="index" value="{{ loop.index0 }}">
+      <label><input type="checkbox" name="done" value="1"{% if criterion.done %} checked{% endif %}> {{ criterion.text }}</label>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="notes-meta">No criteria yet: write them in General, one per line.</p>{% endif %}
+{% endcall %}
+{% call section("evidence", "Evidence that it is done") %}
+{% if item.evidence %}
+<ul class="dialog-list">
+  {% for evidence in item.evidence %}
+  {# A pencil turns the row into a field (✓, Enter or leaving it saves; Esc cancels); a bin deletes it after asking. #}
+  <li class="child-row editable-row">
+    <span class="notes-pill evidence-{{ evidence.source }}">{{ evidence.source }}</span>
+    <span class="child-title row-view">{{ evidence.detail }} <span class="notes-meta">{{ when(evidence.created) }}</span></span>
+    <form {{ post("update_evidence") }} hx-trigger="submit, change" class="row-edit">{{ keep() }}
+      <input type="hidden" name="evidence_id" value="{{ evidence.id }}">
+      <textarea name="detail" rows="1" class="grow-line" required>{{ evidence.detail }}</textarea><button type="submit" class="icon-button row-save" title="Save (Enter)" aria-label="Save"><i class="tool-icon tool-save"></i></button>
+
+    </form>
+    <button type="button" class="icon-button row-view row-edit-open" title="Edit this evidence" aria-label="Edit"><i class="tool-icon tool-edit"></i></button>
+    <form {{ post("delete_evidence", "Delete the evidence “" ~ evidence.detail ~ "”?", "Delete evidence") }} class="inline-form row-view">{{ keep() }}
+      <input type="hidden" name="evidence_id" value="{{ evidence.id }}">
+      <button type="submit" class="icon-button" title="Delete this evidence" aria-label="Delete"><i class="tool-icon tool-delete"></i></button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="notes-meta">None yet.</p>{% endif %}
+{# One field: Add records it as evidence; Approve as done closes the task with your approval, and
+   Withdraw approval takes it back (the text, if any, goes with either). #}
+<form {{ post("add_evidence") }} class="dialog-row">{{ keep() }}
+  <input type="hidden" name="task_id" value="{{ item.id }}">
+  <input name="detail" placeholder="What shows it is done (what you checked)…" required>
+  <button type="submit">Add</button>
+  {% if item.status != "done" %}
+  <button type="button" class="approve" {{ post("approve_task", "Approve “" ~ item.title ~ "” as done? Your approval is recorded as evidence and the task is closed.", "Approve task") }}>Approve as done</button>
+  {% else %}
+  <button type="button" class="withdraw" {{ post("withdraw_approval", "Withdraw the approval of “" ~ item.title ~ "”? It goes back to in progress; the approval evidence is deleted and the field's text, if any, is kept as the reason.", "Withdraw approval") }}>Withdraw approval</button>
+  {% endif %}
+</form>
+{% endcall %}
+{% call section("annotations", "Annotations") %}
+{% if item.annotations %}
+<ul class="dialog-list">
+  {% for annotation in item.annotations %}
+  <li class="child-row editable-row">
+    <span class="child-title row-view">{{ annotation.text }} <span class="notes-meta">{{ annotation.source }} · {{ when(annotation.created) }}</span></span>
+    <form {{ post("update_annotation") }} hx-trigger="submit, change" class="row-edit">{{ keep() }}
+      <input type="hidden" name="annotation_id" value="{{ annotation.id }}">
+      <textarea name="text" rows="1" class="grow-line" required>{{ annotation.text }}</textarea><button type="submit" class="icon-button row-save" title="Save (Enter)" aria-label="Save"><i class="tool-icon tool-save"></i></button>
+
+    </form>
+    <button type="button" class="icon-button row-view row-edit-open" title="Edit this annotation" aria-label="Edit"><i class="tool-icon tool-edit"></i></button>
+    <form {{ post("delete_annotation", "Delete the annotation “" ~ (annotation.text | truncate(90)) ~ "”?", "Delete annotation") }} class="inline-form row-view">{{ keep() }}
+      <input type="hidden" name="annotation_id" value="{{ annotation.id }}">
+      <button type="submit" class="icon-button" title="Delete this annotation" aria-label="Delete"><i class="tool-icon tool-delete"></i></button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="notes-meta">None yet.</p>{% endif %}
+<form {{ post("annotate_task") }} class="dialog-row">{{ keep() }}
+  <input type="hidden" name="task_id" value="{{ item.id }}">
+  <input name="text" placeholder="What was done, decided or found" required><button type="submit">Add</button>
+</form>
+{% endcall %}
+{{ dependencies(item, choices) }}
+{{ danger("delete_item", "item", item.item, "Delete task", "Delete the task “" ~ item.title ~ "” with its annotations and evidence? This cannot be undone.") }}
+
+{# --- A new note #}
+{% elif kind == "note" and not note %}
+{% set group = "guidelines" if query.type in note_groups.guidelines else "memory" %}
+<form {{ post("create_note") }} class="notes-form">{{ keep() }}
+  <label>Type
+    <select name="type">{% for name in note_groups[group] %}<option value="{{ name }}"{% if name == query.type %} selected{% endif %}>{{ name }} — {{ note_types[name] }}</option>{% endfor %}</select>
+  </label>
+  <label>Statement <textarea name="statement" rows="2" required autofocus></textarea></label>
+  <label>Why <textarea name="why" rows="2"></textarea></label>
+  <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2"></textarea></label>
+  <button type="submit" class="primary">Create note</button>
+</form>
+
+{# --- An existing note #}
+{% elif note %}
+{% if note.status == "active" %}
+{% call section("general", "General") %}
+<form {{ autosave("update_note") }} id="general-note-{{ note.id }}" class="notes-form">{{ keep() }}<input type="hidden" name="autosave" value="1">
+  <input type="hidden" name="note_id" value="{{ note.id }}">
+  <label>Statement <textarea name="statement" rows="2" required>{{ note.statement }}</textarea></label>
+  <label>Why <textarea name="why" rows="2">{{ note.why }}</textarea></label>
+  <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2">{{ lines(note.entities) }}</textarea></label>
+</form>
+<p class="notes-meta">{{ note.source }} · {{ when(note.updated) }}</p>
+{% endcall %}
+{% call section("supersede", "It no longer holds: supersede it") %}
+<form {{ post("supersede_note") }} class="notes-form">{{ keep() }}
+  <input type="hidden" name="note_id" value="{{ note.id }}">
+  <label>What holds now <textarea name="statement" rows="2" required>{{ note.statement }}</textarea></label>
+  <label>Why it changed <textarea name="why" rows="2"></textarea></label>
+  <button type="submit">Supersede</button>
+</form>
+{% endcall %}
+{{ danger("delete_note", "note_id", note.id, "Delete note", "Delete the note “" ~ (note.statement | truncate(90)) ~ "”? This cannot be undone; a note that stopped holding should be superseded instead.") }}
+{% else %}
+<p class="note-statement">{{ note.statement }}</p>
+{% if note.why %}<p class="note-why">{{ note.why }}</p>{% endif %}
+<p class="notes-meta">Superseded{% if note.superseded_by %} by note #{{ note.superseded_by }}{% endif %}.</p>
+{% endif %}
+{% endif %}
