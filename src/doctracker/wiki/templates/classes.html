@@ -1,0 +1,24 @@
+{% import "macros.html" as ui %}
+<div class="graph-page">
+  {{ ui.view_header("classes", "CLASSES",
+     "UML class diagram: each class with its attributes and methods; inheritance, composition (an attribute holds another class) and use (a method calls another class).") }}
+  <div class="graph-toolbar">
+    <form class="graph-filter" hx-get="/classes" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <label>Package
+        <select name="package">
+          <option value="">All</option>
+          {% for package in class_packages %}
+          <option value="{{ package }}"{% if params.package == package %} selected{% endif %}>{{ package }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="graph-legend">
+      <span><i class="line inherits"></i>inherits</span>
+      <span><i class="line has"></i>has (composition)</span>
+      <span><i class="line uses"></i>uses</span>
+    </div>
+    {{ ui.view_tools() }}
+  </div>
+  {{ ui.view_canvas("classes", data_url, params.focus) }}
+</div>

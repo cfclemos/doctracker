@@ -208,7 +208,7 @@ def tree(state: DocState, current: str) -> list[dict]:
 
     Args:
         state: Extracted entities.
-        current: Path of the page being shown; its branch starts open and it is marked.
+        current: Path of the page being shown; its item is marked.
 
     Returns:
         One node per root package, with nested `children`.
@@ -226,7 +226,7 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
         role: Role of this node (`package`, `subpackage`, `module`, `class`, `function`, `method`).
 
     Returns:
-        Path, name, role, symbol, children, and whether it is the current page or on its branch.
+        Path, name, role, symbol, children, and whether it is the current page.
     """
     entity = state.entities[path]
     children = []
@@ -241,7 +241,6 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
         "symbol": SYMBOLS.get(role, ""),
         "children": children,
         "current": path == current,
-        "open": current == path or current.startswith(path + "."),
     }
 
 
@@ -474,6 +473,38 @@ def ranked_results(state: DocState, ranked: list[tuple[str, float]], query: str)
             }
         )
     return results
+
+
+def class_packages(state: DocState) -> list[str]:
+    """List the packages and modules that contain classes, for the filter of the class diagram.
+
+    Args:
+        state: Extracted entities.
+
+    Returns:
+        Sorted paths of every package or module with at least one class below it.
+    """
+    found = set()
+    for path, entity in state.entities.items():
+        if entity["kind"] == "class":
+            parent = entity["parent"]
+            while parent in state.entities:
+                if state.entities[parent]["kind"] == "module":
+                    found.add(parent)
+                parent = state.entities[parent]["parent"]
+    return sorted(found)
+
+
+def call_targets(state: DocState) -> list[str]:
+    """List the entities a call graph can be centered on: functions, methods and classes.
+
+    Args:
+        state: Extracted entities.
+
+    Returns:
+        Their paths, sorted.
+    """
+    return sorted(path for path, entity in state.entities.items() if entity["kind"] in ("function", "class"))
 
 
 PAGINATION_SIBLINGS = 1

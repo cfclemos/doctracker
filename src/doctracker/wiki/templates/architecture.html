@@ -1,0 +1,21 @@
+{% import "macros.html" as ui %}
+<div class="graph-page">
+  {{ ui.view_header("architecture", "ARCHITECTURE",
+     "How the project is organized: modules inside their packages, and which module imports which. Imports that form a cycle are red.") }}
+  <div class="graph-toolbar">
+    <form class="graph-filter" hx-get="/architecture" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <label>Show
+        <select name="level">
+          <option value="modules"{% if params.level != "packages" %} selected{% endif %}>Packages and modules</option>
+          <option value="packages"{% if params.level == "packages" %} selected{% endif %}>Packages only</option>
+        </select>
+      </label>
+    </form>
+    <div class="graph-legend">
+      <span><i class="line imports"></i>imports</span>
+      <span><i class="line cycle"></i>import cycle</span>
+    </div>
+    {{ ui.view_tools() }}
+  </div>
+  {{ ui.view_canvas("architecture", data_url, params.focus) }}
+</div>

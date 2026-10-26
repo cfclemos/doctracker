@@ -11,6 +11,7 @@ class DocState:
     Attributes:
         roots: Paths of the documented top-level packages.
         entities: Every extracted entity, by qualified path.
+        edges: Relations between entities (contains, imports, inherits, calls), for the graph.
         errors: Packages that could not be loaded, with the reason.
         ready: Whether the first extraction has finished.
         listeners: One queue per open wiki page, notified when the data changes.
@@ -18,6 +19,7 @@ class DocState:
 
     roots: list[str] = field(default_factory=list)
     entities: dict[str, dict] = field(default_factory=dict)
+    edges: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     ready: bool = False
     listeners: set[asyncio.Queue] = field(default_factory=set)
@@ -26,12 +28,17 @@ class DocState:
         """Replace the data with a new extraction result and notify the frontend.
 
         Args:
-            result: Output of `extract_project`: `roots`, `entities` and `errors`.
+            result: Output of `extract_project`: `roots`, `entities`, `edges` and `errors`.
         """
         self.roots = result["roots"]
         self.entities = result["entities"]
+        self.edges = result["edges"]
         self.errors = result["errors"]
         self.ready = True
+        self.notify()
+
+    def notify(self) -> None:
+        """Tell every open wiki page to reload its content (e.g. after a commit or a branch change)."""
         for queue in self.listeners:
             queue.put_nowait("changed")
 

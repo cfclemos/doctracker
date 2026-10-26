@@ -18,4 +18,18 @@
     <span class="location">{{ entity.filepath }}{% if entity.lineno and entity.kind != "module" %}:{{ entity.lineno }}–{{ entity.endlineno }}{% endif %}</span>
     {% endif %}
   </p>
+  {# Open the graph views focused on this entity. #}
+  {% set views = [] %}
+  {% if entity.kind == "module" %}
+    {% set views = [("architecture", "Architecture", "/architecture?focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
+  {% elif entity.kind == "class" %}
+    {% set views = [("classes", "Classes", "/classes?package=" ~ entity.parent ~ "&focus=" ~ entity.path), ("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
+  {% elif entity.kind == "function" %}
+    {% set views = [("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
+  {% endif %}
+  {% if views %}
+  <p class="see-in">See in
+    {% for name, label, url in views %}<a class="see-in-link" {{ ui.nav_url(url) }}>{{ ui.icon(name) }}{{ label }}</a>{% endfor %}
+  </p>
+  {% endif %}
 </header>

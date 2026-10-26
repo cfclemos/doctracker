@@ -154,7 +154,7 @@ To use your own **vLLM** server instead, set `embeddings.vllm_url` (and
 
 ## The wiki
 
-- **Tree** — packages (📦/📁), modules (📄), classes (**C**), functions (**f**) and
+- **Tree** — packages, folders and modules (with [Tabler](https://tabler.io/icons) icons), classes (**C**), functions (**f**) and
   methods (**m**). Branches collapse; the tree can be resized or hidden (☰).
 - **Module pages** — description, public API (`__all__`) and members grouped by kind.
 - **Entity pages** — description, signature, parameters table, returns, raises,
@@ -260,6 +260,8 @@ Agents get the complete guide from the `documentation_guide` tool.
 ## License
 
 [MIT](LICENSE). The bundled [htmx](https://htmx.org) is distributed under the
-Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`). The
+Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`), the bundled
+[Cytoscape.js](https://js.cytoscape.org) and [Tabler Icons](https://tabler.io/icons) under MIT
+(`cytoscape-LICENSE.txt`, `icons/tabler-icons-LICENSE.txt`). The
 embedding model and llama.cpp are downloaded on use and keep their own licenses
 (Apache-2.0 and MIT).

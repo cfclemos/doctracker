@@ -1,0 +1,48 @@
+{# Changes of one commit: one top line to pick the file (select, or ‹ › to step), its lines below. #}
+{% if not files %}
+<p class="empty">This commit changed no files.</p>
+{% else %}
+<div class="git-files">
+  <button type="button" class="git-step" data-step="-1" title="Previous file" aria-label="Previous file">‹</button>
+  <select class="git-file-select" aria-label="Changed file">
+    {% for file in files %}
+    <option value="{{ loop.index0 }}" data-status="{{ file.status }}" data-additions="{{ file.additions }}" data-deletions="{{ file.deletions }}">
+      {{ file.status[0] | upper }}  {{ file.path }}{% if file.old_path %}  (from {{ file.old_path }}){% endif %}  +{{ file.additions }} −{{ file.deletions }}
+    </option>
+    {% endfor %}
+  </select>
+  <button type="button" class="git-step" data-step="1" title="Next file" aria-label="Next file">›</button>
+  {% set first = files[0] %}
+  <span class="git-file-stats">
+    <span class="git-file-status {{ first.status }}">{{ first.status }}</span>
+    <span class="plus">+{{ first.additions }}</span>
+    <span class="minus">−{{ first.deletions }}</span>
+  </span>
+  <span class="git-file-position">1 / {{ files | length }}</span>
+</div>
+{% for file in files %}
+<div class="git-file-diff" data-file="{{ loop.index0 }}"{% if not loop.first %} hidden{% endif %}>
+  {% if file.old_path %}<p class="git-rename">renamed from <code>{{ file.old_path }}</code></p>{% endif %}
+  {% if file.binary %}
+  <p class="empty">Binary file: no lines to show.</p>
+  {% elif not file.lines %}
+  <p class="empty">No changed lines (only the mode or the name changed).</p>
+  {% else %}
+  <table class="diff">
+    {% for line in file.lines %}
+    {% if line.kind == "hunk" %}
+    <tr class="hunk"><td colspan="3">{{ line.text }}</td></tr>
+    {% else %}
+    <tr class="{{ line.kind }}">
+      <td class="num">{{ line.old if line.old is not none }}</td>
+      <td class="num">{{ line.new if line.new is not none }}</td>
+      <td class="code"><span class="sign">{{ "+" if line.kind == "add" else ("−" if line.kind == "delete" else " ") }}</span>{{ line.text }}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+  {% if file.truncated %}<p class="empty">Diff cut: this file has more changed lines than shown.</p>{% endif %}
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}

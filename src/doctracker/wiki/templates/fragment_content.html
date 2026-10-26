@@ -1,5 +1,5 @@
-{# Reloads itself when the server reports a change in the code.
+{# Reloads itself (from page_url) when the server reports a change in the code.
    hx-disinherit keeps links inside the page from inheriting this element's hx-swap. #}
-<article hx-get="/wiki/{{ path }}" hx-trigger="docs-changed from:body" hx-swap="outerHTML" hx-disinherit="*">
+<article hx-get="{{ page_url }}" hx-trigger="docs-changed from:body" hx-swap="outerHTML" hx-disinherit="*">
   {% include content %}
 </article>

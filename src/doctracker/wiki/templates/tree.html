@@ -1,28 +1,43 @@
 {% import "macros.html" as ui %}
 {# The icon comes before the link: on branches it opens/closes the branch, the name navigates.
-   Packages show a folder, modules (files) a file, other entities their kind symbol. #}
-{% macro link(item) %}
+   Packages show a folder, modules (files) a file, other entities their kind symbol.
+   label replaces the shown name (the root package is shown as CODE). #}
+{% macro link(item, label=none) %}
 <a {{ ui.nav(item.path) }} class="role-{{ item.role }}{% if item.current %} current{% endif %}" {% if item.current %}aria-current="page"{% endif %}>
-  {{- item.name -}}
+  {{- label or item.name -}}
 </a>
 {% endmacro %}
-{% macro node(item) %}
+{% macro node(item, label=none) %}
 <li>
   {% if item.children %}
-  {# Packages and modules start open; classes open only on the path to the current page. #}
-  <details data-path="{{ item.path }}" {% if item.open or item.role != "class" %}open{% endif %}>
-    <summary>{{ ui.icon(item.role, item.symbol) }}{{ link(item) }}</summary>
+  {# Only the root package starts open (its first level is listed, folded); every other branch
+     opens only when the user opens it. What the user opens or closes is remembered per tab. #}
+  <details data-path="{{ item.path }}" {% if item.role == "package" %}open{% endif %}>
+    <summary>{{ ui.icon(item.role, item.symbol) }}{{ link(item, label) }}</summary>
     <ul>
       {% for child in item.children %}{{ node(child) }}{% endfor %}
     </ul>
   </details>
   {% else %}
-  <div class="leaf">{{ ui.icon(item.role, item.symbol) }}{{ link(item) }}</div>
+  <div class="leaf">{{ ui.icon(item.role, item.symbol) }}{{ link(item, label) }}</div>
   {% endif %}
 </li>
 {% endmacro %}
 <nav id="tree" {% if oob %}hx-swap-oob="true"{% endif %}>
+  {# Graph views, one page each. #}
+  <ul class="view-links">
+    {% for name, title in (("architecture", "ARCHITECTURE"), ("classes", "CLASSES"), ("calls", "CALLS"), ("git", "GIT")) %}
+    <li><a class="view-link{% if view == name %} current{% endif %}" {{ ui.nav_url("/" ~ name) }}>{{ ui.icon(name) }}{{ title }}</a></li>
+    {% endfor %}
+  </ul>
   <ul>
-    {% for item in tree %}{{ node(item) }}{% endfor %}
+    {% if tree | length == 1 %}
+    {{ node(tree[0], "CODE") }}
+    {% else %}
+    {# Several root packages: CODE groups them. #}
+    <li><p class="tree-group">{{ ui.icon("package") }}CODE</p>
+      <ul>{% for item in tree %}{{ node(item) }}{% endfor %}</ul>
+    </li>
+    {% endif %}
   </ul>
 </nav>

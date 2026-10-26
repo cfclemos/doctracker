@@ -1,0 +1,39 @@
+{% import "macros.html" as ui %}
+<div class="graph-page git-page">
+  {{ ui.view_header("git", "GIT",
+     "The history of the project, commit by commit. Click a commit to see what changed: its files on top, the removed (−) and added (+) lines below.") }}
+  {% if params.file %}
+  <p class="git-filter">Only commits that changed <code>{{ params.file }}</code> · <a {{ ui.nav_url("/git") }}>show all</a></p>
+  {% endif %}
+
+  {% if commits is none %}
+  <p class="empty graph-hint">This project is not a git repository (or git is not installed).</p>
+  {% elif not commits %}
+  <p class="empty graph-hint">No commits yet.</p>
+  {% else %}
+  {# Top: every branch over time (oldest on the left); clicking a commit shows its changes below. #}
+  <div class="git-branches-area">
+    <div class="git-branches" data-url="/git/branches" data-selected="{{ selected }}"><p class="empty">Loading branches…</p></div>
+    <div class="graph-tooltip" role="tooltip" hidden></div>
+  </div>
+  <div class="git-layout">
+    {# Left: the commits, newest first. Clicking one loads its changes on the right. #}
+    <ol class="git-commits">
+      {% for commit in commits %}
+      <li>
+        <button type="button" class="git-commit-item{% if commit.hash == selected %} current{% endif %}" data-hash="{{ commit.hash }}"
+                hx-get="/git/commit/{{ commit.hash }}" hx-target="#git-diff">
+          <span class="git-commit-head"><code>{{ commit.short }}</code> {{ commit.subject }}</span>
+          <span class="git-commit-meta">{{ commit.author }} · {{ commit.date[:16] | replace("T", " ") }}
+            · {{ (commit.added | length) + (commit.modified | length) + (commit.deleted | length) + (commit.renamed | length) }} files</span>
+        </button>
+      </li>
+      {% endfor %}
+    </ol>
+    {# Right: the changes of the selected commit. #}
+    <section id="git-diff" class="git-diff" hx-get="/git/commit/{{ selected }}" hx-trigger="load">
+      <p class="empty">Loading…</p>
+    </section>
+  </div>
+  {% endif %}
+</div>

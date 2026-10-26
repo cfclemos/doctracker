@@ -22,7 +22,7 @@ function save(storage, key, value) {
 
 // Tree: remember which branches the user opened or closed (per tab), so they stay that way
 // when the tree is re-rendered (navigation or live update).
-const TREE_KEY = "doctracker-tree";
+const TREE_KEY = "doctracker-tree-v2";  // v2: first level folded by default
 
 document.addEventListener("toggle", (event) => {
   const branch = event.target;
@@ -35,8 +35,7 @@ document.addEventListener("toggle", (event) => {
 function restoreTree() {
   const state = load(sessionStorage, TREE_KEY, {});
   for (const branch of document.querySelectorAll("#tree details")) {
-    const containsCurrent = branch.querySelector("a.current") !== null;
-    if (branch.dataset.path in state && !containsCurrent) branch.open = state[branch.dataset.path];
+    if (branch.dataset.path in state) branch.open = state[branch.dataset.path];
   }
 }
 
@@ -54,6 +53,40 @@ function setTreeWidth(pixels) {
   document.documentElement.style.setProperty("--tree-width", `${width}px`);
   return width;
 }
+
+// Git page: mark the clicked commit (its changes load on the right through htmx), and
+// show one file of the commit at a time: chosen in the select, or stepped with ‹ ›.
+function showGitFile(panel, index) {
+  const select = panel.querySelector(".git-file-select");
+  const count = select.options.length;
+  index = (index + count) % count;
+  select.selectedIndex = index;
+  for (const diff of panel.querySelectorAll(".git-file-diff")) diff.hidden = Number(diff.dataset.file) !== index;
+  const option = select.options[index];
+  const stats = panel.querySelector(".git-file-stats");
+  stats.innerHTML = `<span class="git-file-status ${option.dataset.status}">${option.dataset.status}</span>
+    <span class="plus">+${option.dataset.additions}</span> <span class="minus">−${option.dataset.deletions}</span>`;
+  panel.querySelector(".git-file-position").textContent = `${index + 1} / ${count}`;
+  panel.querySelector(`.git-file-diff[data-file="${index}"]`)?.scrollTo(0, 0);
+}
+
+document.addEventListener("click", (event) => {
+  const commit = event.target.closest(".git-commit-item");
+  if (commit) {
+    for (const item of document.querySelectorAll(".git-commit-item.current")) item.classList.remove("current");
+    commit.classList.add("current");
+    return;
+  }
+  const step = event.target.closest(".git-step");
+  if (step) {
+    const panel = step.closest(".git-diff");
+    showGitFile(panel, panel.querySelector(".git-file-select").selectedIndex + Number(step.dataset.step));
+  }
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches(".git-file-select")) showGitFile(event.target.closest(".git-diff"), event.target.selectedIndex);
+});
 
 // Code theme: the select in the Source block swaps the stylesheet of the source code right away;
 // htmx posts the choice to the server, which saves it in config.json.
