@@ -90,8 +90,9 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
 
         Returns:
             `commits`, newest first: hash, short, parents, refs (branches and tags), branch
-            (from the reflog; empty when unknown), lane, author, date, subject; or `error`
-            when the project is not a git repository.
+            (from the reflog; empty when unknown), lane, open (tip of a branch that goes on
+            to the present), author, date, subject; or `error` when the project is not a git
+            repository.
         """
         commits = await read_branch_graph(project_root, max(1, limit))
         return {"commits": commits} if commits is not None else {"error": "Not a git repository."}

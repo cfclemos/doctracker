@@ -263,7 +263,8 @@ async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None
     Returns:
         Newest first: `hash`, `short`, `parents`, `refs` (branch and tag names), `head`
         (the checked-out commit), `branch` (from the reflog; empty when unknown), `lane`,
-        `author`, `date`, `subject`; `None` when git or the repository is missing.
+        `open` (tip of a branch that goes on to the present), `author`, `date`, `subject`;
+        `None` when git or the repository is missing.
     """
     output = await _git(project_root, "log", "--all", "--topo-order", f"-n{limit}", f"--format={GRAPH_FORMAT}")
     if output is None:
@@ -292,7 +293,8 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
        commit as first parent (the newest such child); a commit with no such child starts
        an unnamed branch.
     2. Extent: the rows a branch takes, from its commits and the edges to their parents
-       and children.
+       and children. A branch still open (its tip has a branch name and was not merged)
+       goes on to the newest row; its tip gets `open`.
     3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
        extent above the lane of the branch it was made from, so the main line stays at the
        bottom and branches made from it step up.
@@ -304,11 +306,14 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
     row = {commit["hash"]: index for index, commit in enumerate(commits)}
     track: dict[str, str] = {}
     oldest: dict[str, dict] = {}  # branch -> its oldest commit
+    newest: dict[str, dict] = {}  # branch -> its newest commit (its tip)
     continued: dict[str, str] = {}  # commit hash -> branch of the child that has it as first parent
     for commit in commits:  # newest first: children come before their parents
         name = branches.get(commit["hash"]) or continued.get(commit["hash"]) or f"#{len(track)}"
         track[commit["hash"]] = name
         oldest[name] = commit
+        newest.setdefault(name, commit)
+        commit["open"] = False
         commit["branch"] = branches.get(commit["hash"], "")
         if commit["parents"]:
             continued.setdefault(commit["parents"][0], name)
@@ -326,6 +331,14 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
             if parent in row:
                 stretch(track[commit["hash"]], row[parent])
                 stretch(track[parent], here)
+
+    # A branch that still exists and was not merged goes on to the present (row 0).
+    merged = {parent for commit in commits for parent in commit["parents"][1:]}
+    for name, tip in newest.items():
+        named = any(not ref.startswith("tag: ") for ref in tip.get("refs", []))
+        tip["open"] = named and tip["hash"] not in merged
+        if tip["open"]:
+            stretch(name, 0)
 
     lanes: list[list[tuple[int, int]]] = []  # lanes[i] = row ranges already taken on lane i
     lane_of: dict[str, int] = {}

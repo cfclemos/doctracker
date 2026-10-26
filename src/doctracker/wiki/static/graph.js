@@ -289,6 +289,12 @@ async function initBranches() {
       const lane = Math.max(commit.lane, laneOf[parent]);
       elements.push({ data: { id: `${commit.hash}-${parent}`, source: parent, target: commit.hash, color: color(lane) } });
     }
+    // A branch that still exists and was not merged goes on to the present: its lane runs to the right end.
+    if (commit.open && index > 0) {
+      const end = `${commit.hash}-end`;
+      elements.push({ data: { id: end }, position: { x: last * COMMIT_SPACING, y: commit.lane * LANE_SPACING }, classes: "lane-end" });
+      elements.push({ data: { id: `${commit.hash}-open`, source: commit.hash, target: end, color: color(commit.lane) } });
+    }
   }
 
   canvas.innerHTML = "";
@@ -305,6 +311,7 @@ async function initBranches() {
       // The checked-out commit (HEAD): a hollow circle, as in Git Graph.
       { selector: "node.head", style: { "background-color": bg, "border-color": "data(color)", "border-width": 3, width: 14, height: 14 } },
       { selector: "node:selected", style: { width: 18, height: 18, "border-color": fg, "border-width": 3 } },
+      { selector: "node.lane-end", style: { width: 1, height: 1, "background-opacity": 0, "border-width": 0, events: "no" } },
       // Branch and tag names: small pills in the lane color, alternating above and below.
       { selector: "node[label != '']", style: {
         label: "data(label)", "font-size": 9, "font-weight": "bold", color: "#ffffff",
