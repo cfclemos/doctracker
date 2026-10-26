@@ -1,7 +1,7 @@
 {% import "macros.html" as ui %}
 <div class="graph-page">
   {{ ui.view_header("architecture", "ARCHITECTURE",
-     "How the project is organized: modules inside their packages, and which module imports which. Imports that form a cycle are red.") }}
+     "How the project is organized: modules inside their packages, and which module imports which (the importer above, the arrow pointing to what it imports). Imports that form a cycle are red.") }}
   <div class="graph-toolbar">
     <form class="graph-filter" hx-get="/architecture" hx-target="#content" hx-push-url="true" hx-trigger="change">
       <label>Show
@@ -12,8 +12,15 @@
       </label>
     </form>
     <div class="graph-legend">
+      <span title="A top-level folder with an __init__.py: what gets installed and imported by name"><i class="box package"></i>package</span>
+      <span title="A folder with an __init__.py inside another package"><i class="box subpackage"></i>subpackage</span>
+      <span title="One .py file; __init__.py is the package's own module"><i class="box module"></i>module (.py file)</span>
+      {% if params.level == "packages" %}
+      <span title="One line per pair of packages, for their imports both ways"><i class="line imports"></i>imports between them (thicker = more)</span>
+      {% else %}
       <span><i class="line imports"></i>imports</span>
       <span><i class="line cycle"></i>import cycle</span>
+      {% endif %}
     </div>
     {{ ui.view_tools() }}
   </div>

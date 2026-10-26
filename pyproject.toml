@@ -8,6 +8,7 @@ license-files = [
     "LICENSE",
     "src/doctracker/wiki/static/htmx-LICENSE.txt",
     "src/doctracker/wiki/static/cytoscape-LICENSE.txt",
+    "src/doctracker/wiki/static/dagre-LICENSE.txt",
     "src/doctracker/wiki/static/icons/tabler-icons-LICENSE.txt",
 ]
 authors = [

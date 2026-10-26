@@ -6,6 +6,7 @@
 - entity history: the commits that changed an entity's file.
 """
 
+import re
 from pathlib import Path
 
 from doctracker.history import read_history
@@ -64,38 +65,68 @@ def _package_of(state: DocState, path: str) -> str:
 
 
 def architecture(state: DocState, level: str = "modules") -> dict:
-    """Build the architecture view: packages and modules, linked by imports.
+    """Build the architecture view: packages, subpackages and modules, linked by imports.
 
-    Modules are drawn inside the box of their package. Imports that are part of a
-    cycle (modules importing each other, directly or through others) are marked.
+    At module level, packages and subpackages are frames (`frame` is true) and every
+    module is a box inside its package's frame, the package's own `__init__.py` included
+    (its box id is `<package>.__init__`, so its imports start from it, not from the frame).
+    Imports between modules are directed, and the ones that are part of a cycle (importing
+    each other, directly or through others) are marked. At package level, each package is a
+    box and each pair of packages gets one undirected link: `weight` counts the module imports
+    between them both ways, `counts` splits them by direction.
 
     Args:
         state: Extracted entities and relations.
         level: `modules` (every module) or `packages` (modules merged into their package).
 
     Returns:
-        `nodes` (with `parent` = enclosing package) and `edges` (`imports`, with `cycle`
-        and, at package level, `weight` = number of module imports merged).
+        `nodes` (`role`: package, subpackage or module; `parent`: enclosing frame; `frame`;
+        `page`: entity path of its wiki page) and `edges` (`imports`, with `directed`,
+        `weight`, `cycle` and, at package level, `counts` by `"source->target"`).
     """
     modules = [path for path, entity in state.entities.items() if entity["kind"] == "module"]
+    packages = [path for path in modules if state.entities[path].get("is_package")]
+    nodes = []
     if level == "packages":
         owner = {path: _package_of(state, path) for path in modules}
-        kept = sorted(set(owner.values()))
+        for path in sorted(set(owner.values())):
+            node = _node(state, path, parent=None, frame=False, page=path)
+            if path in state.roots:
+                # Subpackages have boxes of their own: the root's box stands for its own modules only.
+                files = sorted(Path(state.entities[module]["filepath"]).name for module, package in owner.items()
+                               if package == path)
+                node.update(label=f"{node['label']} (root modules)", summary=f"Modules: {', '.join(files)}")
+            nodes.append(node)
     else:
-        owner = {path: path for path in modules}
-        kept = modules
-    nodes = []
-    for path in kept:
-        parent = state.entities[path]["parent"]
-        nodes.append(_node(state, path, parent=parent if parent in kept else None))
+        owner = {path: f"{path}.__init__" if path in packages else path for path in modules}
+        for path in packages:
+            parent = state.entities[path]["parent"]
+            nodes.append(_node(state, path, parent=parent if parent in packages else None, frame=True, page=path))
+        for path in modules:
+            node = _node(state, path, parent=path if path in packages else state.entities[path]["parent"],
+                         frame=False, page=path)
+            node.update(id=owner[path], role="module", label=Path(state.entities[path]["filepath"]).name)
+            nodes.append(node)
     weights: dict[tuple[str, str], int] = {}
     for edge in _edges_of(state, "imports"):
         source, target = owner.get(edge["source"]), owner.get(edge["target"])
         if source and target and source != target:
             weights[(source, target)] = weights.get((source, target), 0) + 1
+    if level == "packages":
+        # One undirected link per pair of packages: how much they depend on each other, both ways.
+        pairs: dict[tuple[str, str], dict[str, int]] = {}
+        for (source, target), weight in weights.items():
+            pairs.setdefault(tuple(sorted((source, target))), {})[f"{source}->{target}"] = weight
+        edges = [
+            {"id": f"imports:{a}--{b}", "source": a, "target": b, "kind": "imports", "directed": False,
+             "weight": sum(counts.values()), "counts": counts, "cycle": False}
+            for (a, b), counts in sorted(pairs.items())
+        ]
+        return {"nodes": nodes, "edges": edges}
     in_cycle = _cycle_edges(set(weights))
     edges = [
-        {"id": f"imports:{s}->{t}", "source": s, "target": t, "kind": "imports", "weight": w, "cycle": (s, t) in in_cycle}
+        {"id": f"imports:{s}->{t}", "source": s, "target": t, "kind": "imports", "directed": True, "weight": w,
+         "cycle": (s, t) in in_cycle}
         for (s, t), w in sorted(weights.items())
     ]
     return {"nodes": nodes, "edges": edges}
@@ -157,42 +188,125 @@ def _cycle_edges(edges: set[tuple[str, str]]) -> set[tuple[str, str]]:
     return {(s, t) for s, t in edges if group[s][0] == group[t][0] and group[s][1] > 1}
 
 
+TYPE_ICONS = {
+    "bool": "bool",
+    **dict.fromkeys(("int", "float", "complex", "Decimal", "Fraction"), "number"),
+    **dict.fromkeys(("str", "bytes"), "text"),
+    **dict.fromkeys(("datetime", "date", "time", "timedelta"), "time"),
+    **dict.fromkeys(("Path", "PurePath"), "path"),
+    **dict.fromkeys(("list", "dict", "set", "tuple", "frozenset", "deque", "defaultdict", "OrderedDict", "Counter",
+                     "Sequence", "Mapping", "MutableMapping", "Iterable", "Collection"), "collection"),
+}
+"""Icon of an attribute by the first type named in its hint (`str | None` → `text`); others are `other`."""
+
+STEREOTYPES = {
+    **dict.fromkeys(("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"), "enum"),
+    "Protocol": "protocol",
+    "ABC": "abstract",
+    "NamedTuple": "namedtuple",
+    "TypedDict": "typeddict",
+}
+"""UML stereotype of a class by one of its bases (exceptions and dataclasses are found apart)."""
+
+METHOD_KINDS = ("staticmethod", "classmethod", "property", "abstractmethod")
+"""Decorators that tell the kind of a method."""
+
+
+def _type_icon(annotation: str, holds_class: bool) -> str:
+    """Tell the icon of an attribute from its type hint.
+
+    Args:
+        annotation: Type hint as written, e.g. `list[str] | None`.
+        holds_class: Whether it holds a class of the project.
+
+    Returns:
+        `class`, one of the `TYPE_ICONS` values, or `other`.
+    """
+    if holds_class:
+        return "class"
+    for name in re.findall(r"[A-Za-z_]\w*", annotation):
+        if name not in ("None", "Optional", "typing", "collections", "abc", "datetime", "pathlib", "decimal"):
+            return TYPE_ICONS.get(name, "other")
+    return TYPE_ICONS.get(annotation.rsplit(".", 1)[-1], "other")
+
+
+def _stereotype(entity: dict) -> str:
+    """Tell the UML stereotype of a class: dataclass, enum, protocol, abstract, exception...
+
+    Args:
+        entity: Extracted class.
+
+    Returns:
+        The stereotype name, or an empty string.
+    """
+    if any(decorator.split("(")[0].rsplit(".", 1)[-1] == "dataclass" for decorator in entity["decorators"]):
+        return "dataclass"
+    for base in entity["bases"]:
+        name = base.split("[")[0].rsplit(".", 1)[-1]
+        if name in STEREOTYPES:
+            return STEREOTYPES[name]
+        if name.endswith(("Exception", "Error")):
+            return "exception"
+    return ""
+
+
 def class_diagram(state: DocState, package: str = "") -> dict:
     """Build a UML class diagram.
 
-    Each class lists its attributes (`name: type`) and methods (`name(parameters)`).
-    Relations: inheritance, composition (an attribute holds another class) and use
-    (a method calls another class or one of its methods).
+    Each class lists its attributes (name, type and an icon for the type) and its methods
+    (name and full signature). Relations: inheritance, composition (an attribute holds
+    another class; `via` names the attribute) and use (a method calls another class or one
+    of its methods).
 
     Args:
         state: Extracted entities and relations.
         package: Only classes under this path (e.g. `pkg.server`); empty means all.
 
     Returns:
-        `nodes` (with `attributes` and `methods` lines) and `edges` (`inherits`, `has`, `uses`).
+        `nodes` (class path, `stereotype`, `attributes`: name, type, icon, target class;
+        `methods`: name, signature, kind) and `edges` (`inherits`, `has` with `via`, `uses`).
     """
     classes = [
         path for path, entity in state.entities.items()
         if entity["kind"] == "class" and (not package or path == package or path.startswith(package + "."))
     ]
+    kept = set(classes)
+    held = {edge["via"]: edge["target"] for edge in _edges_of(state, "has")}  # attribute path -> class it holds
     nodes = []
     for path in classes:
         attributes, methods = [], []
+        stereotype = _stereotype(state.entities[path])
         for member in state.entities[path]["members"]:
             entity = state.entities[member]
+            if stereotype == "dataclass" and entity["name"] == "__init__":
+                continue  # generated from the fields, which are listed already
             if entity["kind"] == "attribute":
+                target = held.get(member, "")
                 annotation = entity.get("annotation", "")
-                attributes.append(f"{entity['name']}: {annotation}" if annotation else entity["name"])
+                attributes.append({
+                    "name": entity["name"],
+                    "type": annotation or (state.entities[target]["name"] if target else ""),
+                    "icon": _type_icon(annotation, bool(target)),
+                    "target": target if target in kept else "",
+                })
             elif entity["kind"] == "function":
-                methods.append(f"{entity['name']}{signature_details(entity).split(' -> ')[0]}")
-        nodes.append(_node(state, path, attributes=attributes, methods=methods))
-    kept = set(classes)
+                decorators = [decorator.rsplit(".", 1)[-1] for decorator in entity["decorators"]]
+                methods.append({
+                    "name": entity["name"],
+                    "signature": f"{entity['name']}{signature_details(entity)}",
+                    "kind": next((kind for kind in METHOD_KINDS if kind in decorators), ""),
+                })
+        nodes.append(_node(state, path, stereotype=stereotype, attributes=attributes, methods=methods))
     edges, seen = [], set()
-    for kind in ("inherits", "has"):
-        for edge in _edges_of(state, kind):
-            if edge["source"] in kept and edge["target"] in kept:
-                edges.append({"id": f"{kind}:{edge['source']}->{edge['target']}", **edge})
-                seen.add((edge["source"], edge["target"]))
+    for edge in _edges_of(state, "inherits"):
+        if edge["source"] in kept and edge["target"] in kept:
+            edges.append({"id": f"inherits:{edge['source']}->{edge['target']}", **edge})
+            seen.add((edge["source"], edge["target"]))
+    for edge in _edges_of(state, "has"):
+        if edge["source"] in kept and edge["target"] in kept:
+            via = state.entities[edge["via"]]["name"]
+            edges.append({"id": f"has:{edge['source']}.{via}->{edge['target']}", **edge, "via": via})
+            seen.add((edge["source"], edge["target"]))
     for edge in _edges_of(state, "calls"):
         source = _class_of(state, edge["source"])
         target = _class_of(state, edge["target"])

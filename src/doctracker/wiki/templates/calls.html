@@ -5,7 +5,10 @@
   <div class="graph-toolbar">
     <form class="graph-filter" hx-get="/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
       <label>Focus
-        <input name="focus" list="call-targets" value="{{ params.focus or '' }}" placeholder="Function, method or class…" class="focus-input">
+        <span class="field-clearable">
+          <input name="focus" list="call-targets" value="{{ params.focus or '' }}" placeholder="Function, method or class…" class="focus-input">
+          <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
+        </span>
         <datalist id="call-targets">{% for path in call_targets %}<option value="{{ path }}">{% endfor %}</datalist>
       </label>
       <label>Depth

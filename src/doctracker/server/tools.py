@@ -34,7 +34,11 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             level: `modules` (every module) or `packages` (modules merged into their package).
 
         Returns:
-            `nodes` (path, role, summary, enclosing `parent`) and `edges` (imports; `cycle` marks import cycles).
+            `nodes` (id, `role`: package, subpackage or module; `frame`: a package drawn around
+            its modules; enclosing `parent`; `page`: entity path; summary; a package's own
+            `__init__.py` is the module `<package>.__init__`) and `edges` (imports; at module
+            level directed, with `cycle` marking import cycles; at package level one undirected
+            link per pair of packages, `weight` = imports both ways, `counts` by direction).
         """
         return architecture(state, level)
 
@@ -46,7 +50,10 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             package: Only classes under this path (e.g. `pkg.server`); empty means all.
 
         Returns:
-            `nodes` (class path, `attributes`, `methods`) and `edges` (`inherits`, `has` = composition, `uses`).
+            `nodes` (class path, `stereotype` such as dataclass or enum, `attributes` with name,
+            type, icon and the project class they hold, `methods` with name, signature and kind)
+            and `edges` (`inherits`, `has` = an attribute holds another class, with `via` naming
+            the attribute, `uses` = a method calls another class).
         """
         return class_diagram(state, package)
 
