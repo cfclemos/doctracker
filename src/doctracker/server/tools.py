@@ -3,6 +3,8 @@
 from mcp.server import MCPServer
 
 from doctracker.config import Config, set_config_value
+from doctracker.graph import architecture, call_graph, class_diagram, entity_history
+from doctracker.history import commit_diff, read_branch_graph
 from doctracker.search import AGENT_WAIT_SECONDS, DEFAULT_LIMIT, SearchEngine
 from doctracker.server.guide import documentation_guide as build_guide
 from doctracker.server.state import DocState
@@ -23,6 +25,103 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
     """
     embeddings = search.embeddings
     project_root = embeddings.project_root
+
+    @mcp.tool()
+    def architecture_view(level: str = "modules") -> dict:
+        """Get the architecture: packages and modules, and which module imports which.
+
+        Args:
+            level: `modules` (every module) or `packages` (modules merged into their package).
+
+        Returns:
+            `nodes` (path, role, summary, enclosing `parent`) and `edges` (imports; `cycle` marks import cycles).
+        """
+        return architecture(state, level)
+
+    @mcp.tool()
+    def class_diagram_view(package: str = "") -> dict:
+        """Get the class diagram: classes with attributes and methods, and how they relate.
+
+        Args:
+            package: Only classes under this path (e.g. `pkg.server`); empty means all.
+
+        Returns:
+            `nodes` (class path, `attributes`, `methods`) and `edges` (`inherits`, `has` = composition, `uses`).
+        """
+        return class_diagram(state, package)
+
+    @mcp.tool()
+    def call_graph_view(path: str, depth: int = 1, direction: str = "both") -> dict:
+        """Get what a function, method or class calls and what calls it, a few calls away.
+
+        Args:
+            path: Entity in the center, e.g. `pkg.api.get_weather`.
+            depth: How many calls away to go (1 to 3).
+            direction: `out` (what it calls), `in` (what calls it) or `both`.
+
+        Returns:
+            `nodes` (with `distance` from the center and `side`: focus, callee, caller) and `edges` (calls).
+        """
+        return call_graph(state, path, depth, direction)
+
+    @mcp.tool()
+    async def git_history(path: str, limit: int = 20) -> dict:
+        """List the commits that changed the file of an entity, newest first.
+
+        Args:
+            path: Entity path; the commits of its module's file are listed.
+            limit: Most recent commits to list.
+
+        Returns:
+            `commits` (short hash, author, date, subject), or `error` when the project is not a git repository.
+        """
+        commits = await entity_history(state, project_root, path, max(1, limit))
+        return {"commits": commits} if commits is not None else {"error": "Unknown entity or not a git repository."}
+
+    @mcp.tool()
+    async def git_branches(limit: int = 50) -> dict:
+        """List the recent commits of every branch, placed on lanes like `git log --graph`.
+
+        Args:
+            limit: Most recent commits to list, across all branches.
+
+        Returns:
+            `commits`, newest first: hash, short, parents, refs (branches and tags), lane,
+            author, date, subject; or `error` when the project is not a git repository.
+        """
+        commits = await read_branch_graph(project_root, max(1, limit))
+        return {"commits": commits} if commits is not None else {"error": "Not a git repository."}
+
+    @mcp.tool()
+    async def git_commit(hash: str) -> dict:
+        """Get what one commit changed: each file with its added (+) and removed (-) lines.
+
+        Args:
+            hash: Full or abbreviated commit hash (from `git_history`).
+
+        Returns:
+            `files`: path, status, additions, deletions and `diff` (unified diff lines of the file),
+            or `error` when the commit is not found.
+        """
+        files = await commit_diff(project_root, hash.strip())
+        if files is None:
+            return {"error": "Commit not found or not a git repository."}
+        signs = {"add": "+", "delete": "-", "context": " ", "hunk": ""}
+        return {
+            "files": [
+                {
+                    "path": file.path,
+                    "old_path": file.old_path,
+                    "status": file.status,
+                    "additions": file.additions,
+                    "deletions": file.deletions,
+                    "binary": file.binary,
+                    "truncated": file.truncated,
+                    "diff": "\n".join(signs[line.kind] + line.text for line in file.lines),
+                }
+                for file in files
+            ]
+        }
 
     @mcp.tool()
     async def bm25_search(query: str, limit: int = DEFAULT_LIMIT, offset: int = 0) -> dict:

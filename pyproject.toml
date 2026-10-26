@@ -4,7 +4,12 @@ version = "0.2.0"
 description = "MCP server that centralizes the documentation of Python projects developed with LLM agents."
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE", "src/doctracker/wiki/static/htmx-LICENSE.txt"]
+license-files = [
+    "LICENSE",
+    "src/doctracker/wiki/static/htmx-LICENSE.txt",
+    "src/doctracker/wiki/static/cytoscape-LICENSE.txt",
+    "src/doctracker/wiki/static/icons/tabler-icons-LICENSE.txt",
+]
 authors = [
     { name = "Carlos Filipe de Castro Lemos", email = "carlos.lemos.dev@gmail.com" }
 ]

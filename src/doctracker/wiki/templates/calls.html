@@ -1,0 +1,38 @@
+{% import "macros.html" as ui %}
+<div class="graph-page">
+  {{ ui.view_header("calls", "CALLS",
+     "How a function works: what it calls and what calls it, a few calls away. Only calls that can be read from the code are shown.") }}
+  <div class="graph-toolbar">
+    <form class="graph-filter" hx-get="/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <label>Focus
+        <input name="focus" list="call-targets" value="{{ params.focus or '' }}" placeholder="Function, method or class…" class="focus-input">
+        <datalist id="call-targets">{% for path in call_targets %}<option value="{{ path }}">{% endfor %}</datalist>
+      </label>
+      <label>Depth
+        <select name="depth">
+          {% for depth in range(1, max_call_depth + 1) %}
+          <option value="{{ depth }}"{% if params.depth == depth | string %} selected{% endif %}>{{ depth }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Direction
+        <select name="direction">
+          {% for direction, label in (("both", "Calls and callers"), ("out", "What it calls"), ("in", "What calls it")) %}
+          <option value="{{ direction }}"{% if params.direction == direction %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <div class="graph-legend">
+      <span><i class="dot focus"></i>focus</span>
+      <span><i class="dot callee"></i>called by the focus</span>
+      <span><i class="dot caller"></i>calls the focus</span>
+    </div>
+    {{ ui.view_tools() }}
+  </div>
+  {% if params.focus %}
+  {{ ui.view_canvas("calls", data_url, params.focus) }}
+  {% else %}
+  <p class="empty graph-hint">Choose a function, method or class in <strong>Focus</strong> to see its calls.</p>
+  {% endif %}
+</div>

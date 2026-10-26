@@ -9,6 +9,8 @@ from pathlib import Path
 
 import griffe
 
+from doctracker.extraction.graph import extract_edges
+
 MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
 """Kinds of members kept from griffe; anything else (e.g. aliases created by imports) is skipped."""
 
@@ -33,8 +35,9 @@ def extract_project(
         show_private: Keep `_private` members.
 
     Returns:
-        `roots` (paths of the loaded packages), `entities` (every entity by path) and
-        `errors` (packages that could not be loaded, with the reason).
+        `roots` (paths of the loaded packages), `entities` (every entity by path),
+        `edges` (relations between entities, see `extract_edges`) and `errors`
+        (packages that could not be loaded, with the reason).
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
@@ -55,13 +58,15 @@ def extract_project(
             continue
         roots.append(module.path)
         _collect(module, root, docstring_style, show_private, entities)
-    return {"roots": roots, "entities": entities, "errors": errors}
+    edges = extract_edges(entities, root)
+    return {"roots": roots, "entities": entities, "edges": edges, "errors": errors}
 
 
 def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, entities: dict) -> None:
     """Add `obj` and its members (recursively) to `entities`.
 
-    Aliases (names imported from elsewhere) are skipped.
+    Aliases (names imported from elsewhere) are not entities; on modules they are
+    kept in `imports` (local name → imported path), to resolve names for the graph.
 
     Args:
         obj: Module, class, function or attribute loaded by griffe.
@@ -72,8 +77,10 @@ def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, ent
     """
     entity = _to_entity(obj, root, style)
     members = []
+    imports = {}
     for member in obj.members.values():
         if member.is_alias:
+            imports[member.name] = member.target_path
             continue
         if member.is_private and not show_private:
             continue
@@ -82,6 +89,8 @@ def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, ent
         members.append(member.path)
         _collect(member, root, style, show_private, entities)
     entity["members"] = members
+    if obj.is_module:
+        entity["imports"] = imports
     entities[obj.path] = entity
 
 

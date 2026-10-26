@@ -4,10 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ path or "doctracker" }} · doctracker</title>
-  <link rel="stylesheet" href="/static/style.css">
+  {# static_url adds the file's modification time, so a changed file is never served from the browser cache. #}
+  <link rel="stylesheet" href="{{ static_url('style.css') }}">
   <link rel="stylesheet" id="code-theme" href="/code-theme/{{ code_theme }}.css" data-default="{{ code_theme }}">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/live.js" defer></script>
+  <script src="{{ static_url('htmx.min.js') }}" defer></script>
+  <script src="{{ static_url('live.js') }}" defer></script>
+  <script src="{{ static_url('cytoscape.min.js') }}" defer></script>
+  <script src="{{ static_url('graph.js') }}" defer></script>
 </head>
 <body>
   <header id="topbar">

@@ -1,13 +1,46 @@
 {# Pieces shared by every wiki template. Import with: {% import "macros.html" as ui %} #}
 
-{# Attributes of a link that opens a wiki page inside the content panel (htmx) and updates the URL. #}
+{# Attributes of a link that opens a page inside the content panel (htmx) and updates the URL. #}
+{% macro nav_url(url) -%}
+href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
+{%- endmacro %}
+
+{# The same, for the wiki page of an entity. #}
 {% macro nav(path) -%}
-href="/wiki/{{ path }}" hx-get="/wiki/{{ path }}" hx-target="#content" hx-push-url="true"
+{{ nav_url("/wiki/" ~ path) }}
 {%- endmacro %}
 
 {# Icon of an entity role: folder/file emoji for packages and modules, colored symbol for the rest. #}
 {% macro icon(role, symbol="") -%}
 <span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbol }}</span>
+{%- endmacro %}
+
+{# Header of a graph view page. #}
+{% macro view_header(view, title, text) -%}
+<header class="page-header">
+  <h1>{{ icon(view) }}<span class="name">{{ title }}</span></h1>
+  <p class="meta">{{ text }}</p>
+</header>
+{%- endmacro %}
+
+{# Tools every graph view has: highlight nodes by name, fit the drawing to the screen. #}
+{% macro view_tools() -%}
+<div class="graph-actions">
+  <input class="graph-find" type="search" placeholder="Highlight…" autocomplete="off">
+  <button type="button" class="graph-fit" title="Fit the graph to the screen">Fit</button>
+</div>
+{%- endmacro %}
+
+{# Drawing area of a graph view; static/graph.js draws data_url with the style of `view`
+   and selects `focus` (an entity path) when given. #}
+{% macro view_canvas(view, data_url, focus="") -%}
+<div class="graph-area">
+  <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
+    <p class="empty">Loading…</p>
+  </div>
+  <aside class="graph-info" hidden></aside>
+  <div class="graph-tooltip" role="tooltip" hidden></div>
+</div>
 {%- endmacro %}
 
 {# Collapsible section: a badge sitting on the top border; clicking the badge folds the section.

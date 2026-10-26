@@ -1,21 +1,27 @@
 """Frontend routes: wiki pages, source code on demand and live-update events."""
 
 import asyncio
+from importlib.resources import files
 from pathlib import Path
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from doctracker.config import Config, set_config_value
+from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
+from doctracker.history import commit_diff, read_branch_graph, read_history
 from doctracker.search import DEFAULT_LIMIT, MODES, WIKI_WAIT_SECONDS, SearchEngine
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
 
 KEEPALIVE_SECONDS = 15
 """Seconds between keepalive messages on an idle live-update (SSE) connection."""
+
+GIT_COMMITS = 500
+"""Most recent commits listed on the git page."""
 
 
 def _same_origin(request: Request) -> bool:
@@ -33,10 +39,25 @@ def _same_origin(request: Request) -> bool:
     return origin is not None and origin == f"{request.url.scheme}://{request.headers.get('host', '')}"
 
 
+def _static_url(name: str) -> str:
+    """Build the URL of a static file with its modification time, so browsers never use a stale copy.
+
+    Args:
+        name: File name inside `wiki/static/`, e.g. `style.css`.
+
+    Returns:
+        `/static/<name>?v=<modification time>`; without the version when the file is not found.
+    """
+    file = Path(str(files("doctracker.wiki").joinpath("static", name)))
+    return f"/static/{name}?v={int(file.stat().st_mtime)}" if file.is_file() else f"/static/{name}"
+
+
 def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
 
-    `/wiki/<path>`, `/source/<path>`, `/search` (modes `default`, `bm25`, `semantic`, `hybrid`),
+    `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
+    `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), `/source/<path>`,
+    `/search` (modes `default`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
 
     Args:
@@ -52,6 +73,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates.filters["markdown"] = pages.render_markdown
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
+        static_url=_static_url,
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
         search_modes=MODES,
@@ -64,9 +86,16 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         other_sections=pages.other_sections,
     )
 
+    def render_page(request: Request, content: str, url: str, context: dict, status: int = 200) -> HTMLResponse:
+        """Render a page: the whole document, or only the content panel for htmx navigation."""
+        is_fragment = "HX-Request" in request.headers and "HX-History-Restore-Request" not in request.headers
+        template = "fragment.html" if is_fragment else "base.html"
+        html = templates.get_template(template).render(content=content, page_url=url, state=state, **context)
+        return HTMLResponse(html, status_code=status)
+
     def render(request: Request, path: str) -> HTMLResponse:
         entity = state.entities.get(path)
-        context = {"path": path, "state": state, "entity": entity, "tree": pages.tree(state, path)}
+        context = {"path": path, "entity": entity, "tree": pages.tree(state, path)}
         if not state.ready:
             content, status = "loading.html", 200
         elif entity is None:
@@ -74,10 +103,57 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         else:
             content, status = ("module.html" if entity["kind"] == "module" else "entity.html"), 200
             context["breadcrumbs"] = pages.breadcrumbs(state, path)
-        is_fragment = "HX-Request" in request.headers and "HX-History-Restore-Request" not in request.headers
-        template = "fragment.html" if is_fragment else "base.html"
-        html = templates.get_template(template).render(content=content, **context)
-        return HTMLResponse(html, status_code=status)
+        return render_page(request, content, f"/wiki/{path}", context, status)
+
+    async def view_page(request: Request) -> Response:
+        """One of the graph views: architecture, classes, calls or git."""
+        view = request.url.path.strip("/")
+        params = dict(request.query_params)
+        context = {
+            "path": "",
+            "tree": pages.tree(state, ""),
+            "view": view,
+            "params": params,
+            "data_url": f"/graph/{view}?{request.url.query}" if request.url.query else f"/graph/{view}",
+            "class_packages": pages.class_packages(state),
+            "call_targets": pages.call_targets(state),
+            "call_directions": CALL_DIRECTIONS,
+            "max_call_depth": MAX_CALL_DEPTH,
+        }
+        if view == "git":
+            # Commits newest first, optionally only those that changed one file.
+            commits = await read_history(project_root, GIT_COMMITS, params.get("file", ""))
+            context["commits"] = commits
+            context["selected"] = params.get("commit") or (commits[0].hash if commits else "")
+        url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
+        return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
+
+    async def git_branches(request: Request) -> Response:
+        """Commits of every branch placed on lanes, for the branch graph at the top of the git page."""
+        commits = await read_branch_graph(project_root, GIT_COMMITS)
+        return JSONResponse({"commits": commits} if commits is not None else {"error": "Not a git repository."})
+
+    async def git_commit(request: Request) -> Response:
+        """Changed lines of one commit, file by file (right side of the git page)."""
+        commit_hash = request.path_params["hash"]
+        files = await commit_diff(project_root, commit_hash)
+        if files is None:
+            return HTMLResponse('<p class="empty">Commit not found.</p>', status_code=404)
+        html =templates.get_template("git_commit.html").render(files=files, hash=commit_hash)
+        return HTMLResponse(html)
+
+    async def view_data(request: Request) -> Response:
+        """Data of a graph view, as JSON, built by the same functions the MCP tools use."""
+        view = request.path_params["view"]
+        params = request.query_params
+        if view == "architecture":
+            return JSONResponse(architecture(state, params.get("level", "modules")))
+        if view == "classes":
+            return JSONResponse(class_diagram(state, params.get("package", "")))
+        if view == "calls":
+            depth = int(params.get("depth", "1")) if params.get("depth", "1").isdigit() else 1
+            return JSONResponse(call_graph(state, params.get("focus", ""), depth, params.get("direction", "both")))
+        return JSONResponse({"error": f"Unknown view: {view}"}, status_code=404)
 
     async def index(request: Request) -> Response:
         if state.ready and state.roots:
@@ -145,6 +221,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     return [
         Route("/", index),
         Route("/wiki/{path:path}", wiki),
+        Route("/architecture", view_page),
+        Route("/classes", view_page),
+        Route("/calls", view_page),
+        Route("/git", view_page),
+        Route("/graph/{view}", view_data),
+        Route("/git/branches", git_branches),
+        Route("/git/commit/{hash}", git_commit),
         Route("/source/{path:path}", source),
         Route("/search", search_box),
         Route("/code-theme/{name}.css", theme),
