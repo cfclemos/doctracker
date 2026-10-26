@@ -1,214 +1,76 @@
 {% import "macros.html" as ui %}
-{# Plans, tasks and notes. Every form posts to /notes/<action>, which calls the same methods as the
-   MCP tools (with the source "wiki") and returns this page redrawn. #}
-{% macro post(action) -%}
-hx-post="/notes/{{ action }}" hx-target="#content"
+{# The planner (plans → features → tasks, drawn as a graph) and the notes (guidelines, memory).
+   Buttons open modals (/notes/form); every form posts to /notes/<action>, which calls the same methods
+   as the MCP tools, with the source "wiki", and returns this page redrawn. #}
+{% macro open_form(query, label, extra="") -%}
+<button type="button" class="notes-button {{ extra }}" hx-target="#notes-dialog-body"
+        hx-get="/notes/form?{{ query }}&tab={{ tab }}&filter_type={{ note_type }}&filter_status={{ note_status }}&plans={{ plans }}&selected={{ selected }}">{{ label }}</button>
 {%- endmacro %}
-{% macro keep() -%}
-<input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="filter_type" value="{{ note_type }}">
-<input type="hidden" name="filter_status" value="{{ note_status }}">
-{%- endmacro %}
-{% macro list_lines(items) %}{{ items | join("\n") }}{% endmacro %}
-{% macro when(stamp) %}<time datetime="{{ stamp }}">{{ stamp[:16] | replace("T", " ") }}</time>{% endmacro %}
 
 <div class="notes-page">
-  {{ ui.view_header("notes", "NOTES",
-     "The work in progress (plans and their tasks) and the lasting knowledge of the project (rules, decisions, pitfalls…). Agents change them through the MCP tools; you can change them here.") }}
+  {{ ui.view_header("notes", "AGENT NOTES",
+     "Plan the work and keep what the project knows. Agents do it through the MCP tools; you can do it here, with the same functions.") }}
   <nav class="notes-tabs">
-    <a class="notes-tab{% if tab == 'work' %} current{% endif %}" {{ ui.nav_url("/notes?tab=work") }}>Work</a>
-    <a class="notes-tab{% if tab == 'notes' %} current{% endif %}" {{ ui.nav_url("/notes?tab=notes") }}>Notes</a>
+    {% for name, label in (("planner", "Planner"), ("guidelines", "Guidelines"), ("memory", "Memory")) %}
+    <a class="notes-tab{% if tab == name %} current{% endif %}" {{ ui.nav_url("/notes?tab=" ~ name) }}>{{ label }}</a>
+    {% endfor %}
   </nav>
   {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
 
-  {% if tab == "work" %}
-  {# --- Work: plans, newest first, active ones open. #}
-  <details class="notes-new">
-    <summary>New plan</summary>
-    <form {{ post("create_plan") }} class="notes-form">{{ keep() }}
-      <label>Title <input name="title" required></label>
-      <label>Goal <textarea name="goal" rows="2"></textarea></label>
-      <label>Requirements <small>one per line</small><textarea name="requirements" rows="3"></textarea></label>
-      <label>Decisions <small>one per line</small><textarea name="decisions" rows="3"></textarea></label>
-      <label>Branches <small>one per line</small><textarea name="branches" rows="2"></textarea></label>
-      <button type="submit">Create plan</button>
-    </form>
-  </details>
-
-  {% for plan in plans %}
-  <details class="plan plan-{{ plan.status }}" {% if plan.status == "active" %}open{% endif %}>
-    <summary>
-      <span class="plan-title">{{ plan.title }}</span>
-      <span class="notes-pill status-{{ plan.status }}">{{ plan.status }}</span>
-      {% for branch in plan.branches %}<code class="notes-branch">{{ branch }}</code>{% endfor %}
-      <span class="notes-meta">#{{ plan.id }} · {{ plan.tasks | selectattr("status", "equalto", "done") | list | length }}/{{ plan.tasks | length }} tasks done</span>
-    </summary>
-    {% if plan.goal %}<p class="plan-goal">{{ plan.goal }}</p>{% endif %}
-    <div class="plan-lists">
-      {% if plan.requirements %}<div><h3>Requirements</h3><ul>{% for item in plan.requirements %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
-      {% if plan.decisions %}<div><h3>Decisions</h3><ul>{% for item in plan.decisions %}<li>{{ item }}</li>{% endfor %}</ul></div>{% endif %}
-    </div>
-
-    <ol class="tasks">
-      {% for task in plan.tasks %}
-      <li class="task task-{{ task.status }}">
-        <div class="task-head">
-          <form {{ post("update_task") }} hx-trigger="change" class="task-status">{{ keep() }}
-            <input type="hidden" name="task_id" value="{{ task.id }}">
-            <select name="status" aria-label="Status">
-              {% for status in task_statuses %}<option value="{{ status }}"{% if status == task.status %} selected{% endif %}>{{ status }}</option>{% endfor %}
-            </select>
-          </form>
-          <strong class="task-title">{{ task.title }}</strong>
-          {% if task.branch %}<code class="notes-branch">{{ task.branch }}</code>{% endif %}
-          <span class="notes-meta">#{{ task.id }}</span>
-        </div>
-        {% if task.criteria %}<ul class="task-criteria">{% for item in task.criteria %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
-        {% if task.annotations %}
-        <ul class="task-annotations">
-          {% for item in task.annotations %}<li>{{ item.text }} <span class="notes-meta">{{ item.source }} · {{ when(item.created) }}</span></li>{% endfor %}
-        </ul>
-        {% endif %}
-        {% if task.evidence %}
-        <ul class="task-evidence">
-          {% for item in task.evidence %}<li><span class="notes-pill evidence-{{ item.source }}">{{ item.source }}</span> {{ item.detail }} <span class="notes-meta">{{ when(item.created) }}</span></li>{% endfor %}
-        </ul>
-        {% endif %}
-        <div class="task-actions">
-          <form {{ post("annotate_task") }} class="notes-inline">{{ keep() }}
-            <input type="hidden" name="task_id" value="{{ task.id }}">
-            <input name="text" placeholder="Annotate: what was done, decided or found…" required>
-            <button type="submit">Add</button>
-          </form>
-          <form {{ post("add_evidence") }} class="notes-inline">{{ keep() }}
-            <input type="hidden" name="task_id" value="{{ task.id }}">
-            <input name="detail" placeholder="Confirm it is done: what you checked…" required>
-            <button type="submit">Confirm</button>
-          </form>
-          <details class="notes-edit">
-            <summary>Edit</summary>
-            <form {{ post("update_task") }} class="notes-form">{{ keep() }}
-              <input type="hidden" name="task_id" value="{{ task.id }}">
-              <label>Title <input name="title" value="{{ task.title }}" required></label>
-              <label>Criteria <small>one per line</small><textarea name="criteria" rows="3">{{ list_lines(task.criteria) }}</textarea></label>
-              <label>Branch <input name="branch" value="{{ task.branch }}"></label>
-              <button type="submit">Save</button>
-            </form>
-            <form {{ post("delete_task") }} hx-confirm="Delete this task, its annotations and evidence?">{{ keep() }}
-              <input type="hidden" name="task_id" value="{{ task.id }}">
-              <button type="submit" class="notes-danger">Delete task</button>
-            </form>
-          </details>
-        </div>
-      </li>
+  {% if tab == "planner" %}
+  {# Plans on top: a click adds a plan to the chosen ones or takes it out. #}
+  {% include "notes_cards.html" %}
+  <div class="graph-toolbar">
+    <div class="graph-legend">
+      {% for level in ("plan", "feature", "task") %}<span><i class="level-icon level-{{ level }}"></i>{{ level }}</span>{% endfor %}
+      <span class="legend-gap"></span>
+      {% for state, label in (("todo", "to do"), ("doing", "in progress"), ("blocked", "blocked"), ("late", "late"), ("done", "done")) %}
+      <span><i class="notes-swatch state-{{ state }}"></i>{{ label }}</span>
       {% endfor %}
-    </ol>
-
-    <form {{ post("add_task") }} class="notes-inline notes-add-task">{{ keep() }}
-      <input type="hidden" name="plan_id" value="{{ plan.id }}">
-      <input name="title" placeholder="New task…" required>
-      <button type="submit">Add task</button>
-    </form>
-    <details class="notes-edit">
-      <summary>Edit plan</summary>
-      <form {{ post("update_plan") }} class="notes-form">{{ keep() }}
-        <input type="hidden" name="plan_id" value="{{ plan.id }}">
-        <label>Title <input name="title" value="{{ plan.title }}" required></label>
-        <label>Goal <textarea name="goal" rows="2">{{ plan.goal }}</textarea></label>
-        <label>Requirements <small>one per line</small><textarea name="requirements" rows="3">{{ list_lines(plan.requirements) }}</textarea></label>
-        <label>Decisions <small>one per line</small><textarea name="decisions" rows="3">{{ list_lines(plan.decisions) }}</textarea></label>
-        <label>Branches <small>one per line</small><textarea name="branches" rows="2">{{ list_lines(plan.branches) }}</textarea></label>
-        <label>Status
-          <select name="status">{% for status in plan_statuses %}<option value="{{ status }}"{% if status == plan.status %} selected{% endif %}>{{ status }}</option>{% endfor %}</select>
-        </label>
-        <button type="submit">Save</button>
-      </form>
-      <form {{ post("delete_plan") }} hx-confirm="Delete this plan and all its tasks?">{{ keep() }}
-        <input type="hidden" name="plan_id" value="{{ plan.id }}">
-        <button type="submit" class="notes-danger">Delete plan</button>
-      </form>
-    </details>
-  </details>
-  {% else %}
-  <p class="empty">No plans yet. Agents start one with <code>create_plan</code>, or use <strong>New plan</strong> above.</p>
-  {% endfor %}
+      <span><i class="line imports"></i>waits for (hover: why)</span>
+    </div>
+  </div>
+  {# Left: the chosen plans; right: the plan, feature or task clicked (the first chosen plan at first). #}
+  <div class="planner-layout">
+    {{ ui.view_canvas("planner", data_url) }}
+    <div class="planner-splitter" role="separator" aria-orientation="vertical" title="Drag to make one side wider"></div>
+    <aside id="planner-detail" class="planner-detail"
+           {% if selected %}hx-get="/notes/form?item={{ selected }}&panel=1&tab=planner&plans={{ plans }}" hx-trigger="load"{% endif %}>
+      <p class="empty">{% if selected %}Loading…{% else %}Choose a plan above.{% endif %}</p>
+    </aside>
+  </div>
 
   {% else %}
-  {# --- Notes: lasting knowledge, filtered by type and status. #}
-  <form class="notes-filter" hx-get="/notes" hx-target="#content" hx-push-url="true" hx-trigger="change">
-    <input type="hidden" name="tab" value="notes">
-    <label>Type
-      <select name="type">
-        <option value="">All</option>
-        {% for name in note_types %}<option value="{{ name }}"{% if name == note_type %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Status
-      <select name="status">
-        {% for value, label in (("active", "Active"), ("superseded", "Superseded"), ("", "All")) %}
-        <option value="{{ value }}"{% if value == note_status %} selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
-
-  <details class="notes-new">
-    <summary>New note</summary>
-    <form {{ post("create_note") }} class="notes-form">{{ keep() }}
+  <div class="graph-toolbar">
+    {{ open_form("kind=note&type=" ~ note_groups[tab][0], "New note", "primary") }}
+    <form class="notes-filter" hx-get="/notes" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <input type="hidden" name="tab" value="{{ tab }}">
       <label>Type
-        <select name="type">{% for name, text in note_types.items() %}<option value="{{ name }}" title="{{ text }}">{{ name }} — {{ text }}</option>{% endfor %}</select>
+        <select name="type">
+          <option value="">All</option>
+          {% for name in note_groups[tab] %}<option value="{{ name }}"{% if name == note_type %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
       </label>
-      <label>Statement <textarea name="statement" rows="2" required></textarea></label>
-      <label>Why <textarea name="why" rows="2"></textarea></label>
-      <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2"></textarea></label>
-      <button type="submit">Create note</button>
+      <label>Status
+        <select name="status">
+          {% for value, label in (("active", "Active"), ("superseded", "Superseded"), ("", "All")) %}
+          <option value="{{ value }}"{% if value == note_status %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
     </form>
-  </details>
-
-  <ul class="notes-list">
-    {% for note in notes %}
-    <li class="note note-{{ note.type }} note-{{ note.status }}">
-      <div class="note-head">
-        <span class="notes-pill type-{{ note.type }}" title="{{ note_types[note.type] }}">{{ note.type }}</span>
-        <span class="note-statement">{{ note.statement }}</span>
-      </div>
-      {% if note.why %}<p class="note-why">{{ note.why }}</p>{% endif %}
-      {% if note.entities %}
-      <p class="note-entities">{% for path in note.entities %}<a {{ ui.nav(path) }}><code>{{ path }}</code></a>{% endfor %}</p>
-      {% endif %}
-      <p class="notes-meta">#{{ note.id }} · {{ note.source }} · {{ when(note.updated) }}
-        {% if note.supersedes %} · supersedes #{{ note.supersedes }}{% endif %}
-        {% if note.superseded_by %} · <strong>superseded by #{{ note.superseded_by }}</strong>{% endif %}</p>
-      {% if note.status == "active" %}
-      <div class="task-actions">
-        <details class="notes-edit">
-          <summary>Edit</summary>
-          <form {{ post("update_note") }} class="notes-form">{{ keep() }}
-            <input type="hidden" name="note_id" value="{{ note.id }}">
-            <label>Statement <textarea name="statement" rows="2" required>{{ note.statement }}</textarea></label>
-            <label>Why <textarea name="why" rows="2">{{ note.why }}</textarea></label>
-            <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2">{{ list_lines(note.entities) }}</textarea></label>
-            <button type="submit">Save</button>
-          </form>
-        </details>
-        <details class="notes-edit">
-          <summary>Supersede</summary>
-          <form {{ post("supersede_note") }} class="notes-form">{{ keep() }}
-            <input type="hidden" name="note_id" value="{{ note.id }}">
-            <label>What holds now <textarea name="statement" rows="2" required>{{ note.statement }}</textarea></label>
-            <label>Why it changed <textarea name="why" rows="2"></textarea></label>
-            <button type="submit">Supersede</button>
-          </form>
-        </details>
-        <form {{ post("delete_note") }} hx-confirm="Delete this note? (A note that stopped holding should be superseded.)">{{ keep() }}
-          <input type="hidden" name="note_id" value="{{ note.id }}">
-          <button type="submit" class="notes-danger">Delete</button>
-        </form>
-      </div>
-      {% endif %}
-    </li>
-    {% else %}
-    <li class="empty">No notes{% if note_type %} of type {{ note_type }}{% endif %}.</li>
-    {% endfor %}
-  </ul>
+  </div>
+  <p class="notes-help">{% if tab == "guidelines" %}How to work: preferences of the user and rules of the project.{% else %}What is known: decisions and why, how parts work, pitfalls, references.{% endif %}</p>
+  {# Left: the notes of the group as a tree (types, then their notes); right: the note clicked. #}
+  <div class="planner-layout">
+    {% include "notes_tree.html" %}
+    <div class="planner-splitter" role="separator" aria-orientation="vertical" title="Drag to make one side wider"></div>
+    <aside id="planner-detail" class="planner-detail"
+           {% if selected %}hx-get="/notes/form?note={{ selected[5:] }}&panel=1&tab={{ tab }}&selected={{ selected }}" hx-trigger="load"{% endif %}>
+      <p class="empty">{% if selected %}Loading…{% else %}Click a note to read and change it.{% endif %}</p>
+    </aside>
+  </div>
   {% endif %}
+
+  <dialog id="notes-dialog" class="notes-dialog"><div id="notes-dialog-body"></div></dialog>
 </div>

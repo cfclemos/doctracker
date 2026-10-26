@@ -28,7 +28,7 @@
                   hx-get="/git/commit/{{ commit.hash }}" hx-target="#git-diff">
             <span class="git-commit-head">{{ commit.subject }}</span>
             <span class="git-commit-meta git-commit-author">{{ commit.author }}</span>
-            <span class="git-commit-meta">{{ commit.date[:16] | replace("T", " ") }}
+            <span class="git-commit-meta">{{ commit.date | local_time }}
               · {{ (commit.added | length) + (commit.modified | length) + (commit.deleted | length) + (commit.renamed | length) }} files</span>
           </button>
           {% if commit.body %}<div class="git-commit-body">{{ commit.body | commit_message | safe }}</div>{% endif %}

@@ -94,6 +94,8 @@ const DIAGRAM_MARKERS = `<defs>
     <path d="M1 1 L11 6 L1 11" class="uml-marker-open"/></marker>
   <marker id="arch-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse">
     <path d="M1 1 L11 6 L1 11 Z" class="arch-marker"/></marker>
+  <marker id="dep-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
+    <path d="M1 1 L11 6 L1 11 Z" class="dep-marker"/></marker>
   <marker id="arch-arrow-cycle" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse">
     <path d="M1 1 L11 6 L1 11 Z" class="arch-marker-cycle"/></marker>
 </defs>`;
@@ -216,7 +218,7 @@ function archFrame(node) {
 // its subpackages as blocks of their own size) with dagre, importers above, an import between two
 // modules counting for the blocks that contain them. Frames stay compact, unlike dagre's own
 // compound layout, which adds many empty rows.
-function archLayout(boxes, data) {
+function archLayout(boxes, data, _aspect, heads = {}) {
   const parentOf = Object.fromEntries(data.nodes.map((node) => [node.id, node.parent || ""]));
   const inside = {};  // frame id ("" for the top) -> ids directly inside it
   for (const node of data.nodes) (inside[node.parent || ""] ||= []).push(node.id);
@@ -232,7 +234,7 @@ function archLayout(boxes, data) {
         return { id, width: box.width, height: box.height, place: (x, y) => { box.x = x; box.y = y; } };
       }
       const content = arrange(id);
-      return { id, width: content.width + 2 * FRAME_PAD, height: content.height + 2 * FRAME_PAD + FRAME_HEAD,
+      return { id, width: Math.max(content.width + 2 * FRAME_PAD, heads[id] || 0), height: content.height + 2 * FRAME_PAD + FRAME_HEAD,
         place: (x, y) => content.place(x + FRAME_PAD, y + FRAME_PAD + FRAME_HEAD) };
     });
     const graph = new dagre.graphlib.Graph();
@@ -298,15 +300,165 @@ function archPath(edge, boxes) {
   return `M ${x1} ${y1} C ${x1} ${middle}, ${x2} ${middle}, ${x2} ${y2}`;
 }
 
+// --- PLANNER: the chosen plans and their features are frames, tasks are boxes, each colored by its
+// state (to do, in progress, blocked, late, done) and naming it. An arrow goes from what is waited for
+// to what waits; its reason shows on hover. A click on a box or frame shows it in the right panel; a
+// task box has a checkbox to mark it done. An item of a plan not chosen, linked by a dependency, is a
+// small gray box: a click adds its plan to the chosen ones.
+const STATE_LABELS = { todo: "to do", doing: "in progress", blocked: "blocked", late: "late", done: "done" };
+
+function plannerParams() {
+  return new URLSearchParams(window.location.search);
+}
+
+function plannerAdd(query, label, title) {
+  const params = plannerParams();
+  return `<button type="button" class="planner-button" title="${escapeHtml(title)}" hx-target="#notes-dialog-body"
+    hx-get="/notes/form?${query}&tab=planner&plans=${escapeHtml(params.get("plans") || "")}">${escapeHtml(label)}</button>`;
+}
+
+function plannerDetail(item) {
+  return `/notes/form?item=${encodeURIComponent(item)}&panel=1&tab=planner&plans=${encodeURIComponent(plannerParams().get("plans") || "")}`;
+}
+
+function plannerBox(node) {
+  if (node.kind === "external") {
+    const plans = new Set((plannerParams().get("plans") || "").split(",").filter((part) => /^\d+$/.test(part)));
+    plans.add(String(node.plan_id));
+    const url = `/notes?tab=planner&plans=${[...plans].join(",")}&selected=${encodeURIComponent(node.id)}`;
+    return `<a class="uml-box planner-external state-${node.state}" data-box="${escapeHtml(node.id)}" href="${url}"
+        hx-get="${url}" hx-target="#content" hx-push-url="true" title="Not shown: click to show the plan “${escapeHtml(node.plan)}”">
+      <span class="planner-external-plan">↗ in plan: <strong>${escapeHtml(node.plan)}</strong></span>
+      <span class="planner-external-item"><i class="level-icon level-${escapeHtml(node.level || "task")}"></i>
+        <strong>${escapeHtml(node.label)}</strong><span class="waits-state state-${node.state}" title="${STATE_LABELS[node.state]}"></span></span></a>`;
+  }
+  const facts = [
+    node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : "",
+    node.branch ? `<span title="Branch"><code>${escapeHtml(node.branch)}</code></span>` : "",
+    node.criteria ? `<span title="Criteria met">☑ ${node.criteria_done}/${node.criteria}</span>` : "",
+    `<span title="Evidence that it is done">✔ ${node.evidence}</span>`,
+    node.annotations ? `<span title="Annotations">✎ ${node.annotations}</span>` : "",
+  ].join("");
+  const waits = (node.waits_for || []).map((waited) => `<div class="planner-waits state-${waited.state}" title="${escapeHtml(waited.reason)}">
+    ⛓ waits for <strong>${escapeHtml(waited.title)}</strong> <span class="planner-state">${STATE_LABELS[waited.state]}</span></div>`).join("");
+  // A box may stand for a feature or a whole plan that is just this task: it says so.
+  const level = node.level !== "task" ? `<i class="level-icon level-${node.level}" title="${escapeHtml(node.level)}"></i>` : "";
+  if (node.empty) {
+    return `<div class="uml-box planner-task planner-empty state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
+      <div class="uml-head">${level}<strong>${escapeHtml(node.label)}</strong><span class="planner-state">${STATE_LABELS[node.state]}</span></div>
+      <div class="planner-facts"><span>no ${node.level === "plan" ? "features" : "tasks"} yet</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}</div>${waits}
+    </div>`;
+  }
+  return `<div class="uml-box planner-task state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
+    <div class="uml-head">
+      <form class="planner-check" hx-post="/notes/toggle_task" hx-target="#content" hx-trigger="change"
+            hx-confirm="${node.status === "done" ? `Withdraw the approval of “${escapeHtml(node.label)}”? It goes back to in progress and the approval evidence is deleted.`
+              : `Mark “${escapeHtml(node.label)}” as done? It is recorded as your approval.`}"
+            data-confirm-title="${node.status === "done" ? "Withdraw approval" : "Mark task as done"}">
+        <input type="hidden" name="task_id" value="${node.task_id}"><input type="hidden" name="tab" value="planner">
+        <input type="hidden" name="plans" value="${escapeHtml(plannerParams().get("plans") || "")}">
+        <input type="hidden" name="selected" value="${escapeHtml(node.open)}">
+        <input type="checkbox" name="done" value="1" aria-label="Done"${node.status === "done" ? " checked" : ""}>
+      </form>
+      ${level}<strong>${escapeHtml(node.label)}</strong>
+      <span class="planner-state">${STATE_LABELS[node.state]}</span>
+    </div>
+    <div class="planner-facts">${facts}</div>${waits}
+  </div>`;
+}
+
+// The planner is a column: in each frame, what is inside is stacked, what is waited for above what
+// waits (in the order of the plan otherwise). Each frame is as wide as its widest item.
+const STACK_GAP = 14;
+
+function plannerLayout(boxes, data, _aspect, heads = {}) {
+  const parentOf = Object.fromEntries(data.nodes.map((node) => [node.id, node.parent || ""]));
+  const inside = {};
+  for (const node of data.nodes) (inside[node.parent || ""] ||= []).push(node.id);
+  const within = (id, frame) => {
+    while (id && parentOf[id] !== frame) id = parentOf[id];
+    return id;
+  };
+  const arrange = (frame) => {
+    const ids = inside[frame] || [];
+    // Waited-for first: repeatedly take, in plan order, the first item whose waits are all placed.
+    const waits = Object.fromEntries(ids.map((id) => [id, new Set()]));
+    for (const edge of data.edges) {
+      const before = within(edge.source, frame), after = within(edge.target, frame);
+      if (before && after && before !== after) waits[after].add(before);
+    }
+    const order = [];
+    while (order.length < ids.length) {
+      const next = ids.find((id) => !order.includes(id) && [...waits[id]].every((other) => order.includes(other)))
+        || ids.find((id) => !order.includes(id));  // a cycle cannot happen, but never loop forever
+      order.push(next);
+    }
+    const items = order.map((id) => {
+      if (boxes[id]) return { width: boxes[id].width, height: boxes[id].height, place: (x, y) => { boxes[id].x = x; boxes[id].y = y; } };
+      const content = arrange(id);
+      return { width: Math.max(content.width + 2 * FRAME_PAD, heads[id] || 0), height: content.height + 2 * FRAME_PAD + FRAME_HEAD,
+        place: (x, y) => content.place(x + FRAME_PAD, y + FRAME_PAD + FRAME_HEAD) };
+    });
+    const width = Math.max(0, ...items.map((item) => item.width));
+    const height = items.reduce((sum, item) => sum + item.height, 0) + STACK_GAP * Math.max(0, items.length - 1);
+    return {
+      width, height,
+      place: (x, y) => {
+        for (const item of items) {
+          item.place(x, y);
+          y += item.height + STACK_GAP;
+        }
+      },
+    };
+  };
+  arrange("").place(0, 0);
+}
+
+// Each dependency gets its own lane on the right of the column, the shortest nearest, so arrows do
+// not cross the boxes between their ends nor run on top of each other.
+function plannerLanes(edges, ends) {
+  const span = (edge) => Math.abs(ends[edge.source].y - ends[edge.target].y);
+  [...edges].sort((a, b) => span(a) - span(b)).forEach((edge, index) => { edge.lane = index; });
+}
+
+// From the right side of what is waited for, out to the edge's lane, along it, and back into the
+// right side of what waits.
+function plannerPath(edge, ends) {
+  const from = ends[edge.source];
+  const to = ends[edge.target];
+  const right = Math.max(...Object.values(ends).map((end) => end.x + end.width));
+  const lane = right + 24 + 18 * (edge.lane || 0);
+  const x1 = from.x + from.width, y1 = from.y + Math.min(from.height / 2, 14);
+  const x2 = to.x + to.width, y2 = to.y + Math.min(to.height / 2, 14);
+  const turn = 12 * Math.sign(y2 - y1 || 1);
+  return `M ${x1} ${y1} H ${lane - 12} Q ${lane} ${y1}, ${lane} ${y1 + turn} V ${y2 - turn} Q ${lane} ${y2}, ${lane - 12} ${y2} H ${x2}`;
+}
+
+function plannerFrame(node) {
+  const [kind, id] = node.id.split(":");
+  const add = kind === "plan" ? plannerAdd(`kind=feature&plan_id=${id}`, "+ feature", "Add a feature to this plan")
+    : plannerAdd(`kind=task&feature_id=${id}`, "+ task", "Add a task to this feature");
+  return `<div class="arch-frame planner-frame planner-${kind} state-${node.state}${node.parent ? " inner" : ""}"
+      data-frame="${escapeHtml(node.id)}" data-open="${plannerDetail(node.id)}">
+    <div class="arch-frame-head"><i class="level-icon level-${kind}" title="${kind}"></i><strong>${escapeHtml(node.label)}</strong>
+      <span class="planner-state">${STATE_LABELS[node.state]}</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}
+      ${add}</div></div>`;
+}
+
 const DIAGRAMS = {
   classes: { box: classBox, layout: classLayout, path: classPath, markers: classMarkers, empty: "No classes here." },
   architecture: { box: archBox, frame: archFrame, layout: archLayout, prepare: archPorts, path: archPath,
     markers: (edge) => (edge.directed ? `marker-end="url(#${edge.cycle ? "arch-arrow-cycle" : "arch-arrow"})"` : ""),
     empty: "No modules." },
+  planner: { box: plannerBox, frame: plannerFrame, layout: plannerLayout, prepare: plannerLanes, path: plannerPath,
+    dragOuterFrames: true, openTarget: "#planner-detail", edgeReasons: true, fitWidth: true,
+    markers: () => 'marker-end="url(#dep-arrow)"', empty: "No plans yet: create one with New plan." },
 };
 
-async function drawDiagram(canvas, view) {
-  const data = await (await fetch(canvas.dataset.url)).json();
+// `keep` (scale and position from a previous drawing) and `data` (already fetched) are given when the
+// drawing is redone in place after a change, so it does not jump nor blink.
+async function drawDiagram(canvas, view, keep = null, data = null) {
+  data ||= await (await fetch(canvas.dataset.url)).json();
   if (data.error || !data.nodes.length) {
     canvas.innerHTML = `<p class="empty">${escapeHtml(data.error || view.empty)}</p>`;
     return;
@@ -320,6 +472,7 @@ async function drawDiagram(canvas, view) {
     ${data.nodes.filter((node) => !node.frame).map(view.box).join("")}</div>`;
   const stage = canvas.querySelector(".uml-stage");
   const svg = stage.querySelector("svg");
+  htmx.process(stage);  // boxes and frames may hold buttons and forms
 
   // Measure every box (and where its rows are), then let the page place them.
   const boxes = {};
@@ -328,9 +481,12 @@ async function drawDiagram(canvas, view) {
     const rows = {};
     for (const row of element.querySelectorAll("[data-row]")) rows[row.dataset.row] = row.offsetTop + row.offsetHeight / 2;
     boxes[element.dataset.box] = { element, width: element.offsetWidth, height: element.offsetHeight, rows,
-      headCenter: head.offsetTop + head.offsetHeight / 2 };
+      headCenter: head ? head.offsetTop + head.offsetHeight / 2 : element.offsetHeight / 2 };  // a box may have no title bar
   }
-  view.layout(boxes, data, canvas.clientWidth / canvas.clientHeight);
+  // A frame is at least as wide as its title.
+  const heads = Object.fromEntries([...stage.querySelectorAll("[data-frame]")]
+    .map((element) => [element.dataset.frame, element.firstElementChild.offsetWidth]));
+  view.layout(boxes, data, canvas.clientWidth / canvas.clientHeight, heads);
 
   // Frames wrap what is inside them (innermost first), with room for their title on top.
   const frames = {};
@@ -338,11 +494,18 @@ async function drawDiagram(canvas, view) {
   const frameOrder = Object.keys(frames).sort((a, b) => depth(b) - depth(a));
   const fitFrames = () => {
     for (const id of frameOrder) {
-      const inside = [...Object.entries(boxes), ...Object.entries(frames)].filter(([child]) => parentOf[child] === id).map(([, item]) => item);
+      if (!frames[id]) continue;  // left out: nothing inside
+      const inside = [...Object.entries(boxes), ...Object.entries(frames)].filter(([child]) => parentOf[child] === id)
+        .map(([, item]) => item).filter((item) => Number.isFinite(item.x));
+      if (!inside.length) {  // nothing inside: hidden, and out of every size
+        frames[id].element.hidden = true;
+        delete frames[id];
+        continue;
+      }
       const left = Math.min(...inside.map((item) => item.x)), top = Math.min(...inside.map((item) => item.y));
       const right = Math.max(...inside.map((item) => item.x + item.width)), bottom = Math.max(...inside.map((item) => item.y + item.height));
       Object.assign(frames[id], { x: left - FRAME_PAD, y: top - FRAME_PAD - FRAME_HEAD,
-        width: right - left + 2 * FRAME_PAD, height: bottom - top + 2 * FRAME_PAD + FRAME_HEAD });
+        width: Math.max(right - left + 2 * FRAME_PAD, heads[id] || 0), height: bottom - top + 2 * FRAME_PAD + FRAME_HEAD });
     }
   };
   const place = () => {
@@ -377,6 +540,7 @@ async function drawDiagram(canvas, view) {
   // Hover text: what the line links; an undirected link also tells how many imports go each way.
   const label = (id) => data.nodes.find((node) => node.id === id)?.label || id;
   const title = (edge) => {
+    if (edge.reason) return `${label(edge.target)} waits for ${label(edge.source)}: ${edge.reason}`;
     if (edge.directed !== false) return `${label(edge.source)} → ${label(edge.target)}${edge.weight > 1 ? ` (${edge.weight} imports)` : ""}`;
     const ways = Object.entries(edge.counts || {}).map(([pair, count]) => {
       const [from, to] = pair.split("->");
@@ -388,22 +552,79 @@ async function drawDiagram(canvas, view) {
     data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" ${view.markers(edge)}
     ${edge.weight > 1 ? `style="stroke-width: ${1.4 + Math.min(edge.weight, 8) * 0.5}px"` : ""}><title>${escapeHtml(title(edge))}</title></path>`).join(""));
   const lines = [...svg.querySelectorAll(".uml-line")].map((element, index) => ({ element, edge: data.edges[index] }));
+  // With `edgeReasons`, hovering a line opens a box with what waits, for what and why. Each line gets
+  // a wider invisible twin, so it is easy to point at.
+  if (view.edgeReasons) {
+    const tooltip = canvas.parentElement.querySelector(".graph-tooltip");
+    for (const line of lines) {
+      line.element.querySelector("title")?.remove();
+      line.element.insertAdjacentHTML("beforebegin", '<path class="uml-line-hit"/>');
+      line.hit = line.element.previousElementSibling;
+      line.hit.addEventListener("mouseenter", (event) => {
+        const waited = data.nodes.find((node) => node.id === line.edge.source);
+        tooltip.innerHTML = `<span class="graph-tooltip-role dependency-role">Dependency</span>
+          <span class="graph-tooltip-text"><strong>${escapeHtml(label(line.edge.target))}</strong> can only be done after
+            <strong>${escapeHtml(label(line.edge.source))}</strong>${waited ? ` (${escapeHtml(STATE_LABELS[waited.state] || waited.state)})` : ""}.</span>
+          ${line.edge.reason ? `<span class="graph-tooltip-text"><em>Why:</em> ${escapeHtml(line.edge.reason)}</span>` : ""}`;
+        const bounds = canvas.parentElement.getBoundingClientRect();
+        tooltip.style.left = `${event.clientX - bounds.left + 12}px`;
+        tooltip.style.top = `${event.clientY - bounds.top + 12}px`;
+        tooltip.hidden = false;
+        line.element.classList.add("near");
+      });
+      line.hit.addEventListener("mouseleave", () => {
+        tooltip.hidden = true;
+        line.element.classList.remove("near");
+      });
+    }
+  }
   const drawLines = () => {
-    view.prepare?.(data.edges, boxes);
-    for (const line of lines) line.element.setAttribute("d", view.path(line.edge, boxes));
+    const ends = { ...frames, ...boxes };  // a line may start or end on a frame (a plan, a package...)
+    view.prepare?.(data.edges, ends);
+    for (const line of lines) {
+      line.element.setAttribute("d", view.path(line.edge, ends));
+      line.hit?.setAttribute("d", line.element.getAttribute("d"));
+    }
   };
   drawLines();
 
   // Zoom with the wheel (around the pointer), pan by dragging the background, fit to the canvas.
   let scale = 1, panX = 0, panY = 0;
-  const apply = () => { stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`; };
+  const zoomLevel = canvas.closest(".graph-page, .notes-page")?.querySelector(".graph-zoom-level");
+  const apply = () => {
+    stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    if (zoomLevel) zoomLevel.textContent = `${Math.round(scale * 100)}%`;
+  };
+  // With `fitWidth`, only the width is fitted and the drawing starts at its top, so a tall column stays
+  // readable; dragging moves through it.
   const fit = () => {
-    scale = Math.min(1, (canvas.clientWidth - 20) / size.width, (canvas.clientHeight - 20) / size.height);
-    panX = (canvas.clientWidth - size.width * scale) / 2;
-    panY = Math.max(10, (canvas.clientHeight - size.height * scale) / 2);
+    if (view.fitWidth) {
+      scale = Math.min(1, (canvas.clientWidth - 20) / (size.width + 160));
+      panX = Math.max(10, (canvas.clientWidth - (size.width + 160) * scale) / 2);
+      panY = 10;
+    } else {
+      scale = Math.min(1, (canvas.clientWidth - 20) / size.width, (canvas.clientHeight - 20) / size.height);
+      panX = (canvas.clientWidth - size.width * scale) / 2;
+      panY = Math.max(10, (canvas.clientHeight - size.height * scale) / 2);
+    }
     apply();
   };
   fit();
+  if (keep) {
+    ({ scale, panX, panY } = keep);
+    apply();
+  }
+  canvas.viewState = () => ({ scale, panX, panY });
+  // When the drawing area changes size (window resized, panel moved under it), fit again.
+  const areaSize = () => `${canvas.clientWidth}x${canvas.clientHeight}`;
+  let lastSize = areaSize();
+  new ResizeObserver(() => {
+    const now = areaSize();
+    if (now !== lastSize && document.body.contains(canvas)) {
+      lastSize = now;
+      fit();
+    }
+  }).observe(canvas);
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     const bounds = canvas.getBoundingClientRect();
@@ -417,27 +638,33 @@ async function drawDiagram(canvas, view) {
 
   // Dragging a box moves it; dragging a frame (by its title, or by its body for inner frames) moves
   // everything inside it. Frames refit and lines are redrawn as it moves. Dragging the background,
-  // or the body of an outermost frame, pans.
+  // or the body of an outermost frame, pans; with `dragOuterFrames` (several outermost frames, like
+  // the plans of the planner) every frame moves by its body and only the background pans.
   const contains = (frame, id) => {
     for (let parent = parentOf[id]; parent; parent = parentOf[parent]) if (parent === frame) return true;
     return false;
   };
   let drag = null;  // what is being dragged: some boxes, or the background (moving is empty)
   canvas.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("button, input, select, textarea, label, a")) return;  // a control, not a drag
     const boxElement = event.target.closest("[data-box]");
     const frameElement = !boxElement && event.target.closest("[data-frame]");
-    const frame = frameElement && (event.target.closest(".arch-frame-head") || parentOf[frameElement.dataset.frame])
-      ? frameElement.dataset.frame : "";
+    const frame = frameElement && (view.dragOuterFrames || event.target.closest(".arch-frame-head")
+      || parentOf[frameElement.dataset.frame]) ? frameElement.dataset.frame : "";
     const moving = boxElement ? [boxes[boxElement.dataset.box]]
       : frame ? Object.entries(boxes).filter(([id]) => contains(frame, id)).map(([, box]) => box) : [];
     drag = { moving, starts: moving.map((box) => ({ x: box.x, y: box.y })), clientX: event.clientX, clientY: event.clientY,
       startX: panX, startY: panY, moved: false };
-    canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", (event) => {
-    if (!drag) return;
+    if (!drag || !(event.buttons & 1)) return;
     const dx = event.clientX - drag.clientX, dy = event.clientY - drag.clientY;
-    drag.moved ||= Math.hypot(dx, dy) > 3;
+    if (!drag.moved && Math.hypot(dx, dy) > 3) {
+      // Only now the pointer is captured, so the drag goes on outside the area; capturing it on press
+      // would hand the click to the area instead of the box clicked.
+      drag.moved = true;
+      canvas.setPointerCapture(event.pointerId);
+    }
     if (!drag.moved) return;
     if (drag.moving.length) {
       drag.moving.forEach((box, index) => {
@@ -468,27 +695,63 @@ async function drawDiagram(canvas, view) {
       box.element.classList.toggle("selected", boxId === id);
       box.element.classList.toggle("faded", Boolean(id) && !related.has(boxId));
     }
+    for (const [frameId, frame] of Object.entries(frames)) frame.element.classList.toggle("selected", frameId === id);
+  };
+  // Show an item from outside the drawing (e.g. a name clicked in the planner's panel): highlight it
+  // and bring it to the middle of the area. `data.drawn_as` maps an item to the node it is drawn in.
+  canvas.showItem = (item) => {
+    const id = data.drawn_as?.[item] || item;
+    const target = boxes[id] || frames[id];
+    if (!target) return false;
+    highlight(id);
+    panX = canvas.clientWidth / 2 - (target.x + target.width / 2) * scale;
+    panY = canvas.clientHeight / 2 - (target.y + Math.min(target.height, canvas.clientHeight / scale) / 2) * scale;
+    apply();
+    return true;
   };
   canvas.addEventListener("click", (event) => {
     if (drag && drag.moved) return;  // the end of a drag, not a click
+    if (event.target.closest("button, input, select, textarea, label, a")) return;
     const box = event.target.closest("[data-box]");
     highlight(box ? box.dataset.box : "");
+    const open = event.target.closest("[data-open]")?.dataset.open;  // e.g. the planner's right panel
+    if (open && view.openTarget) htmx.ajax("GET", open, { target: view.openTarget });
   });
   canvas.addEventListener("dblclick", (event) => {
     const page = event.target.closest("[data-page]")?.dataset.page;
     if (page) htmx.ajax("GET", `/wiki/${page}`, { target: "#content" }).then(() => history.pushState({}, "", `/wiki/${page}`));
   });
 
-  const page = canvas.closest(".graph-page");
-  page.querySelector(".graph-fit")?.addEventListener("click", fit);
+  const page = canvas.closest(".graph-page, .notes-page");
+  // Listeners outside the drawing area belong to this drawing only: a new drawing removes them.
+  page.diagramListeners?.abort();
+  page.diagramListeners = new AbortController();
+  const signal = page.diagramListeners.signal;
+  page.querySelector(".graph-fit")?.addEventListener("click", fit, { signal });
+  // Zoom buttons: around the middle of the drawing area.
+  const zoomBy = (factor) => {
+    const next = factor ? Math.min(3, Math.max(0.15, scale * factor)) : 1;
+    const x = canvas.clientWidth / 2, y = canvas.clientHeight / 2;
+    panX = x - (x - panX) * (next / scale);
+    panY = y - (y - panY) * (next / scale);
+    scale = next;
+    apply();
+  };
+  const zoom = page.querySelector(".graph-zoom");
+  if (zoom) {
+    zoom.hidden = false;
+    zoom.querySelector(".graph-zoom-in").addEventListener("click", () => zoomBy(1.2), { signal });
+    zoom.querySelector(".graph-zoom-out").addEventListener("click", () => zoomBy(1 / 1.2), { signal });
+    zoom.querySelector(".graph-zoom-reset").addEventListener("click", () => zoomBy(0), { signal });
+  }
   page.querySelector(".graph-find")?.addEventListener("input", (event) => {
     const text = event.target.value.trim().toLowerCase();
     for (const [boxId, box] of Object.entries(boxes)) {
-      const match = text && boxId.toLowerCase().includes(text);
+      const match = text && `${boxId} ${box.element.textContent}`.toLowerCase().includes(text);
       box.element.classList.toggle("match", Boolean(match));
       box.element.classList.toggle("faded", Boolean(text) && !match);
     }
-  });
+  }, { signal });
   // The focus is highlighted; the view stays fitted and centered on the whole diagram.
   const focus = canvas.dataset.focus;
   const focused = focus && (boxes[focus] ? focus : boxes[`${focus}.__init__`] ? `${focus}.__init__` : "");
@@ -737,7 +1000,7 @@ async function initBranches() {
     tooltip.innerHTML = `
       <span class="graph-tooltip-role" style="color:${color(commit.lane)}">${escapeHtml([commit.short, ...names].join(" · "))}</span>
       <strong>${escapeHtml(commit.subject)}</strong>
-      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date.slice(0, 16).replace("T", " "))}</span>
+      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date_local)}</span>
       ${commit.body_html ? `<div class="graph-tooltip-body">${commit.body_html}</div>` : ""}`;
     const dot = node.querySelector("circle").getBoundingClientRect();
     const area = canvas.parentElement.getBoundingClientRect();
@@ -756,3 +1019,22 @@ async function initBranches() {
 
 document.addEventListener("DOMContentLoaded", initBranches);
 document.addEventListener("htmx:afterSettle", initBranches);
+
+// After a change made in a panel (planner, notes), the server says "diagram-changed": the drawing of the
+// page is redrawn in place, with the new data fetched first and the same zoom and position, so nothing blinks.
+document.addEventListener("diagram-changed", async () => {
+  const canvas = [...document.querySelectorAll(".graph-canvas[data-view]")].find((each) => DIAGRAMS[each.dataset.view]);
+  if (!canvas) return;
+  const data = await (await fetch(canvas.dataset.url)).json();
+  const keep = canvas.viewState?.();
+  const fresh = canvas.cloneNode(false);  // without the old drawing's listeners
+  canvas.replaceWith(fresh);
+  drawDiagram(fresh, DIAGRAMS[fresh.dataset.view], keep, data);
+});
+
+// A name with data-show (in the planner's panel) shows that item in the drawing.
+document.addEventListener("click", (event) => {
+  const name = event.target.closest("[data-show]");
+  if (!name) return;
+  document.querySelector('.graph-canvas[data-view="planner"]')?.showItem?.(name.dataset.show);
+});

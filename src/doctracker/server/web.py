@@ -1,6 +1,7 @@
 """Frontend routes: wiki pages, source code on demand and live-update events."""
 
 import asyncio
+from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import Config, set_config_value
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_history
-from doctracker.notes import NOTE_TYPES, PLAN_STATUSES, TASK_STATUSES, NoteStore
+from doctracker.notes import NOTE_GROUPS, NOTE_TYPES, NoteStore, parse_item
 from doctracker.search import DEFAULT_LIMIT, MODES, WIKI_WAIT_SECONDS, SearchEngine
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
@@ -76,6 +77,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates = Environment(loader=PackageLoader("doctracker.wiki", "templates"), autoescape=select_autoescape())
     templates.filters["markdown"] = pages.render_markdown
     templates.filters["commit_message"] = pages.render_commit_message
+    templates.filters["local_time"] = pages.local_time
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
         static_url=_static_url,
@@ -135,56 +137,189 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
 
+    def chosen_plans(params: dict) -> list[int]:
+        """The plans selected in the planner (`plans=1,2`); by default the newest in progress, else the
+        newest not done, else the newest."""
+        plans = notes.planner()["plans"]
+        existing = [plan["id"] for plan in plans]
+        chosen = [int(part) for part in params.get("plans", "").split(",") if part.isdigit() and int(part) in existing]
+        if chosen or params.get("plans") == "none":
+            return chosen
+        for wanted in (("doing", "late", "blocked"), ("todo",)):
+            found = [plan["id"] for plan in plans if plan["state"] in wanted]
+            if found:
+                return found[:1]
+        return existing[:1]
+
     def notes_context(params: dict) -> dict:
-        """What the notes page shows: the plans (work tab) and the notes, filtered (notes tab)."""
-        note_type = params.get("type", "") if params.get("type", "") in NOTE_TYPES else ""
+        """What the notes page shows: the planner (plan cards, the chosen plans, the item shown on the
+        right), or the notes of one group (guidelines or memory)."""
+        tab = params.get("tab", "") if params.get("tab", "") in ("planner", *NOTE_GROUPS) else "planner"
+        note_type = params.get("type", "") if params.get("type", "") in NOTE_GROUPS.get(tab, ()) else ""
         note_status = params.get("status", "active") if params.get("status", "active") in ("active", "superseded", "") else "active"
-        return {
-            "tab": "notes" if params.get("tab") == "notes" else "work",
-            "plans": notes.list_plans(""),
-            "notes": notes.list_notes(note_type, note_status),
-            "note_types": NOTE_TYPES,
-            "note_type": note_type,
-            "note_status": note_status,
-            "plan_statuses": PLAN_STATUSES,
-            "task_statuses": TASK_STATUSES,
-        }
+        context = {"tab": tab, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "note_type": note_type,
+                   "note_status": note_status}
+        if tab in NOTE_GROUPS:
+            selected = params.get("selected", "")
+            exists = selected.startswith("note:") and selected[5:].isdigit()
+            if exists:
+                try:
+                    notes.get_note(int(selected[5:]))
+                except ValueError:
+                    exists = False
+            context.update(selected=selected if exists else "", plans="", notes=notes.list_notes(tab, note_type, note_status),
+                           tree_types=[note_type] if note_type else list(NOTE_GROUPS[tab]))
+        if tab == "planner":
+            chosen = chosen_plans(params)
+            cards = []
+            for plan in notes.planner()["plans"]:
+                tasks = [task for feature in plan["features"] for task in feature["tasks"]]
+                cards.append({"id": plan["id"], "title": plan["title"], "state": plan["state"], "due": plan["due"],
+                              "done": sum(task["state"] == "done" for task in tasks), "total": len(tasks),
+                              "chosen": plan["id"] in chosen,
+                              "toggle": ",".join(str(i) for i in (sorted(set(chosen) - {plan["id"]}) if plan["id"] in chosen
+                                                                  else sorted(chosen + [plan["id"]])))})
+            selected = params.get("selected", "")
+            try:
+                notes.get_item(selected)
+            except ValueError:
+                selected = f"plan:{chosen[0]}" if chosen else ""
+            plans = ",".join(map(str, chosen)) or "none"
+            context.update(cards=cards, plans=plans, selected=selected, data_url=f"/graph/planner?plans={plans}")
+        return context
 
     def lines(value: str | None) -> list[str] | None:
         """A textarea with one item per line, as a list (`None` when the field was not sent)."""
         return None if value is None else [line.strip() for line in value.splitlines() if line.strip()]
 
-    async def note_action(request: Request) -> Response:
-        """Change plans, tasks or notes from the notes page, through the same methods the MCP tools use.
+    def page_query(params: dict) -> str:
+        """The query string that brings the notes page back to the same tab, plans, item and filters."""
+        return "&".join(f"{key}={value}" for key, value in params.items() if value)
 
-        The page comes back redrawn; a refused change (unknown type, missing title...) is shown on top.
+    def dependency_choices(item: str) -> list[dict]:
+        """What an item can be made to wait for, as a tree, for the autocomplete of the planner panel.
+
+        Every plan, feature and task in order, with its `ref`, `title`, `level`, `state`, `depth` (0 for a
+        plan), `parent` (the ref above it) and `allowed`: false for the item itself, the plan or feature
+        holding it (waiting for them would be a cycle) and what it holds (it already waits for that);
+        they stay to show the tree. As in the drawing, a level that repeats the one above is not shown again.
+        """
+        def same(first: dict, second: dict) -> bool:
+            return first["title"].strip().casefold() == second["title"].strip().casefold()
+
+        plans = notes.planner()["plans"]
+        holders = {item}  # what holds the item, and what the item holds: neither can be waited for
+        for plan in plans:
+            for feature in plan["features"]:
+                if feature["item"] == item or any(task["item"] == item for task in feature["tasks"]):
+                    holders |= {feature["item"], plan["item"]}
+                if item in (plan["item"], feature["item"]):
+                    holders |= {task["item"] for task in feature["tasks"]} | ({feature["item"]} if item == plan["item"] else set())
+
+        def entry(thing: dict, level: str, depth: int, parent: str) -> dict:
+            return {"ref": thing["item"], "title": thing["title"], "level": level, "state": thing["state"], "depth": depth,
+                    "parent": parent, "allowed": thing["item"] not in holders}
+
+        choices = []
+        for plan in plans:
+            choices.append(entry(plan, "plan", 0, ""))
+            merged = len(plan["features"]) == 1 and same(plan["features"][0], plan)
+            for feature in plan["features"]:
+                holder = plan["item"] if merged else feature["item"]
+                if not merged:
+                    choices.append(entry(feature, "feature", 1, plan["item"]))
+                if not (len(feature["tasks"]) == 1 and same(feature["tasks"][0], feature)):
+                    choices += [entry(task, "task", 1 if merged else 2, holder) for task in feature["tasks"]]
+        return choices
+
+    def form_context(query: dict, error: str = "") -> dict:
+        """A modal of the notes page (to create something, or to open a note), or the planner's right
+        panel (`panel=1`) showing one plan, feature or task to read and change.
+
+        `kind` is plan, feature, task or note; `item` (e.g. `task:3`) or `note` (an id) opens an existing
+        one; `plan_id` / `feature_id` / `type` prefill a new one.
+        """
+        context = {"query": query, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "tab": query.get("tab", "planner"),
+                   "note_type": query.get("filter_type", ""), "note_status": query.get("filter_status", "active"),
+                   "plans": query.get("plans", ""), "selected": query.get("selected") or query.get("item", ""),
+                   "panel": query.get("panel") == "1",
+                   "item": None, "note": None, "error": error}
+        try:
+            if query.get("item"):
+                context["item"] = notes.get_item(query["item"])
+                context["kind"] = parse_item(query["item"])[0]
+                context["choices"] = dependency_choices(query["item"])
+                context["titles"] = {entry["item"]: entry["title"] for plan in notes.planner()["plans"]
+                                     for entry in [plan, *plan["features"], *(t for f in plan["features"] for t in f["tasks"])]}
+            elif query.get("note"):
+                context["note"] = notes.get_note(int(query["note"])) if query["note"].isdigit() else None
+                context["kind"] = "note"
+            else:
+                context["kind"] = query.get("kind", "plan")
+        except ValueError as refused:
+            context["error"] = str(refused)
+        return context
+
+    def render_form(query: dict, error: str = "") -> str:
+        """Render a modal or the planner's panel (see `form_context`)."""
+        return templates.get_template("notes_form.html").render(**form_context(query, error))
+
+    async def note_form(request: Request) -> Response:
+        """A modal of the notes page or the planner's right panel (see `render_form`)."""
+        return HTMLResponse(render_form(dict(request.query_params)))
+
+    async def note_action(request: Request) -> Response:
+        """Change the planner or the notes from the notes page, through the same methods the MCP tools use.
+
+        Every change made here is recorded with the source `wiki`. The page comes back redrawn; a
+        refused change (missing title, a cycle, a bad date...) is shown on top.
         """
         if not _same_origin(request):
             return Response("", status_code=403)
-        form = {key: value for key, value in (await request.form()).items()}
+        submitted = await request.form()
+        form = {key: value for key, value in submitted.items()}
 
         def number(name: str) -> int:
             value = form.get(name, "")
             return int(value) if value.isdigit() else 0
 
+        def optional(name: str) -> str | None:
+            return form.get(name)
+
         actions = {
             "create_plan": lambda: notes.create_plan(form.get("title", ""), form.get("goal", ""), lines(form.get("requirements")),
-                                                     lines(form.get("decisions")), lines(form.get("branches")), "wiki"),
-            "update_plan": lambda: notes.update_plan(number("plan_id"), form.get("title"), form.get("goal"),
-                                                     lines(form.get("requirements")), lines(form.get("decisions")),
-                                                     lines(form.get("branches")), form.get("status")),
-            "delete_plan": lambda: notes.delete_plan(number("plan_id")),
-            "add_task": lambda: notes.add_task(number("plan_id"), form.get("title", ""), lines(form.get("criteria")),
-                                               form.get("branch", ""), "wiki"),
-            "update_task": lambda: notes.update_task(number("task_id"), form.get("title"), lines(form.get("criteria")),
-                                                     form.get("branch"), form.get("status")),
-            "delete_task": lambda: notes.delete_task(number("task_id")),
+                                                     lines(form.get("decisions")), lines(form.get("branches")), form.get("due", ""),
+                                                     source="wiki"),
+            "update_plan": lambda: notes.update_plan(number("plan_id"), optional("title"), optional("goal"),
+                                                     lines(optional("requirements")), lines(optional("decisions")),
+                                                     lines(optional("branches")), optional("due")),
+            "add_feature": lambda: notes.add_feature(number("plan_id"), form.get("title", ""), form.get("description", ""),
+                                                     form.get("branch", ""), form.get("due", ""), source="wiki"),
+            "update_feature": lambda: notes.update_feature(number("feature_id"), optional("title"), optional("description"),
+                                                           optional("branch"), optional("due")),
+            "add_task": lambda: notes.add_task(number("feature_id"), form.get("title", ""), lines(form.get("criteria")),
+                                               form.get("branch", ""), form.get("due", ""), source="wiki"),
+            "update_task": lambda: notes.update_task(number("task_id"), optional("title"), lines(optional("criteria")),
+                                                     optional("branch"), optional("due"), optional("status"), source="wiki"),
+            "toggle_task": lambda: (notes.update_task(number("task_id"), status="done", source="wiki") if form.get("done")
+                                    else notes.withdraw_approval(number("task_id"))),
+            "check_criterion": lambda: notes.check_criterion(number("task_id"), number("index"), bool(form.get("done")), "wiki"),
             "annotate_task": lambda: notes.annotate_task(number("task_id"), form.get("text", ""), "wiki"),
             "add_evidence": lambda: notes.add_evidence(number("task_id"), "wiki", form.get("detail", "")),
+            "approve_task": lambda: notes.approve_task(number("task_id"), form.get("detail", "")),
+            "withdraw_approval": lambda: notes.withdraw_approval(number("task_id"), form.get("detail", "")),
+            "update_evidence": lambda: notes.update_evidence(number("evidence_id"), form.get("detail", "")),
+            "delete_evidence": lambda: notes.delete_evidence(number("evidence_id")),
+            "update_annotation": lambda: notes.update_annotation(number("annotation_id"), form.get("text", "")),
+            "delete_annotation": lambda: notes.delete_annotation(number("annotation_id")),
+            "add_dependency": lambda: notes.add_dependency(form.get("item", ""), submitted.getlist("depends_on"),
+                                                           form.get("reason", ""), "wiki"),
+            "remove_dependency": lambda: notes.remove_dependency(form.get("item", ""), form.get("depends_on", "")),
+            "delete_item": lambda: notes.delete_item(form.get("item", "")),
             "create_note": lambda: notes.create_note(form.get("type", ""), form.get("statement", ""), form.get("why", ""),
                                                      lines(form.get("entities")), "wiki"),
-            "update_note": lambda: notes.update_note(number("note_id"), form.get("statement"), form.get("why"),
-                                                     lines(form.get("entities"))),
+            "update_note": lambda: notes.update_note(number("note_id"), optional("statement"), optional("why"),
+                                                     lines(optional("entities"))),
             "supersede_note": lambda: notes.supersede_note(number("note_id"), form.get("statement", ""), form.get("why", ""),
                                                            source="wiki"),
             "delete_note": lambda: notes.delete_note(number("note_id")),
@@ -192,27 +327,70 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         action = actions.get(request.path_params["action"])
         if action is None:
             return Response("", status_code=404)
-        params = {"tab": form.get("tab", "work"), "type": form.get("filter_type", ""), "status": form.get("filter_status", "active")}
+        params = {"tab": form.get("tab", "planner"), "plans": form.get("plans", ""), "selected": form.get("selected", ""),
+                  "type": form.get("filter_type", ""), "status": form.get("filter_status", "active")}
         error = ""
         try:
-            action()
+            result = action()
         except ValueError as refused:
             error = str(refused)
-        query = "&".join(f"{key}={value}" for key, value in params.items() if value)
+        name = request.path_params["action"]
+        if name == "supersede_note" and not error:  # the panel goes on with the note that holds now
+            params["selected"] = f"note:{result['id']}"
+        if form.get("autosave") == "1":
+            # A change that saved by itself: the fields already show it; only the head (state, "Saved" or
+            # why not) and the plan cards come back, and the page redraws its graph in place.
+            item = form.get("selected", "") if name != "update_note" else ""
+            query = ({"item": item, "panel": form.get("panel", ""), "tab": params["tab"]} if item
+                     else {"note": form.get("note_id", ""), "panel": form.get("panel", ""), "tab": params["tab"]})
+            context = form_context(query, error)
+            reply = templates.get_template("notes_head.html").render(
+                **context, oob=True, saved="" if error else datetime.now().strftime("%H:%M:%S"))
+            if params["tab"] == "planner":
+                reply += templates.get_template("notes_cards.html").render(oob=True, **notes_context(params))
+            elif form.get("panel") == "1":
+                reply += templates.get_template("notes_tree.html").render(oob=True, **notes_context(params))
+            changed = "diagram-changed" if form.get("panel") == "1" or params["tab"] == "planner" else "notes-saved"
+            return HTMLResponse(reply, headers={"HX-Trigger": changed})
+        # From the panel, only deleting the item shown changes what is shown (the whole page comes back);
+        # anything else, deleting a feature or task of its lists included, answers with the panel alone.
+        deleting_shown = (name == "delete_item" and form.get("item") == params["selected"]) or name == "delete_note"
+        if form.get("panel") == "1" and not deleting_shown:
+            # Sent from the planner's panel: only the panel and the plan cards come back, and the page
+            # redraws its graph in place (keeping zoom and position), so nothing else blinks.
+            if params["selected"].startswith("note:"):
+                panel = render_form({"note": params["selected"][5:], "panel": "1", "tab": params["tab"],
+                                     "selected": params["selected"]}, error)
+                tree = templates.get_template("notes_tree.html").render(oob=True, **notes_context(params))
+                return HTMLResponse(panel + tree)
+            panel = render_form({"item": params["selected"], "panel": "1", "tab": "planner", "plans": params["plans"]}, error)
+            cards = templates.get_template("notes_cards.html").render(oob=True, **notes_context(params))
+            return HTMLResponse(panel + cards, headers={"HX-Trigger": "diagram-changed"})
+        if not error:
+            # What was just created is shown: a new plan joins the chosen plans and opens on the right.
+            if name == "create_note" and isinstance(result, dict):
+                params["selected"] = f"note:{result['id']}"
+            created = name in ("create_plan", "add_feature", "add_task") and isinstance(result, dict)
+            if created:
+                params["selected"] = result["item"]
+                if result["item"].startswith("plan:"):
+                    params["plans"] = ",".join(p for p in [*params["plans"].split(","), str(result["id"])] if p.isdigit())
         context = {"path": "", "tree": pages.tree(state, ""), "view": "notes", "params": params, "error": error,
                    **notes_context(params)}
-        return render_page(request, "notes.html", f"/notes?{query}", context)
+        return render_page(request, "notes.html", f"/notes?{page_query(params)}", context)
 
     async def git_branches(request: Request) -> Response:
         """Commits of every branch placed on lanes, for the branch graph at the top of the git page.
 
-        Each commit also gets `body_html`: its message body rendered as Markdown, like in the commit list.
+        Each commit also gets `body_html` (its message body rendered as Markdown, like in the commit list)
+        and `date_local` (its date in this machine's time zone).
         """
         commits = await read_branch_graph(project_root, GIT_COMMITS)
         if commits is None:
             return JSONResponse({"error": "Not a git repository."})
         for commit in commits:
             commit["body_html"] = pages.render_commit_message(commit["body"])
+            commit["date_local"] = pages.local_time(commit["date"])
         return JSONResponse({"commits": commits})
 
     async def git_commit(request: Request) -> Response:
@@ -232,6 +410,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(architecture(state, params.get("level", "modules")))
         if view == "classes":
             return JSONResponse(class_diagram(state, params.get("package", "")))
+        if view == "planner":
+            plans = [int(part) for part in params.get("plans", "").split(",") if part.isdigit()]
+            return JSONResponse(notes.planner_graph(plans))
         if view == "calls":
             depth = int(params.get("depth", "1")) if params.get("depth", "1").isdigit() else 1
             return JSONResponse(call_graph(state, params.get("focus", ""), depth, params.get("direction", "both")))
@@ -308,6 +489,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/calls", view_page),
         Route("/git", view_page),
         Route("/notes", view_page),
+        Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),
         Route("/graph/{view}", view_data),
         Route("/git/branches", git_branches),

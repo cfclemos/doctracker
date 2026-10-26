@@ -527,7 +527,7 @@ td p { margin: 0; }
 #tree .view-link.current .icon { color: inherit; }
 
 /* Graph page: full width, the drawing fills the rest of the screen. */
-main:has(.graph-page) { max-width: none; }
+main:has(.graph-page), main:has(.notes-page) { max-width: none; }
 .graph-page .page-header { padding-bottom: 0.6rem; }
 .graph-toolbar {
   display: flex;
@@ -967,84 +967,323 @@ rect.git-hash { fill: var(--lane); }
 text.git-ref { font: 700 9px system-ui, sans-serif; fill: var(--lane); text-anchor: middle; }
 rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: var(--lane); }
 
-/* NOTES: two tabs, the work in progress (plans and tasks) and the lasting notes. */
-.notes-tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 1rem; border-bottom: 1px solid var(--border); }
+/* AGENT NOTES: three tabs, the planner (a graph of plans, features and tasks) and the notes (guidelines, memory). */
+.notes-tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 0.8rem; border-bottom: 1px solid var(--border); }
 .notes-tab { padding: 0.4rem 1rem; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
   color: var(--muted); font-weight: 600; margin-bottom: -1px; }
 .notes-tab:hover { color: var(--fg); text-decoration: none; }
 .notes-tab.current { border-color: var(--border); background: var(--bg); color: var(--fg); }
 .notes-error { padding: 0.5rem 0.8rem; border: 1px solid var(--raises); border-radius: 6px;
   background: color-mix(in srgb, var(--raises) 8%, var(--bg)); color: var(--raises); }
+.notes-help { margin: 0.3rem 0 0.6rem; color: var(--muted); font-size: 0.85rem; }
 .notes-meta { color: var(--muted); font-size: 0.78rem; }
 .notes-pill { display: inline-block; padding: 0 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
-  line-height: 1.5; color: #ffffff; background: var(--tint, var(--neutral)); }
-.notes-branch { font-size: 0.75rem; padding: 0 0.3rem; border-radius: 4px; background: var(--panel); }
-.status-active { --tint: var(--accent); }
-.status-done { --tint: var(--attribute); }
+  line-height: 1.5; color: #ffffff; background: var(--tint, var(--neutral)); vertical-align: middle; }
+.notes-swatch { display: inline-block; width: 0.9rem; height: 0.7rem; border-radius: 2px; background: var(--tint); }
+
+/* State colors: light blue to do, yellow in progress, gray blocked, red late, green done. */
+.state-todo { --tint: #7cb7e8; --on-tint: #10324f; }
+.state-doing { --tint: #e0b416; --on-tint: #3d2f00; }
+.state-blocked { --tint: #8c959f; --on-tint: #ffffff; }
+.state-late { --tint: #d1242f; --on-tint: #ffffff; }
+.state-done { --tint: #2da44e; --on-tint: #ffffff; }
+.notes-pill.state-todo, .notes-pill.state-doing { color: var(--on-tint); }
 .evidence-diff { --tint: var(--returns); }
 .evidence-agent { --tint: var(--function); }
 .evidence-wiki { --tint: var(--attribute); }
 .type-preference { --tint: var(--function); }
 .type-rule { --tint: var(--raises); }
 .type-decision { --tint: var(--accent); }
-.type-pitfall { --tint: var(--class); }
 .type-context { --tint: var(--method); }
+.type-pitfall { --tint: var(--class); }
 .type-reference { --tint: var(--neutral); }
-.type-summary { --tint: var(--note); }
 
-.notes-new, .notes-edit { margin: 0.4rem 0; }
-.notes-new > summary, .notes-edit > summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; font-weight: 600; }
-.notes-form { display: grid; gap: 0.5rem; max-width: 40rem; margin: 0.5rem 0 0.8rem; }
-.notes-form label { display: grid; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
-.notes-form small { font-weight: 400; }
-.notes-page input, .notes-page textarea, .notes-page select {
-  padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit;
-  font-size: 0.85rem;
+/* Buttons and forms of the page and its modals. */
+.notes-page button, .notes-dialog button {
+  padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 4px; background: var(--panel);
+  color: var(--fg); font: inherit; font-size: 0.82rem; cursor: pointer;
 }
-.notes-page button {
-  justify-self: start; padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--panel); color: var(--fg); font: inherit; font-size: 0.82rem; cursor: pointer;
+.notes-page button:hover, .notes-dialog button:hover { border-color: var(--accent); color: var(--accent); }
+.notes-page button.primary, .notes-dialog button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+.notes-dialog button.approve { background: var(--attribute); border-color: var(--attribute); color: #ffffff; }
+.notes-dialog button.danger:hover { border-color: var(--raises); color: var(--raises); }
+.notes-page input, .notes-page select, .notes-page textarea,
+.notes-dialog input, .notes-dialog select, .notes-dialog textarea {
+  padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg);
+  font: inherit; font-size: 0.85rem;
 }
-.notes-page button:hover { border-color: var(--accent); color: var(--accent); }
-.notes-page button.notes-danger:hover { border-color: var(--raises); color: var(--raises); }
-.notes-inline { display: flex; gap: 0.4rem; align-items: center; }
-.notes-inline input[name] { flex: 1; min-width: 0; }
-
-.plan { margin: 0.8rem 0; padding: 0.6rem 0.9rem; border: 1px solid var(--border); border-radius: 8px; background: var(--block); }
-.plan > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; cursor: pointer; }
-.plan-title { font-weight: 700; font-size: 1.02rem; }
-.plan-done { opacity: 0.75; }
-.plan-goal { margin: 0.5rem 0; }
-.plan-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0.4rem 1.5rem; }
-.plan-lists h3 { margin: 0.3rem 0 0.2rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.plan-lists ul { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; }
-.tasks { list-style: none; margin: 0.8rem 0 0.5rem; padding: 0; }
-.task { padding: 0.5rem 0.6rem; border-left: 3px solid var(--border); background: var(--bg); border-radius: 0 6px 6px 0; }
-.task + .task { margin-top: 0.4rem; }
-.task-doing { border-left-color: var(--accent); }
-.task-done { border-left-color: var(--attribute); }
-.task-done .task-title { text-decoration: line-through; color: var(--muted); }
-.task-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.task-status select { padding: 0.1rem 0.3rem; font-size: 0.78rem; }
-.task-criteria, .task-annotations, .task-evidence { margin: 0.35rem 0 0; padding-left: 1.2rem; font-size: 0.86rem; }
-.task-criteria { list-style: "☐ "; }
-.task-done .task-criteria { list-style: "☑ "; }
-.task-annotations { color: var(--fg); }
-.task-evidence { list-style: none; padding-left: 0.2rem; }
-.task-actions { display: grid; gap: 0.35rem; margin-top: 0.45rem; }
-.notes-add-task { margin: 0.4rem 0; }
-
-.notes-filter { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
+.notes-filter { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); }
 .notes-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
-.notes-list { list-style: none; margin: 0.6rem 0; padding: 0; }
+
+/* Planner graph: tasks are boxes, plans and features frames, all in their state's color. */
+.planner-task { min-width: 12rem; max-width: 18rem; border-color: var(--border); }
+.planner-task .uml-head { gap: 0.45rem; background: var(--tint); color: var(--on-tint); }
+.planner-task .uml-head strong { flex: 1; }
+.planner-state { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+.planner-check { display: flex; }
+.planner-check input { width: 0.95rem; height: 0.95rem; margin: 0; cursor: pointer; }
+.planner-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.6rem; padding: 0.35rem 0.55rem;
+  font-size: 0.74rem; color: var(--muted); }
+.planner-facts code { font-size: 0.72rem; }
+.notes-page .planner-button { margin-left: auto; padding: 0 0.45rem; font-size: 0.7rem; line-height: 1.5; }
+.planner-frame { --arch: var(--tint); cursor: move; border-color: var(--border); }
+.planner-frame .arch-frame-head { gap: 0.45rem; color: var(--on-tint); height: auto; min-height: 22px; padding: 0.1rem 0.5rem; }
+.planner-frame .arch-frame-head .planner-button { margin-left: 0; background: var(--bg); color: var(--fg); border-color: transparent; }
+.planner-plan { border-width: 2px; }
+
+/* Notes lists (guidelines, memory). */
+.notes-list { list-style: none; margin: 0.6rem 0; padding: 0; max-width: 72rem; }
 .note { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left: 3px solid var(--tint, var(--border)); border-radius: 6px; }
 .note + .note { margin-top: 0.5rem; }
 .note-preference { --tint: var(--function); } .note-rule { --tint: var(--raises); } .note-decision { --tint: var(--accent); }
-.note-pitfall { --tint: var(--class); } .note-context { --tint: var(--method); } .note-reference { --tint: var(--neutral); }
-.note-summary { --tint: var(--note); }
+.note-context { --tint: var(--method); } .note-pitfall { --tint: var(--class); } .note-reference { --tint: var(--neutral); }
 .note-superseded { opacity: 0.6; }
 .note-head { display: flex; gap: 0.5rem; align-items: baseline; }
-.note-statement { font-weight: 600; }
+.note-statement { font-weight: 600; flex: 1; }
+.note-actions button { padding: 0.1rem 0.6rem; font-size: 0.75rem; }
 .note-why { margin: 0.3rem 0 0; font-size: 0.88rem; color: var(--muted); }
 .note-entities { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0 0; font-size: 0.8rem; }
 .note .notes-meta { margin: 0.35rem 0 0; }
+
+/* Modal. */
+.notes-dialog { width: min(44rem, calc(100vw - 1.5rem)); max-height: 90vh; padding: 0; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 12px 40px rgb(0 0 0 / 25%); }
+.notes-dialog::backdrop { background: rgb(0 0 0 / 35%); }
+#notes-dialog-body { padding: 1rem 1.2rem 1.2rem; }
+.dialog-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.dialog-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
+.notes-dialog .dialog-close { padding: 0 0.5rem; border: 0; background: none; font-size: 1.3rem; line-height: 1; }
+.notes-form { display: grid; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
+.notes-form label { display: grid; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
+.notes-form small { font-weight: 400; }
+.notes-form button { justify-self: start; }
+.dialog-section { margin: 0.8rem 0; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.dialog-section h3 { display: inline; margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.dialog-section > summary { cursor: pointer; }
+.dialog-list { margin: 0.4rem 0; padding-left: 1.1rem; font-size: 0.88rem; }
+.dialog-list li { margin: 0.2rem 0; }
+.criteria-list { list-style: none; padding-left: 0.2rem; }
+.criteria-list label { display: inline-flex; gap: 0.4rem; align-items: center; cursor: pointer; }
+.dialog-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
+.dialog-row input:not([type=hidden]), .dialog-row select { flex: 1 1 12rem; min-width: 0; }
+.inline-form { display: inline; }
+.notes-dialog .link-button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 0.75rem; text-decoration: underline; }
+.dialog-danger { margin-top: 1rem; text-align: right; }
+
+/* Planner: plan cards on top; the chosen plans on the left, the clicked item on the right. */
+.plan-cards { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0.6rem; }
+.plan-card {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.45rem; align-items: center; min-width: 13rem; max-width: 20rem;
+  padding: 0.45rem 0.7rem; border: 1px solid var(--border); border-left: 4px solid var(--tint); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font-size: 0.85rem;
+}
+.plan-card:hover { text-decoration: none; border-color: var(--tint); }
+.plan-card.chosen { background: color-mix(in srgb, var(--tint) 14%, var(--bg)); border-color: var(--tint); }
+.plan-card-check { grid-row: span 2; font-size: 1.05rem; color: var(--muted); }
+.plan-card.chosen .plan-card-check { color: var(--fg); }
+.plan-card-title { font-weight: 700; overflow-wrap: anywhere; }
+.plan-card-facts { color: var(--muted); font-size: 0.75rem; }
+.plan-card-bar { grid-column: 1 / -1; height: 4px; margin-top: 0.25rem; border-radius: 2px; background: var(--panel); overflow: hidden; }
+.plan-card-bar i { display: block; height: 100%; background: #2da44e; }
+.notes-page .plan-card-new { align-self: stretch; }
+/* Left and right start as halves; the splitter between them (see live.js) sets --split, the left share. */
+.planner-layout { display: grid; grid-template-columns: minmax(0, calc(var(--split, 50%) - 0.6rem)) 1.2rem minmax(0, 1fr);
+  margin-top: 0.8rem; }
+.planner-splitter { align-self: stretch; cursor: col-resize; position: relative; }
+.planner-splitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; margin-left: -1.5px;
+  border-radius: 2px; background: var(--border); }
+.planner-splitter:hover::before, body.splitting .planner-splitter::before { background: var(--accent); }
+body.splitting { cursor: col-resize; user-select: none; }
+.planner-layout .graph-area { min-width: 0; margin-top: 0; }
+.planner-layout .graph-canvas { height: calc(100vh - var(--topbar-height) - 20rem); min-height: 26rem; }
+.planner-detail { overflow: auto; padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.planner-detail .dialog-head h2 { font-size: 0.98rem; }
+/* Narrower screens: the panel goes under the drawing; phones: one card per line, form rows wrap. */
+@media (max-width: 1100px) {
+  .planner-layout { grid-template-columns: minmax(0, 1fr); row-gap: 0.8rem; }
+  .planner-splitter { display: none; }
+  .planner-layout .graph-canvas { height: 60vh; min-height: 20rem; }
+  .planner-detail { height: auto; min-height: 0; }
+}
+@media (max-width: 720px) {
+  .plan-card { flex: 1 1 100%; max-width: none; }
+  .notes-tab { padding: 0.4rem 0.7rem; }
+  .note-head { flex-wrap: wrap; }
+  .notes-filter { flex-wrap: wrap; gap: 0.4rem 1rem; }
+}
+.planner-external { display: grid; gap: 0.1rem; padding: 0.3rem 0.55rem; border: 1.5px dashed var(--tint); background: var(--panel);
+  color: var(--fg); font-size: 0.75rem; max-width: 14rem; text-decoration: none; }
+.planner-external:hover { text-decoration: none; border-style: solid; }
+.planner-external-plan { color: var(--muted); font-size: 0.68rem; }
+
+/* Lines take the mouse (for their hover text) although their layer lets clicks through to the boxes. */
+.uml-lines .uml-line { pointer-events: visibleStroke; }
+.uml-lines .uml-line-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: help; }
+/* Planner dependencies: thick orange arrows, with their reason written on them. */
+.uml-line.depends { stroke: var(--class); stroke-width: 2.2; }
+.uml-line.depends.near { stroke-width: 3.2; }
+.dep-marker { fill: var(--class); }
+.planner-waits { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: 0.25rem 0.55rem;
+  border-top: 1px dashed var(--border); font-size: 0.72rem; color: var(--class); }
+.planner-waits .planner-state { padding: 0 0.35rem; border-radius: 999px; background: var(--tint); color: var(--on-tint); font-size: 0.6rem; }
+/* The planner's drawing fills the screen's height (wheel zooms, dragging moves); the panel stays in view. */
+.planner-layout .graph-canvas[data-view="planner"] { height: calc(100vh - var(--topbar-height) - 15rem); min-height: 20rem; }
+.planner-layout { align-items: start; }
+.planner-detail { position: sticky; top: calc(var(--topbar-height) + 0.6rem); height: calc(100vh - var(--topbar-height) - 1.5rem); }
+@media (max-width: 1100px) { .planner-detail { position: static; height: auto; max-height: none; } }
+/* Bar on top of the drawing (zoom, fit), joined to it. */
+.graph-canvas-bar {
+  display: flex; justify-content: flex-end; align-items: center; gap: 0.6rem; padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--panel);
+  font-size: 0.82rem; color: var(--muted);
+}
+.graph-canvas-bar + .graph-canvas { border-top-left-radius: 0; border-top-right-radius: 0; }
+.graph-canvas-bar button {
+  height: 1.7rem; min-width: 2rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
+}
+.graph-canvas-bar button:hover { border-color: var(--accent); color: var(--accent); }
+.graph-zoom { display: inline-flex; align-items: center; gap: 0.25rem; }
+.graph-zoom-level { min-width: 3.2rem; text-align: center; font-variant-numeric: tabular-nums; }
+.graph-area .graph-info { top: 2.9rem; max-height: calc(100% - 3.5rem); }
+.graph-canvas-bar .graph-find { margin-right: auto; width: 14rem; max-width: 40%; height: 1.7rem; padding: 0 0.5rem;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit; }
+.dependency-role { color: var(--class); }
+.graph-tooltip .graph-tooltip-text + .graph-tooltip-text { margin-top: 0.3rem; }
+/* Text boxes of the notes forms grow with their text (see live.js), from four lines. */
+.notes-form textarea { min-height: 6.5em; line-height: 1.45; resize: vertical; overflow-y: hidden; }
+.notes-form input, .notes-form textarea, .notes-form select { font-size: 0.92rem; }
+
+/* Dependency autocomplete: tags of the chosen items, then the text being typed; suggestions below. */
+.waits-form { display: grid; gap: 0.4rem; margin-top: 0.5rem; position: relative; }
+.waits-input { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); cursor: text; }
+.waits-input:focus-within { border-color: var(--accent); }
+.waits-chips { display: contents; }
+.notes-dialog .waits-search, .notes-page .waits-search { flex: 1; min-width: 12rem; border: 0; padding: 0.2rem; outline: none; }
+.waits-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%; padding: 0.1rem 0.2rem 0.1rem 0.5rem;
+  border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--bg)); font-size: 0.8rem; }
+.waits-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-dialog .waits-chip button, .notes-page .waits-chip button { padding: 0 0.35rem; border: 0; border-radius: 999px;
+  background: none; color: var(--muted); line-height: 1.3; }
+.waits-suggestions { list-style: none; margin: 0; padding: 0.25rem 0; max-height: 16rem; overflow: auto;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 6px 18px rgb(0 0 0 / 15%); }
+.waits-suggestions[hidden] { display: none; }
+.waits-suggestion { display: flex; align-items: center; gap: 0.5rem; padding: 0.28rem 0.6rem; cursor: pointer; }
+.waits-suggestion.depth-1 { padding-left: 1.8rem; }
+.waits-suggestion.depth-2 { padding-left: 3.2rem; }
+.waits-suggestion.active, .waits-suggestion:not(.context):hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+.waits-suggestion.context { cursor: default; opacity: 0.45; }
+.waits-suggestion .waits-title { flex: 1; min-width: 0; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.waits-suggestion.depth-0 .waits-title { font-weight: 700; }
+.waits-state { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--tint); }
+.waits-empty { padding: 0.4rem 0.6rem; color: var(--muted); font-size: 0.82rem; }
+.waits-suggestion.depth-0:not(:first-child) { margin-top: 0.25rem; padding-top: 0.45rem; border-top: 1px solid var(--border); }
+.waits-check { flex: none; width: 0.9rem; color: var(--accent); font-weight: 700; }
+.waits-suggestion.chosen { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); }
+.waits-suggestion.chosen.active { background: color-mix(in srgb, var(--accent) 26%, var(--bg)); }
+/* Planner levels, one icon each, explained in the legend: plan (flag), feature (puzzle), task (checkbox). */
+.level-icon { flex: none; display: inline-block; width: 1rem; height: 1rem; vertical-align: middle; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.level-plan { --icon: url("icons/flag.svg"); }
+.level-feature { --icon: url("icons/puzzle.svg"); }
+.level-task { --icon: url("icons/checkbox.svg"); }
+.waits-suggestion .level-icon { color: var(--muted); }
+.planner-task .uml-head .level-icon { width: 0.9rem; height: 0.9rem; }
+.legend-gap { width: 0.6rem; }
+
+/* Item panel: a head that stays on top (state, level, reference, Save), folding sections with strong
+   titles, and deleting apart at the bottom. */
+.panel-head { position: sticky; top: -0.8rem; z-index: 2; margin: -0.8rem -1rem 0.6rem; padding: 0.7rem 1rem;
+  background: var(--bg); border-bottom: 1px solid var(--border); }
+.notes-dialog .panel-head { top: -1rem; margin: -1rem -1.2rem 0.6rem; padding: 0.8rem 1.2rem; }
+.panel-head h2 { display: flex; align-items: center; gap: 0.4rem; }
+.panel-section { margin: 0.2rem 0; border-bottom: 1px solid var(--border); }
+.panel-section > summary { display: flex; align-items: center; gap: 0.4rem; padding: 0.55rem 0; cursor: pointer; list-style: none;
+  font-size: 0.78rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg); }
+.panel-section > summary::-webkit-details-marker { display: none; }
+.panel-section > summary::before { content: "▸"; display: inline-block; width: 0.8rem; color: var(--muted); transition: transform 0.15s; }
+.panel-section[open] > summary::before { transform: rotate(90deg); }
+.panel-section-body { padding: 0 0 0.8rem 1.2rem; }
+.panel-danger { margin-top: 1.4rem; text-align: right; }
+.notes-dialog button.danger, .notes-page button.danger { border-color: color-mix(in srgb, var(--raises) 50%, var(--border)); color: var(--raises); }
+/* The one confirmation modal. */
+.confirm-dialog { width: min(28rem, calc(100vw - 2rem)); overflow: hidden; }
+/* Head: the light backgrounds of MUI's alerts — info blue, error red when deleting — with a colored
+   strip and icon. */
+.confirm-head { --mark: #0288d1; --head-bg: #e5f6fd; --head-fg: #014361; display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.75rem 1.1rem; border-left: 4px solid var(--mark); background: var(--head-bg); color: var(--head-fg); font-weight: 700; }
+.confirm-dialog.deleting .confirm-head { --mark: #d32f2f; --head-bg: #fdeded; --head-fg: #5f2120; }
+@media (prefers-color-scheme: dark) {
+  .confirm-head { --mark: #29b6f6; --head-bg: #071318; --head-fg: #b8e7fb; }
+  .confirm-dialog.deleting .confirm-head { --mark: #f44336; --head-bg: #160b0b; --head-fg: #f4c7c7; }
+}
+.confirm-icon { flex: none; width: 1.2rem; height: 1.2rem; background: var(--mark);
+  -webkit-mask: url("icons/help-circle.svg") center / contain no-repeat; mask: url("icons/help-circle.svg") center / contain no-repeat; }
+.confirm-dialog.deleting .confirm-icon { -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
+.confirm-text { margin: 0; padding: 1.1rem 1.1rem 1.2rem; font-size: 0.95rem; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.7rem 1.1rem;
+  background: var(--bg); }
+.confirm-dialog button.danger-fill { background: var(--raises); border-color: var(--raises); color: #ffffff; }
+/* Autocomplete: what holds the item is a heading of the tree, not a choice. */
+.waits-suggestion.context { cursor: default; opacity: 1; color: var(--muted); }
+.waits-suggestion.context:hover { background: none; }
+
+/* Lists of features, tasks and dependencies in the panel: a pencil to edit, a bin to delete. */
+.child-list, .dialog-list:has(.child-row) { list-style: none; padding-left: 0; }
+.child-row { display: flex; align-items: center; gap: 0.45rem; padding: 0.15rem 0; }
+.child-title { flex: 1; min-width: 0; }
+.notes-dialog .icon-button, .notes-page .icon-button { display: inline-flex; align-items: center; justify-content: center;
+  width: 1.8rem; height: 1.8rem; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); }
+.notes-dialog .icon-button:hover, .notes-page .icon-button:hover { border-color: var(--border); background: var(--panel); color: var(--fg); }
+.notes-page .icon-button:has(.tool-delete):hover { color: var(--raises); }
+.tool-icon { width: 1rem; height: 1rem; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat; }
+.tool-edit { --icon: url("icons/pencil.svg"); }
+.tool-delete { --icon: url("icons/trash.svg"); }
+.notes-page .add-button { margin-top: 0.4rem; }
+.planner-external { gap: 0.25rem; padding: 0.4rem 0.6rem; max-width: 16rem; }
+.planner-external-plan { color: var(--muted); font-size: 0.7rem; }
+.planner-external-plan strong { color: var(--fg); }
+.planner-external-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; }
+.planner-external-item strong { flex: 1; min-width: 0; }
+[data-show] { cursor: pointer; }
+[data-show]:hover { text-decoration: underline; text-decoration-color: var(--muted); }
+.planner-frame.selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+.editable-row .row-edit { display: none; flex: 1; gap: 0.35rem; }
+.editable-row.editing .row-edit { display: flex; }
+.editable-row.editing .row-view { display: none; }
+.editable-row .row-edit input:not([type=hidden]), .editable-row .row-edit textarea { flex: 1; min-width: 0; }
+/* Head of the panel: whether the last change was saved. */
+.save-status { margin-left: auto; color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+.save-status.failed { color: var(--raises); font-weight: 600; }
+/* One-line texts that wrap and grow when long (titles, evidence, annotations). */
+textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none; overflow-y: hidden; line-height: 1.45; }
+.tool-save { --icon: url("icons/check.svg"); }
+.notes-page .row-save, .notes-dialog .row-save { flex: none; align-self: flex-start; color: var(--accent); border-color: var(--border); }
+.notes-dialog button.withdraw, .notes-page button.withdraw { border-color: var(--class); color: var(--class); }
+
+/* Notes tree (guidelines, memory): types that fold, their notes below. */
+.notes-swatch.type-preference, .notes-swatch.type-rule, .notes-swatch.type-decision, .notes-swatch.type-context,
+.notes-swatch.type-pitfall, .notes-swatch.type-reference { background: var(--tint); }
+.notes-tree { height: calc(100vh - var(--topbar-height) - 15rem); min-height: 20rem; overflow: auto; padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.tree-type { margin: 0.2rem 0; }
+.tree-type > summary { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.3rem; cursor: pointer; list-style: none;
+  border-bottom: 1px solid var(--border); }
+.tree-type > summary::-webkit-details-marker { display: none; }
+.tree-type > summary::before { content: "▸"; width: 0.8rem; color: var(--muted); transition: transform 0.15s; }
+.tree-type[open] > summary::before { transform: rotate(90deg); }
+.tree-type > summary strong { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.82rem; }
+.tree-count { padding: 0 0.45rem; border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 0.72rem; }
+.tree-description { color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-type ul { list-style: none; margin: 0.2rem 0 0.5rem; padding: 0 0 0 1.4rem; border-left: 2px solid var(--tint); margin-left: 0.7rem; }
+.tree-note { display: grid; gap: 0.15rem; padding: 0.6rem 0.6rem; border-bottom: 1px solid var(--border); cursor: pointer; }
+.tree-note:last-child { border-bottom: 0; }
+.tree-note:hover { background: var(--panel); }
+.tree-note.current { background: color-mix(in srgb, var(--tint) 16%, var(--bg)); box-shadow: inset 3px 0 0 var(--tint); }
+.tree-text { font-size: 0.86rem; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tree-meta { color: var(--muted); font-size: 0.7rem; }
+.tree-note.superseded .tree-text { color: var(--muted); text-decoration: line-through; }
+.tree-empty { padding: 0.35rem 0.5rem; color: var(--muted); font-size: 0.82rem; }
+@media (max-width: 1100px) { .notes-tree { height: auto; max-height: 60vh; } }
