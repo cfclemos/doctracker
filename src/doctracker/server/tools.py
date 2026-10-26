@@ -1,6 +1,7 @@
 """MCP tools that let agents read the technical documentation."""
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.config import Config, set_config_value
 from doctracker.graph import architecture, call_graph, class_diagram, entity_history
@@ -213,7 +214,7 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
         """
         key = "vllm_model" if embeddings.uses_vllm else "model"
         if key == "model" and not model.endswith(".gguf"):
-            raise ValueError("Use 'owner/repo/file.gguf' (Hugging Face) or the path of a local .gguf file")
+            raise ToolError("Use 'owner/repo/file.gguf' (Hugging Face) or the path of a local .gguf file")
         set_config_value(project_root, config, key, model, section="embeddings")
         await embeddings.reset()
         return embeddings.status()
@@ -281,7 +282,7 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
         """
         entity = state.entities.get(path)
         if entity is None:
-            raise ValueError(f"Unknown entity: {path}")
+            raise ToolError(f"Unknown entity: {path}")
         return entity
 
     @mcp.tool()

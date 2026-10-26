@@ -270,7 +270,7 @@ main { grid-area: main; }
 /* Drawn icons (Tabler Icons, MIT, in static/icons/): the SVG is a mask painted with the
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
-.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before {
+.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before {
   content: "";
   display: inline-block;
   width: 1.05rem;
@@ -287,12 +287,14 @@ main { grid-area: main; }
 .icon-classes::before { -webkit-mask-image: url("icons/binary-tree.svg"); mask-image: url("icons/binary-tree.svg"); }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
+.icon-notes::before { -webkit-mask-image: url("icons/notebook.svg"); mask-image: url("icons/notebook.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
 .icon-architecture { --tint: var(--method); }
 .icon-classes { --tint: var(--class); }
 .icon-calls { --tint: var(--function); }
 .icon-git { --tint: var(--raises); }
+.icon-notes { --tint: var(--exports); }
 .icon.icon-package { --tint: var(--attribute); }
 .icon.icon-subpackage { --tint: var(--folder); }
 
@@ -964,3 +966,85 @@ text.git-hash { font: 700 8px ui-monospace, monospace; fill: #ffffff; text-ancho
 rect.git-hash { fill: var(--lane); }
 text.git-ref { font: 700 9px system-ui, sans-serif; fill: var(--lane); text-anchor: middle; }
 rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: var(--lane); }
+
+/* NOTES: two tabs, the work in progress (plans and tasks) and the lasting notes. */
+.notes-tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 1rem; border-bottom: 1px solid var(--border); }
+.notes-tab { padding: 0.4rem 1rem; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
+  color: var(--muted); font-weight: 600; margin-bottom: -1px; }
+.notes-tab:hover { color: var(--fg); text-decoration: none; }
+.notes-tab.current { border-color: var(--border); background: var(--bg); color: var(--fg); }
+.notes-error { padding: 0.5rem 0.8rem; border: 1px solid var(--raises); border-radius: 6px;
+  background: color-mix(in srgb, var(--raises) 8%, var(--bg)); color: var(--raises); }
+.notes-meta { color: var(--muted); font-size: 0.78rem; }
+.notes-pill { display: inline-block; padding: 0 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+  line-height: 1.5; color: #ffffff; background: var(--tint, var(--neutral)); }
+.notes-branch { font-size: 0.75rem; padding: 0 0.3rem; border-radius: 4px; background: var(--panel); }
+.status-active { --tint: var(--accent); }
+.status-done { --tint: var(--attribute); }
+.evidence-diff { --tint: var(--returns); }
+.evidence-agent { --tint: var(--function); }
+.evidence-wiki { --tint: var(--attribute); }
+.type-preference { --tint: var(--function); }
+.type-rule { --tint: var(--raises); }
+.type-decision { --tint: var(--accent); }
+.type-pitfall { --tint: var(--class); }
+.type-context { --tint: var(--method); }
+.type-reference { --tint: var(--neutral); }
+.type-summary { --tint: var(--note); }
+
+.notes-new, .notes-edit { margin: 0.4rem 0; }
+.notes-new > summary, .notes-edit > summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+.notes-form { display: grid; gap: 0.5rem; max-width: 40rem; margin: 0.5rem 0 0.8rem; }
+.notes-form label { display: grid; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
+.notes-form small { font-weight: 400; }
+.notes-page input, .notes-page textarea, .notes-page select {
+  padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit;
+  font-size: 0.85rem;
+}
+.notes-page button {
+  justify-self: start; padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel); color: var(--fg); font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.notes-page button:hover { border-color: var(--accent); color: var(--accent); }
+.notes-page button.notes-danger:hover { border-color: var(--raises); color: var(--raises); }
+.notes-inline { display: flex; gap: 0.4rem; align-items: center; }
+.notes-inline input[name] { flex: 1; min-width: 0; }
+
+.plan { margin: 0.8rem 0; padding: 0.6rem 0.9rem; border: 1px solid var(--border); border-radius: 8px; background: var(--block); }
+.plan > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; cursor: pointer; }
+.plan-title { font-weight: 700; font-size: 1.02rem; }
+.plan-done { opacity: 0.75; }
+.plan-goal { margin: 0.5rem 0; }
+.plan-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0.4rem 1.5rem; }
+.plan-lists h3 { margin: 0.3rem 0 0.2rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.plan-lists ul { margin: 0; padding-left: 1.1rem; font-size: 0.88rem; }
+.tasks { list-style: none; margin: 0.8rem 0 0.5rem; padding: 0; }
+.task { padding: 0.5rem 0.6rem; border-left: 3px solid var(--border); background: var(--bg); border-radius: 0 6px 6px 0; }
+.task + .task { margin-top: 0.4rem; }
+.task-doing { border-left-color: var(--accent); }
+.task-done { border-left-color: var(--attribute); }
+.task-done .task-title { text-decoration: line-through; color: var(--muted); }
+.task-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.task-status select { padding: 0.1rem 0.3rem; font-size: 0.78rem; }
+.task-criteria, .task-annotations, .task-evidence { margin: 0.35rem 0 0; padding-left: 1.2rem; font-size: 0.86rem; }
+.task-criteria { list-style: "☐ "; }
+.task-done .task-criteria { list-style: "☑ "; }
+.task-annotations { color: var(--fg); }
+.task-evidence { list-style: none; padding-left: 0.2rem; }
+.task-actions { display: grid; gap: 0.35rem; margin-top: 0.45rem; }
+.notes-add-task { margin: 0.4rem 0; }
+
+.notes-filter { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.4rem; }
+.notes-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
+.notes-list { list-style: none; margin: 0.6rem 0; padding: 0; }
+.note { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left: 3px solid var(--tint, var(--border)); border-radius: 6px; }
+.note + .note { margin-top: 0.5rem; }
+.note-preference { --tint: var(--function); } .note-rule { --tint: var(--raises); } .note-decision { --tint: var(--accent); }
+.note-pitfall { --tint: var(--class); } .note-context { --tint: var(--method); } .note-reference { --tint: var(--neutral); }
+.note-summary { --tint: var(--note); }
+.note-superseded { opacity: 0.6; }
+.note-head { display: flex; gap: 0.5rem; align-items: baseline; }
+.note-statement { font-weight: 600; }
+.note-why { margin: 0.3rem 0 0; font-size: 0.88rem; color: var(--muted); }
+.note-entities { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0 0; font-size: 0.8rem; }
+.note .notes-meta { margin: 0.35rem 0 0; }

@@ -19,6 +19,10 @@ GITIGNORE_CONTENT = "sqlite/\nmodels/\n"
 DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "doctracker.db"
 """Local database with the search indexes (BM25 and embedding vectors), relative to the project root."""
 
+NOTES_DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "notes.db"
+"""Local database with the plans, tasks and notes, relative to the project root. Kept apart from the
+search indexes, which can be rebuilt from the code at any time; the notes cannot."""
+
 DEFAULT_MODELS_DIR = Path(DOC_DIR) / "models"
 """Where models and the llama.cpp binaries go when `embeddings.models_dir` is not set."""
 

@@ -26,7 +26,7 @@
 <nav id="tree" {% if oob %}hx-swap-oob="true"{% endif %}>
   {# Graph views, one page each. #}
   <ul class="view-links">
-    {% for name, title in (("architecture", "ARCHITECTURE"), ("classes", "CLASSES"), ("calls", "CALLS"), ("git", "GIT")) %}
+    {% for name, title in (("architecture", "ARCHITECTURE"), ("classes", "CLASSES"), ("calls", "CALLS"), ("git", "GIT"), ("notes", "NOTES")) %}
     <li><a class="view-link{% if view == name %} current{% endif %}" {{ ui.nav_url("/" ~ name) }}>{{ ui.icon(name) }}{{ title }}</a></li>
     {% endfor %}
   </ul>

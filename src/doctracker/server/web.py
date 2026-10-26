@@ -13,6 +13,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import Config, set_config_value
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_history
+from doctracker.notes import NOTE_TYPES, PLAN_STATUSES, TASK_STATUSES, NoteStore
 from doctracker.search import DEFAULT_LIMIT, MODES, WIKI_WAIT_SECONDS, SearchEngine
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
@@ -52,11 +53,13 @@ def _static_url(name: str) -> str:
     return f"/static/{name}?v={int(file.stat().st_mtime)}" if file.is_file() else f"/static/{name}"
 
 
-def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine) -> list[BaseRoute]:
+def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine,
+               notes: NoteStore) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
 
     `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
-    `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), `/source/<path>`,
+    `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the plans,
+    tasks and notes `/notes` (changed through `/notes/<action>`), `/source/<path>`,
     `/search` (modes `default`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
 
@@ -65,6 +68,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         project_root: Root of the documented project, to read source code and save settings.
         config: Project settings; the code theme chosen in the wiki is saved here.
         search: Search engine behind the search box (the same one the MCP tools use).
+        notes: Store of the plans, tasks and notes (the same one the MCP tools use).
 
     Returns:
         The routes, to add to the server app.
@@ -107,7 +111,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
-        """One of the graph views: architecture, classes, calls or git."""
+        """One of the views: architecture, classes, calls, git or notes."""
         view = request.url.path.strip("/")
         params = dict(request.query_params)
         context = {
@@ -126,8 +130,78 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             commits = await read_history(project_root, GIT_COMMITS, params.get("file", ""))
             context["commits"] = commits
             context["selected"] = params.get("commit") or (commits[0].hash if commits else "")
+        if view == "notes":
+            context.update(notes_context(params))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
+
+    def notes_context(params: dict) -> dict:
+        """What the notes page shows: the plans (work tab) and the notes, filtered (notes tab)."""
+        note_type = params.get("type", "") if params.get("type", "") in NOTE_TYPES else ""
+        note_status = params.get("status", "active") if params.get("status", "active") in ("active", "superseded", "") else "active"
+        return {
+            "tab": "notes" if params.get("tab") == "notes" else "work",
+            "plans": notes.list_plans(""),
+            "notes": notes.list_notes(note_type, note_status),
+            "note_types": NOTE_TYPES,
+            "note_type": note_type,
+            "note_status": note_status,
+            "plan_statuses": PLAN_STATUSES,
+            "task_statuses": TASK_STATUSES,
+        }
+
+    def lines(value: str | None) -> list[str] | None:
+        """A textarea with one item per line, as a list (`None` when the field was not sent)."""
+        return None if value is None else [line.strip() for line in value.splitlines() if line.strip()]
+
+    async def note_action(request: Request) -> Response:
+        """Change plans, tasks or notes from the notes page, through the same methods the MCP tools use.
+
+        The page comes back redrawn; a refused change (unknown type, missing title...) is shown on top.
+        """
+        if not _same_origin(request):
+            return Response("", status_code=403)
+        form = {key: value for key, value in (await request.form()).items()}
+
+        def number(name: str) -> int:
+            value = form.get(name, "")
+            return int(value) if value.isdigit() else 0
+
+        actions = {
+            "create_plan": lambda: notes.create_plan(form.get("title", ""), form.get("goal", ""), lines(form.get("requirements")),
+                                                     lines(form.get("decisions")), lines(form.get("branches")), "wiki"),
+            "update_plan": lambda: notes.update_plan(number("plan_id"), form.get("title"), form.get("goal"),
+                                                     lines(form.get("requirements")), lines(form.get("decisions")),
+                                                     lines(form.get("branches")), form.get("status")),
+            "delete_plan": lambda: notes.delete_plan(number("plan_id")),
+            "add_task": lambda: notes.add_task(number("plan_id"), form.get("title", ""), lines(form.get("criteria")),
+                                               form.get("branch", ""), "wiki"),
+            "update_task": lambda: notes.update_task(number("task_id"), form.get("title"), lines(form.get("criteria")),
+                                                     form.get("branch"), form.get("status")),
+            "delete_task": lambda: notes.delete_task(number("task_id")),
+            "annotate_task": lambda: notes.annotate_task(number("task_id"), form.get("text", ""), "wiki"),
+            "add_evidence": lambda: notes.add_evidence(number("task_id"), "wiki", form.get("detail", "")),
+            "create_note": lambda: notes.create_note(form.get("type", ""), form.get("statement", ""), form.get("why", ""),
+                                                     lines(form.get("entities")), "wiki"),
+            "update_note": lambda: notes.update_note(number("note_id"), form.get("statement"), form.get("why"),
+                                                     lines(form.get("entities"))),
+            "supersede_note": lambda: notes.supersede_note(number("note_id"), form.get("statement", ""), form.get("why", ""),
+                                                           source="wiki"),
+            "delete_note": lambda: notes.delete_note(number("note_id")),
+        }
+        action = actions.get(request.path_params["action"])
+        if action is None:
+            return Response("", status_code=404)
+        params = {"tab": form.get("tab", "work"), "type": form.get("filter_type", ""), "status": form.get("filter_status", "active")}
+        error = ""
+        try:
+            action()
+        except ValueError as refused:
+            error = str(refused)
+        query = "&".join(f"{key}={value}" for key, value in params.items() if value)
+        context = {"path": "", "tree": pages.tree(state, ""), "view": "notes", "params": params, "error": error,
+                   **notes_context(params)}
+        return render_page(request, "notes.html", f"/notes?{query}", context)
 
     async def git_branches(request: Request) -> Response:
         """Commits of every branch placed on lanes, for the branch graph at the top of the git page.
@@ -233,6 +307,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/classes", view_page),
         Route("/calls", view_page),
         Route("/git", view_page),
+        Route("/notes", view_page),
+        Route("/notes/{action}", note_action, methods=["POST"]),
         Route("/graph/{view}", view_data),
         Route("/git/branches", git_branches),
         Route("/git/commit/{hash}", git_commit),
