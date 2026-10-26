@@ -35,6 +35,10 @@ class DocState:
         self.edges = result["edges"]
         self.errors = result["errors"]
         self.ready = True
+        self.notify()
+
+    def notify(self) -> None:
+        """Tell every open wiki page to reload its content (e.g. after a commit or a branch change)."""
         for queue in self.listeners:
             queue.put_nowait("changed")
 

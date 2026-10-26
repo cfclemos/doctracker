@@ -118,6 +118,19 @@ async def _git(project_root: Path, *args: str) -> str | None:
     return output.decode("utf-8", errors="replace") if process.returncode == 0 else None
 
 
+async def git_dir(project_root: Path) -> Path | None:
+    """Find the repository's `.git` folder (it may be above the project, or elsewhere for worktrees).
+
+    Args:
+        project_root: Root of the documented project.
+
+    Returns:
+        Absolute path of the git folder, or `None` when the project is not in a repository.
+    """
+    output = await _git(project_root, "rev-parse", "--absolute-git-dir")
+    return Path(output.strip()) if output else None
+
+
 async def commit_diff(project_root: Path, commit_hash: str) -> list[FileDiff] | None:
     """Read the changed lines of every file of one commit.
 
