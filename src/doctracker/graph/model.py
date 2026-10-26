@@ -6,6 +6,7 @@
 - entity history: the commits that changed an entity's file.
 """
 
+import re
 from pathlib import Path
 
 from doctracker.history import read_history
@@ -157,42 +158,125 @@ def _cycle_edges(edges: set[tuple[str, str]]) -> set[tuple[str, str]]:
     return {(s, t) for s, t in edges if group[s][0] == group[t][0] and group[s][1] > 1}
 
 
+TYPE_ICONS = {
+    "bool": "bool",
+    **dict.fromkeys(("int", "float", "complex", "Decimal", "Fraction"), "number"),
+    **dict.fromkeys(("str", "bytes"), "text"),
+    **dict.fromkeys(("datetime", "date", "time", "timedelta"), "time"),
+    **dict.fromkeys(("Path", "PurePath"), "path"),
+    **dict.fromkeys(("list", "dict", "set", "tuple", "frozenset", "deque", "defaultdict", "OrderedDict", "Counter",
+                     "Sequence", "Mapping", "MutableMapping", "Iterable", "Collection"), "collection"),
+}
+"""Icon of an attribute by the first type named in its hint (`str | None` → `text`); others are `other`."""
+
+STEREOTYPES = {
+    **dict.fromkeys(("Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"), "enum"),
+    "Protocol": "protocol",
+    "ABC": "abstract",
+    "NamedTuple": "namedtuple",
+    "TypedDict": "typeddict",
+}
+"""UML stereotype of a class by one of its bases (exceptions and dataclasses are found apart)."""
+
+METHOD_KINDS = ("staticmethod", "classmethod", "property", "abstractmethod")
+"""Decorators that tell the kind of a method."""
+
+
+def _type_icon(annotation: str, holds_class: bool) -> str:
+    """Tell the icon of an attribute from its type hint.
+
+    Args:
+        annotation: Type hint as written, e.g. `list[str] | None`.
+        holds_class: Whether it holds a class of the project.
+
+    Returns:
+        `class`, one of the `TYPE_ICONS` values, or `other`.
+    """
+    if holds_class:
+        return "class"
+    for name in re.findall(r"[A-Za-z_]\w*", annotation):
+        if name not in ("None", "Optional", "typing", "collections", "abc", "datetime", "pathlib", "decimal"):
+            return TYPE_ICONS.get(name, "other")
+    return TYPE_ICONS.get(annotation.rsplit(".", 1)[-1], "other")
+
+
+def _stereotype(entity: dict) -> str:
+    """Tell the UML stereotype of a class: dataclass, enum, protocol, abstract, exception...
+
+    Args:
+        entity: Extracted class.
+
+    Returns:
+        The stereotype name, or an empty string.
+    """
+    if any(decorator.split("(")[0].rsplit(".", 1)[-1] == "dataclass" for decorator in entity["decorators"]):
+        return "dataclass"
+    for base in entity["bases"]:
+        name = base.split("[")[0].rsplit(".", 1)[-1]
+        if name in STEREOTYPES:
+            return STEREOTYPES[name]
+        if name.endswith(("Exception", "Error")):
+            return "exception"
+    return ""
+
+
 def class_diagram(state: DocState, package: str = "") -> dict:
     """Build a UML class diagram.
 
-    Each class lists its attributes (`name: type`) and methods (`name(parameters)`).
-    Relations: inheritance, composition (an attribute holds another class) and use
-    (a method calls another class or one of its methods).
+    Each class lists its attributes (name, type and an icon for the type) and its methods
+    (name and full signature). Relations: inheritance, composition (an attribute holds
+    another class; `via` names the attribute) and use (a method calls another class or one
+    of its methods).
 
     Args:
         state: Extracted entities and relations.
         package: Only classes under this path (e.g. `pkg.server`); empty means all.
 
     Returns:
-        `nodes` (with `attributes` and `methods` lines) and `edges` (`inherits`, `has`, `uses`).
+        `nodes` (class path, `stereotype`, `attributes`: name, type, icon, target class;
+        `methods`: name, signature, kind) and `edges` (`inherits`, `has` with `via`, `uses`).
     """
     classes = [
         path for path, entity in state.entities.items()
         if entity["kind"] == "class" and (not package or path == package or path.startswith(package + "."))
     ]
+    kept = set(classes)
+    held = {edge["via"]: edge["target"] for edge in _edges_of(state, "has")}  # attribute path -> class it holds
     nodes = []
     for path in classes:
         attributes, methods = [], []
+        stereotype = _stereotype(state.entities[path])
         for member in state.entities[path]["members"]:
             entity = state.entities[member]
+            if stereotype == "dataclass" and entity["name"] == "__init__":
+                continue  # generated from the fields, which are listed already
             if entity["kind"] == "attribute":
+                target = held.get(member, "")
                 annotation = entity.get("annotation", "")
-                attributes.append(f"{entity['name']}: {annotation}" if annotation else entity["name"])
+                attributes.append({
+                    "name": entity["name"],
+                    "type": annotation or (state.entities[target]["name"] if target else ""),
+                    "icon": _type_icon(annotation, bool(target)),
+                    "target": target if target in kept else "",
+                })
             elif entity["kind"] == "function":
-                methods.append(f"{entity['name']}{signature_details(entity).split(' -> ')[0]}")
-        nodes.append(_node(state, path, attributes=attributes, methods=methods))
-    kept = set(classes)
+                decorators = [decorator.rsplit(".", 1)[-1] for decorator in entity["decorators"]]
+                methods.append({
+                    "name": entity["name"],
+                    "signature": f"{entity['name']}{signature_details(entity)}",
+                    "kind": next((kind for kind in METHOD_KINDS if kind in decorators), ""),
+                })
+        nodes.append(_node(state, path, stereotype=stereotype, attributes=attributes, methods=methods))
     edges, seen = [], set()
-    for kind in ("inherits", "has"):
-        for edge in _edges_of(state, kind):
-            if edge["source"] in kept and edge["target"] in kept:
-                edges.append({"id": f"{kind}:{edge['source']}->{edge['target']}", **edge})
-                seen.add((edge["source"], edge["target"]))
+    for edge in _edges_of(state, "inherits"):
+        if edge["source"] in kept and edge["target"] in kept:
+            edges.append({"id": f"inherits:{edge['source']}->{edge['target']}", **edge})
+            seen.add((edge["source"], edge["target"]))
+    for edge in _edges_of(state, "has"):
+        if edge["source"] in kept and edge["target"] in kept:
+            via = state.entities[edge["via"]]["name"]
+            edges.append({"id": f"has:{edge['source']}.{via}->{edge['target']}", **edge, "via": via})
+            seen.add((edge["source"], edge["target"]))
     for edge in _edges_of(state, "calls"):
         source = _class_of(state, edge["source"])
         target = _class_of(state, edge["target"])

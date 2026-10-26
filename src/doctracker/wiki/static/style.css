@@ -566,6 +566,82 @@ main:has(.graph-page) { max-width: none; }
 }
 .graph-canvas > .empty { padding: 1rem; }
 
+/* CLASSES: UML boxes in the style of database diagrams (DBeaver), over SVG relation lines. */
+.uml-canvas { position: relative; overflow: hidden; cursor: grab; touch-action: none; }
+.uml-canvas:active { cursor: grabbing; }
+.uml-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.uml-lines { position: absolute; top: 0; left: 0; overflow: visible; }
+.uml-class {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  min-width: 10rem;
+  max-width: 22rem;
+  border: 1.5px solid var(--accent);
+  background: var(--bg);
+  font-size: 0.78rem;
+  cursor: move;
+  user-select: none;
+}
+.uml-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.82rem;
+}
+.uml-head strong { overflow-wrap: anywhere; }
+.uml-stereotype { margin-left: auto; padding-left: 0.6rem; font-size: 0.7rem; font-style: italic; opacity: 0.8; }
+.uml-section { padding: 0.2rem 0; }
+.uml-section + .uml-section { border-top: 1px solid var(--border); }
+.uml-row { display: flex; align-items: center; gap: 0.35rem; padding: 0.08rem 0.55rem; line-height: 1.35; }
+.uml-name { white-space: nowrap; }
+.uml-kind {
+  margin-left: auto;
+  padding-left: 0.8rem;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 11rem;
+}
+.uml-method.staticmethod .uml-name, .uml-method.classmethod .uml-name { text-decoration: underline; }
+.uml-method.abstractmethod .uml-name { font-style: italic; }
+.uml-type {
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  background: var(--accent);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.uml-head .uml-type { background: currentColor; }
+.uml-type-text { --icon: url("icons/abc.svg"); }
+.uml-type-number { --icon: url("icons/numbers.svg"); }
+.uml-type-bool { --icon: url("icons/square-check.svg"); }
+.uml-type-time { --icon: url("icons/clock.svg"); }
+.uml-type-collection { --icon: url("icons/braces.svg"); }
+.uml-type-class { --icon: url("icons/box.svg"); }
+.uml-type-path { --icon: url("icons/file.svg"); }
+.uml-type-other { --icon: url("icons/point.svg"); background: var(--muted); }
+.uml-type-method { --icon: url("icons/math-function.svg"); background: var(--method); }
+.uml-class.selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+.uml-class.match { box-shadow: 0 0 0 3px var(--fg); }
+.uml-class.faded, .uml-line.faded { opacity: 0.15; }
+.uml-line { fill: none; stroke-width: 1.4; }
+.uml-line.has { stroke: var(--accent); }
+.uml-line.inherits { stroke: var(--fg); }
+.uml-line.uses { stroke: var(--muted); stroke-dasharray: 5 4; }
+.uml-line.near { stroke-width: 2.6; }
+.uml-marker-hollow { fill: var(--bg); stroke: currentColor; stroke-width: 1.4; }
+.uml-marker-filled { fill: var(--accent); }
+.uml-marker-open { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+#uml-diamond { color: var(--accent); }
+#uml-triangle { color: var(--fg); }
+
 /* Side panel with the selected node and its relations. */
 .graph-info {
   position: absolute;

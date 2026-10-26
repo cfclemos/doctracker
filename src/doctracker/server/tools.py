@@ -46,7 +46,10 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             package: Only classes under this path (e.g. `pkg.server`); empty means all.
 
         Returns:
-            `nodes` (class path, `attributes`, `methods`) and `edges` (`inherits`, `has` = composition, `uses`).
+            `nodes` (class path, `stereotype` such as dataclass or enum, `attributes` with name,
+            type, icon and the project class they hold, `methods` with name, signature and kind)
+            and `edges` (`inherits`, `has` = an attribute holds another class, with `via` naming
+            the attribute, `uses` = a method calls another class).
         """
         return class_diagram(state, package)
 

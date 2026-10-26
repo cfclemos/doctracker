@@ -35,10 +35,12 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
 
     Returns:
         One `{"source", "target", "kind"}` per relation, without duplicates; both ends
-        are entity paths and `kind` is one of `EDGE_KINDS`.
+        are entity paths and `kind` is one of `EDGE_KINDS`. `has` relations also carry
+        `via`: the attribute that holds the other class (one relation per attribute).
     """
     resolver = _Resolver(entities)
     edges: set[tuple[str, str, str]] = set()
+    held_by: set[tuple[str, str, str]] = set()  # (class, held class, attribute)
     for path, entity in entities.items():
         if entity["parent"] in entities:
             edges.add((entity["parent"], path, "contains"))
@@ -59,8 +61,9 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
                 if entities[member]["kind"] == "attribute":
                     held = resolver.instance_type(member)
                     if held and held != path:
-                        edges.add((path, held, "has"))
-    return [{"source": source, "target": target, "kind": kind} for source, target, kind in sorted(edges)]
+                        held_by.add((path, held, member))
+    return ([{"source": source, "target": target, "kind": kind} for source, target, kind in sorted(edges)]
+            + [{"source": source, "target": target, "kind": "has", "via": via} for source, target, via in sorted(held_by)])
 
 
 def _call_edges(module: str, file: Path, resolver: "_Resolver") -> set[tuple[str, str, str]]:

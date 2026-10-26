@@ -1,4 +1,5 @@
-// Graph view pages (architecture, classes, calls), drawn with Cytoscape.js.
+// Graph view pages: architecture and calls drawn with Cytoscape.js, classes as HTML boxes and SVG
+// lines placed by dagre (see drawClassDiagram).
 // Each page has a .graph-canvas with data-view (which style and layout to use), data-url
 // (the view's data, built by doctracker.graph) and data-focus (a node to select).
 // Colors come from the page's CSS variables, so the graphs match the tree, the badges and the theme.
@@ -68,34 +69,6 @@ const VIEWS = {
       gravity: 0.1, nestingFactor: 1.4, numIter: 2500, nodeDimensionsIncludeLabels: true },
   },
 
-  classes: {
-    decorate(data) {
-      const line = "─".repeat(18);
-      for (const node of data.nodes) {
-        node.color = cssVar("--class");
-        const parts = [node.label];
-        parts.push(line, ...(node.attributes.length ? node.attributes : [" "]));
-        parts.push(line, ...(node.methods.length ? node.methods : [" "]));
-        node.uml = parts.join("\n");
-      }
-      const colors = { inherits: "--class", has: "--method", uses: "--muted" };
-      for (const edge of data.edges) edge.color = cssVar(colors[edge.kind] || "--muted");
-    },
-    style: () => [
-      { selector: "node", style: {
-        shape: "round-rectangle", label: "data(uml)", "text-wrap": "wrap", "text-valign": "center",
-        "text-halign": "center", "text-justification": "left", "font-family": "ui-monospace, monospace",
-        "font-size": 9, "line-height": 1.35, width: "label", height: "label", padding: 10,
-        "background-color": cssVar("--bg"), "border-width": 2, "border-color": "data(color)", "text-outline-width": 0,
-      } },
-      { selector: "edge[kind = 'inherits']", style: { "target-arrow-shape": "triangle", "target-arrow-fill": "hollow", "arrow-scale": 1.4 } },
-      { selector: "edge[kind = 'has']", style: { "source-arrow-shape": "diamond", "source-arrow-color": "data(color)", "target-arrow-shape": "vee", "arrow-scale": 1.1 } },
-      { selector: "edge[kind = 'uses']", style: { "line-style": "dashed", "target-arrow-shape": "vee" } },
-    ],
-    layout: { name: "cose", animate: false, padding: 40, nodeRepulsion: () => 400000, idealEdgeLength: () => 180,
-      gravity: 0.05, numIter: 2500, nodeDimensionsIncludeLabels: true },
-  },
-
   calls: {
     decorate(data) {
       const sides = { focus: "--fg", callee: "--function", caller: "--note" };
@@ -115,6 +88,243 @@ const VIEWS = {
   },
 
 };
+
+// CLASSES page: a UML class diagram drawn as HTML boxes over SVG lines, in the style of database
+// diagrams (DBeaver): a dark header with the class name, one row per attribute with an icon for its
+// type, then the methods. A composition line starts at the attribute that holds the other class.
+// dagre (MIT) only computes where the boxes go inside each group of related classes (see umlLayout).
+// Wheel zooms, dragging a box moves it, dragging the background pans, a click highlights a class
+// and its relations, a double click opens its page.
+const UML_MARKERS = `<defs>
+  <marker id="uml-diamond" viewBox="0 0 16 10" refX="1" refY="5" markerWidth="16" markerHeight="10" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+    <path d="M1 5 L8 1 L15 5 L8 9 Z" class="uml-marker-hollow"/></marker>
+  <marker id="uml-dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse">
+    <circle cx="5" cy="5" r="4" class="uml-marker-filled"/></marker>
+  <marker id="uml-triangle" viewBox="0 0 14 14" refX="13" refY="7" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
+    <path d="M1 1 L13 7 L1 13 Z" class="uml-marker-hollow"/></marker>
+  <marker id="uml-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+    <path d="M1 1 L11 6 L1 11" class="uml-marker-open"/></marker>
+</defs>`;
+
+function umlBox(node) {
+  const rows = node.attributes.map((attribute) => `
+    <div class="uml-row" data-attribute="${escapeHtml(attribute.name)}" title="${escapeHtml(`${attribute.name}: ${attribute.type || "?"}`)}">
+      <i class="uml-type uml-type-${attribute.icon}"></i><span class="uml-name">${escapeHtml(attribute.name)}</span>
+      <span class="uml-kind">${escapeHtml(attribute.type)}</span></div>`).join("");
+  const methods = node.methods.map((method) => `
+    <div class="uml-row uml-method ${method.kind}" title="${escapeHtml(method.signature)}">
+      <i class="uml-type uml-type-method"></i><span class="uml-name">${escapeHtml(method.name)}()</span>
+      <span class="uml-kind">${method.kind ? escapeHtml(method.kind) : ""}</span></div>`).join("");
+  return `<div class="uml-class" data-id="${escapeHtml(node.id)}">
+    <div class="uml-head" title="${escapeHtml(node.summary || node.id)}"><i class="uml-type uml-type-class"></i>
+      <strong>${escapeHtml(node.label)}</strong>${node.stereotype ? `<span class="uml-stereotype">«${escapeHtml(node.stereotype)}»</span>` : ""}</div>
+    ${rows ? `<div class="uml-section">${rows}</div>` : ""}
+    ${methods ? `<div class="uml-section">${methods}</div>` : ""}
+  </div>`;
+}
+
+// SVG path of a relation. Composition: from the side of the attribute row to the side of the held
+// class's header (both on the same side when the boxes are stacked). Inheritance: from the top of the
+// subclass to the bottom of the base class. Use: between the headers' sides.
+function umlPath(edge, boxes) {
+  const from = boxes[edge.source];
+  const to = boxes[edge.target];
+  if (edge.kind === "inherits") {
+    const x1 = from.x + from.width / 2, y1 = from.y, x2 = to.x + to.width / 2, y2 = to.y + to.height;
+    const middle = (y1 + y2) / 2;
+    return `M ${x1} ${y1} C ${x1} ${middle}, ${x2} ${middle}, ${x2} ${y2}`;
+  }
+  const row = edge.via && from.rows[edge.via];
+  const y1 = from.y + (row ?? from.headCenter);
+  const y2 = to.y + to.headCenter;
+  const apart = from.x + from.width < to.x || to.x + to.width < from.x;
+  let right = to.x + to.width / 2 > from.x + from.width / 2;  // which side of the source box the line leaves from
+  if (!apart) right = true;
+  const x1 = right ? from.x + from.width : from.x;
+  const x2 = apart ? (right ? to.x : to.x + to.width) : to.x + to.width;
+  const reach = Math.max(40, Math.abs(x2 - x1) / 2);
+  const c1 = x1 + (right ? reach : -reach);
+  const c2 = apart ? x2 + (right ? -reach : reach) : x2 + reach;
+  return `M ${x1} ${y1} C ${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`;
+}
+
+// Place the boxes (sets each box's x and y) so the diagram fills a canvas of the given aspect
+// (width / height). Classes linked by any relation form a group laid out by dagre (bases above
+// subclasses, owners above parts); the groups and the lone classes are then packed in rows,
+// biggest first, with the row width chosen so the whole diagram has about the canvas's shape.
+const UML_GAP = 50;
+
+function umlLayout(boxes, edges, aspect) {
+  const group = Object.fromEntries(Object.keys(boxes).map((id) => [id, id]));  // union-find
+  const find = (id) => (group[id] === id ? id : (group[id] = find(group[id])));
+  for (const edge of edges) group[find(edge.source)] = find(edge.target);
+  const members = {};
+  for (const id of Object.keys(boxes)) (members[find(id)] ||= []).push(id);
+
+  const parts = Object.values(members).map((ids) => {
+    const graph = new dagre.graphlib.Graph();
+    graph.setGraph({ rankdir: "TB", nodesep: UML_GAP, ranksep: 80 });
+    graph.setDefaultEdgeLabel(() => ({}));
+    for (const id of ids) graph.setNode(id, { width: boxes[id].width, height: boxes[id].height });
+    for (const edge of edges) {
+      if (!ids.includes(edge.source)) continue;
+      if (edge.kind === "inherits") graph.setEdge(edge.target, edge.source);
+      else if (edge.kind === "has") graph.setEdge(edge.source, edge.target);
+      // uses: no rank between them; being in the same group already keeps them close
+    }
+    dagre.layout(graph);
+    return { ids, graph, width: graph.graph().width, height: graph.graph().height };
+  });
+
+  const area = parts.reduce((sum, part) => sum + (part.width + UML_GAP) * (part.height + UML_GAP), 0);
+  const rowWidth = Math.max(...parts.map((part) => part.width), Math.sqrt(area * aspect));
+  parts.sort((a, b) => b.height - a.height || b.width - a.width);
+  let x = UML_GAP / 2, y = UML_GAP / 2, rowHeight = 0, width = 0;
+  for (const part of parts) {
+    if (x > UML_GAP / 2 && x + part.width > rowWidth) {
+      x = UML_GAP / 2;
+      y += rowHeight + UML_GAP;
+      rowHeight = 0;
+    }
+    for (const id of part.ids) {
+      const placed = part.graph.node(id);
+      boxes[id].x = x + placed.x - boxes[id].width / 2;
+      boxes[id].y = y + placed.y - boxes[id].height / 2;
+    }
+    x += part.width + UML_GAP;
+    rowHeight = Math.max(rowHeight, part.height);
+    width = Math.max(width, x);
+  }
+  return { width: width + UML_GAP / 2, height: y + rowHeight + UML_GAP };
+}
+
+async function drawClassDiagram(canvas) {
+  const data = await (await fetch(canvas.dataset.url)).json();
+  if (data.error || !data.nodes.length) {
+    canvas.innerHTML = `<p class="empty">${escapeHtml(data.error || "No classes here.")}</p>`;
+    return;
+  }
+  canvas.classList.add("uml-canvas");
+  canvas.innerHTML = `<div class="uml-stage"><svg class="uml-lines">${UML_MARKERS}</svg>${data.nodes.map(umlBox).join("")}</div>`;
+  const stage = canvas.querySelector(".uml-stage");
+  const svg = stage.querySelector("svg");
+
+  // Measure every box, then place them to fill the canvas (see umlLayout).
+  const boxes = {};
+  for (const element of stage.querySelectorAll(".uml-class")) {
+    const head = element.querySelector(".uml-head");
+    const rows = {};
+    for (const row of element.querySelectorAll(".uml-row[data-attribute]")) rows[row.dataset.attribute] = row.offsetTop + row.offsetHeight / 2;
+    boxes[element.dataset.id] = { element, width: element.offsetWidth, height: element.offsetHeight, rows,
+      headCenter: head.offsetTop + head.offsetHeight / 2 };
+  }
+  const size = umlLayout(boxes, data.edges, canvas.clientWidth / canvas.clientHeight);
+  for (const box of Object.values(boxes)) box.element.style.transform = `translate(${box.x}px, ${box.y}px)`;
+  stage.style.width = `${size.width}px`;
+  stage.style.height = `${size.height}px`;
+  svg.setAttribute("width", size.width);
+  svg.setAttribute("height", size.height);
+  const markers = { has: 'marker-start="url(#uml-diamond)" marker-end="url(#uml-dot)"',
+    inherits: 'marker-end="url(#uml-triangle)"', uses: 'marker-end="url(#uml-arrow)"' };
+  svg.insertAdjacentHTML("beforeend", data.edges.map((edge) => `<path class="uml-line ${edge.kind}"
+    data-source="${escapeHtml(edge.source)}" data-target="${escapeHtml(edge.target)}" d="${umlPath(edge, boxes)}" ${markers[edge.kind]}/>`).join(""));
+  const lines = [...svg.querySelectorAll(".uml-line")].map((element, index) => ({ element, edge: data.edges[index] }));
+
+  // Zoom with the wheel (around the pointer), pan by dragging the background, fit to the canvas.
+  let scale = 1, panX = 0, panY = 0;
+  const apply = () => { stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`; };
+  const fit = () => {
+    scale = Math.min(1, (canvas.clientWidth - 20) / size.width, (canvas.clientHeight - 20) / size.height);
+    panX = (canvas.clientWidth - size.width * scale) / 2;
+    panY = Math.max(10, (canvas.clientHeight - size.height * scale) / 2);
+    apply();
+  };
+  fit();
+  canvas.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const bounds = canvas.getBoundingClientRect();
+    const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+    const next = Math.min(3, Math.max(0.15, scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    panX = x - (x - panX) * (next / scale);
+    panY = y - (y - panY) * (next / scale);
+    scale = next;
+    apply();
+  }, { passive: false });
+  // Dragging a box moves it (and redraws its lines); dragging the background pans.
+  let drag = null;  // what is being dragged: a box, or the background (box is null)
+  canvas.addEventListener("pointerdown", (event) => {
+    const element = event.target.closest(".uml-class");
+    const box = element ? boxes[element.dataset.id] : null;
+    drag = { box, clientX: event.clientX, clientY: event.clientY,
+      startX: box ? box.x : panX, startY: box ? box.y : panY, moved: false };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const dx = event.clientX - drag.clientX, dy = event.clientY - drag.clientY;
+    drag.moved ||= Math.hypot(dx, dy) > 3;
+    if (!drag.moved) return;
+    if (drag.box) {
+      const box = drag.box;
+      box.x = drag.startX + dx / scale;
+      box.y = drag.startY + dy / scale;
+      box.element.style.transform = `translate(${box.x}px, ${box.y}px)`;
+      const id = box.element.dataset.id;
+      for (const line of lines) {
+        if (line.edge.source === id || line.edge.target === id) line.element.setAttribute("d", umlPath(line.edge, boxes));
+      }
+    } else {
+      panX = drag.startX + dx;
+      panY = drag.startY + dy;
+      apply();
+    }
+  });
+  canvas.addEventListener("pointerup", () => { setTimeout(() => { drag = null; }); });
+
+  // A click highlights a class, the classes it is related to and the lines between them.
+  const highlight = (id) => {
+    const related = new Set([id]);
+    for (const line of svg.querySelectorAll(".uml-line")) {
+      const near = id && (line.dataset.source === id || line.dataset.target === id);
+      line.classList.toggle("near", Boolean(near));
+      line.classList.toggle("faded", Boolean(id) && !near);
+      if (near) related.add(line.dataset.source).add(line.dataset.target);
+    }
+    for (const box of Object.values(boxes)) {
+      box.element.classList.toggle("selected", box.element.dataset.id === id);
+      box.element.classList.toggle("faded", Boolean(id) && !related.has(box.element.dataset.id));
+    }
+  };
+  canvas.addEventListener("click", (event) => {
+    if (drag && drag.moved) return;  // the end of a drag, not a click
+    const box = event.target.closest(".uml-class");
+    highlight(box ? box.dataset.id : "");
+  });
+  canvas.addEventListener("dblclick", (event) => {
+    const box = event.target.closest(".uml-class");
+    if (!box) return;
+    htmx.ajax("GET", `/wiki/${box.dataset.id}`, { target: "#content" }).then(() => history.pushState({}, "", `/wiki/${box.dataset.id}`));
+  });
+
+  const page = canvas.closest(".graph-page");
+  page.querySelector(".graph-fit")?.addEventListener("click", fit);
+  page.querySelector(".graph-find")?.addEventListener("input", (event) => {
+    const text = event.target.value.trim().toLowerCase();
+    for (const box of Object.values(boxes)) {
+      const match = text && box.element.dataset.id.toLowerCase().includes(text);
+      box.element.classList.toggle("match", Boolean(match));
+      box.element.classList.toggle("faded", Boolean(text) && !match);
+    }
+  });
+  const focus = canvas.dataset.focus;
+  if (focus && boxes[focus]) {
+    highlight(focus);
+    const box = boxes[focus];
+    panX = canvas.clientWidth / 2 - (box.x + box.width / 2) * scale;
+    panY = canvas.clientHeight / 2 - (box.y + box.height / 2) * scale;
+    apply();
+  }
+}
 
 // Hover tooltip, click panel (with ×), double-click to open, highlight and fit tools.
 function connectTools(cy, page) {
@@ -193,6 +403,10 @@ async function initViews() {
   for (const canvas of document.querySelectorAll(".graph-canvas")) {
     if (canvas.dataset.ready) continue;
     canvas.dataset.ready = "1";
+    if (canvas.dataset.view === "classes") {
+      drawClassDiagram(canvas);
+      continue;
+    }
     const view = VIEWS[canvas.dataset.view];
     const data = await (await fetch(canvas.dataset.url)).json();
     if (data.error || !data.nodes.length) {

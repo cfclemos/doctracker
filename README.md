@@ -261,7 +261,8 @@ Agents get the complete guide from the `documentation_guide` tool.
 
 [MIT](LICENSE). The bundled [htmx](https://htmx.org) is distributed under the
 Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`), the bundled
-[Cytoscape.js](https://js.cytoscape.org) and [Tabler Icons](https://tabler.io/icons) under MIT
-(`cytoscape-LICENSE.txt`, `icons/tabler-icons-LICENSE.txt`). The
+[Cytoscape.js](https://js.cytoscape.org), [dagre](https://github.com/dagrejs/dagre) and
+[Tabler Icons](https://tabler.io/icons) under MIT (`cytoscape-LICENSE.txt`, `dagre-LICENSE.txt`,
+`icons/tabler-icons-LICENSE.txt`). The
 embedding model and llama.cpp are downloaded on use and keep their own licenses
 (Apache-2.0 and MIT).
