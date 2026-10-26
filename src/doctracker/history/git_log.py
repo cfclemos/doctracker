@@ -221,8 +221,8 @@ GRAPH_FORMAT = FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s"])
 REFLOG_FORMAT = FIELD.join(["%gD", "%H", "%gs"])
 """Reflog entry: reference with its index (e.g. `refs/heads/main@{0}`), commit hash, action."""
 
-MADE_ON_BRANCH = ("commit", "cherry-pick", "revert")
-"""Reflog actions that create a commit on the checked-out branch."""
+MADE_ON_BRANCH = ("commit", "cherry-pick", "revert", "merge")
+"""Reflog actions that create a commit on the checked-out branch (a fast-forward merge does not)."""
 
 
 async def read_commit_branches(project_root: Path) -> dict[str, str]:
@@ -244,7 +244,8 @@ async def read_commit_branches(project_root: Path) -> dict[str, str]:
         if len(parts) != 3:
             continue
         selector, full, action = parts
-        if selector.startswith("refs/heads/") and action.startswith(MADE_ON_BRANCH):
+        made_here = action.startswith(MADE_ON_BRANCH) and not action.endswith("Fast-forward")
+        if selector.startswith("refs/heads/") and made_here:
             branches.setdefault(full, selector.removeprefix("refs/heads/").rsplit("@{", 1)[0])
     return branches
 
@@ -293,8 +294,8 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
        commit as first parent (the newest such child); a commit with no such child starts
        an unnamed branch.
     2. Extent: the rows a branch takes, from its commits and the edges to their parents
-       and children. A branch still open (its tip has a branch name and was not merged)
-       goes on to the newest row; its tip gets `open`.
+       and children. A branch still open (its tip has a branch name and was not merged,
+       directly or through a later commit) goes on to the newest row; its tip gets `open`.
     3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
        extent above the lane of the branch it was made from, so the main line stays at the
        bottom and branches made from it step up.
@@ -332,8 +333,16 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
                 stretch(track[commit["hash"]], row[parent])
                 stretch(track[parent], here)
 
-    # A branch that still exists and was not merged goes on to the present (row 0).
-    merged = {parent for commit in commits for parent in commit["parents"][1:]}
+    # A branch that still exists and was not merged goes on to the present (row 0). Merged:
+    # brought in by a merge, directly or as an ancestor of the merged commit.
+    parents_of = {commit["hash"]: commit["parents"] for commit in commits}
+    merged: set[str] = set()
+    pending = [parent for commit in commits for parent in commit["parents"][1:]]
+    while pending:
+        current = pending.pop()
+        if current in parents_of and current not in merged:
+            merged.add(current)
+            pending.extend(parents_of[current])
     for name, tip in newest.items():
         named = any(not ref.startswith("tag: ") for ref in tip.get("refs", []))
         tip["open"] = named and tip["hash"] not in merged

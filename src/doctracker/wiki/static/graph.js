@@ -227,7 +227,7 @@ document.addEventListener("DOMContentLoaded", initViews);
 document.addEventListener("htmx:afterSettle", initViews);
 
 // Git page: branch graph at the top, in the style of the VS Code "Git Graph" extension:
-// one bright color per branch lane, filled commit dots (the checked-out HEAD hollow), rounded
+// one bright color per branch lane, filled commit dots (the checked-out HEAD hollow), S-curved
 // forks and merges, and branch/tag names as pills. Oldest commit on the left.
 // Clicking a commit shows its changes below.
 const LANE_COLORS = ["#0085d9", "#d9008f", "#00c40a", "#d98500", "#a300d9", "#ff3b30", "#00b8ad", "#e138e8", "#85b800", "#dc5b23"];
@@ -246,6 +246,48 @@ function refLabel(refs) {
   if (text.length > MAX_LABEL_CHARS) text = `${text.slice(0, MAX_LABEL_CHARS - 1)}…`;
   const kind = locals.length ? "local" : tags.length ? "tag" : "remote";
   return { text, kind };
+}
+
+// Invisible node where a line bends or ends; `spot` has `id`, `x` and `lane`.
+function waypoint(spot) {
+  return { data: { id: spot.id }, position: { x: spot.x, y: spot.lane * LANE_SPACING }, classes: "waypoint" };
+}
+
+// Style of an S-curve over (dx, dy): it leaves the source and reaches the target horizontally.
+// Control points (dx/2, 0) and (dx/2, dy), given as Cytoscape weights along the source→target
+// line and distances along its normal (-dy, dx) / length.
+function sCurve(dx, dy) {
+  const length2 = dx * dx + dy * dy;
+  const length = Math.sqrt(length2);
+  return {
+    "curve-style": "unbundled-bezier", "edge-distances": "endpoints", "source-endpoint": "0 0", "target-endpoint": "0 0",
+    "control-point-weights": `${(dx * dx) / 2 / length2} ${(dx * dx / 2 + dy * dy) / length2}`,
+    "control-point-distances": `${(-dx * dy) / 2 / length} ${(dx * dy) / 2 / length}`,
+  };
+}
+
+// Line from an older `from` to a newer `to` (each with `id`, `x`, `lane`), drawn on `lane`.
+// Between lanes it bends with an S-curve one step from the commit on the other lane (right after
+// the parent of a fork, right before a merge commit), and runs straight the rest of the way.
+function linkCommits(elements, from, to, lane, color) {
+  const edge = (source, target, style) => elements.push({
+    data: { id: `${source.id}-${target.id}`, source: source.id, target: target.id, color },
+    ...(style ? { style } : {}),
+  });
+  const curve = (source, target) => edge(source, target, sCurve(target.x - source.x, (target.lane - source.lane) * LANE_SPACING));
+  if (from.lane === to.lane) return edge(from, to);
+  if (to.x - from.x <= COMMIT_SPACING) return curve(from, to);
+  if (from.lane !== lane) {
+    const bend = { id: `${from.id}-${to.id}-bend`, x: from.x + COMMIT_SPACING, lane: to.lane };
+    elements.push(waypoint(bend));
+    curve(from, bend);
+    edge(bend, to);
+  } else {
+    const bend = { id: `${from.id}-${to.id}-bend`, x: to.x - COMMIT_SPACING, lane: from.lane };
+    elements.push(waypoint(bend));
+    edge(from, bend);
+    curve(bend, to);
+  }
 }
 
 function selectGitCommit(hash) {
@@ -269,6 +311,7 @@ async function initBranches() {
   const laneOf = Object.fromEntries(commits.map((commit) => [commit.hash, commit.lane]));
   const color = (lane) => LANE_COLORS[lane % LANE_COLORS.length];
   const last = commits.length - 1;
+  const point = (hash) => ({ id: hash, x: (last - commits.findIndex((commit) => commit.hash === hash)) * COMMIT_SPACING, lane: laneOf[hash] });
   const elements = [];
   let previousLabelAbove = false;
   // Oldest to newest, so neighbouring labels can alternate above and below their commits.
@@ -287,13 +330,13 @@ async function initBranches() {
       if (!known.has(parent)) continue;
       // A fork or merge takes the color of the lane that is not the main line (the higher one).
       const lane = Math.max(commit.lane, laneOf[parent]);
-      elements.push({ data: { id: `${commit.hash}-${parent}`, source: parent, target: commit.hash, color: color(lane) } });
+      linkCommits(elements, point(parent), point(commit.hash), lane, color(lane));
     }
     // A branch that still exists and was not merged goes on to the present: its lane runs to the right end.
     if (commit.open && index > 0) {
-      const end = `${commit.hash}-end`;
-      elements.push({ data: { id: end }, position: { x: last * COMMIT_SPACING, y: commit.lane * LANE_SPACING }, classes: "lane-end" });
-      elements.push({ data: { id: `${commit.hash}-open`, source: commit.hash, target: end, color: color(commit.lane) } });
+      const end = { id: `${commit.hash}-end`, x: last * COMMIT_SPACING, lane: commit.lane };
+      elements.push(waypoint(end));
+      linkCommits(elements, point(commit.hash), end, commit.lane, color(commit.lane));
     }
   }
 
@@ -311,7 +354,7 @@ async function initBranches() {
       // The checked-out commit (HEAD): a hollow circle, as in Git Graph.
       { selector: "node.head", style: { "background-color": bg, "border-color": "data(color)", "border-width": 3, width: 14, height: 14 } },
       { selector: "node:selected", style: { width: 18, height: 18, "border-color": fg, "border-width": 3 } },
-      { selector: "node.lane-end", style: { width: 1, height: 1, "background-opacity": 0, "border-width": 0, events: "no" } },
+      { selector: "node.waypoint", style: { width: 1, height: 1, "background-opacity": 0, "border-width": 0, events: "no" } },
       // Branch and tag names: small pills in the lane color, alternating above and below.
       { selector: "node[label != '']", style: {
         label: "data(label)", "font-size": 9, "font-weight": "bold", color: "#ffffff",
@@ -323,10 +366,7 @@ async function initBranches() {
       { selector: "node.label-below", style: { "text-valign": "bottom", "text-margin-y": 7 } },
       { selector: "node[labelKind = 'remote']", style: { "text-background-opacity": 0.12, color: "data(color)" } },
       { selector: "node[labelKind = 'tag']", style: { "text-background-color": bg, color: "data(color)" } },
-      { selector: "edge", style: {
-        width: 2.5, "line-color": "data(color)", "curve-style": "taxi", "taxi-direction": "horizontal",
-        "taxi-turn": "50%", "taxi-radius": 10,
-      } },
+      { selector: "edge", style: { width: 2.5, "line-color": "data(color)", "curve-style": "straight" } },
     ],
     minZoom: 0.2,
     maxZoom: 3,
