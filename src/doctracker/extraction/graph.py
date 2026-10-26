@@ -50,7 +50,9 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
                 if imported and resolver.module_of(imported) != path:
                     edges.add((path, resolver.module_of(imported), "imports"))
             if entity["filepath"].endswith(".py"):
-                edges |= _call_edges(path, root / entity["filepath"], resolver)
+                tree = _parse(root / entity["filepath"])
+                if tree is not None:
+                    edges |= _call_edges(path, tree, resolver) | _import_edges(path, tree, resolver)
         if entity["kind"] == "class":
             module = resolver.module_of(path)
             for base in entity["bases"]:
@@ -66,21 +68,66 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
             + [{"source": source, "target": target, "kind": "has", "via": via} for source, target, via in sorted(held_by)])
 
 
-def _call_edges(module: str, file: Path, resolver: "_Resolver") -> set[tuple[str, str, str]]:
+def _parse(file: Path) -> ast.Module | None:
+    """Parse a source file.
+
+    Args:
+        file: The source file.
+
+    Returns:
+        Its syntax tree, or `None` when it cannot be read or parsed.
+    """
+    try:
+        return ast.parse(file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+
+
+def _import_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tuple[str, str, str]]:
+    """Find every module of the project a module imports, wherever the import is written.
+
+    Imports inside functions (often written there to load something late or to avoid an
+    import cycle) are real dependencies too; griffe only lists the module-level ones.
+
+    Args:
+        module: Path of the module.
+        tree: Its syntax tree.
+        resolver: Name resolution for the whole project.
+
+    Returns:
+        `(module, imported module, "imports")` relations, without the module itself.
+    """
+    package = module if resolver.entities[module].get("is_package") else module.rpartition(".")[0]
+    edges = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            targets = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:  # relative: `from . import x`, `from ..pkg import y`
+                parent = package.rsplit(".", node.level - 1)[0] if node.level > 1 else package
+                base = f"{parent}.{base}" if base else parent
+            targets = [f"{base}.{alias.name}" for alias in node.names if alias.name != "*"] or [base]
+        else:
+            continue
+        for target in targets:
+            imported = resolver.canonical(target) or resolver.canonical(target.rpartition(".")[0] or target)
+            if imported and resolver.module_of(imported) != module:
+                edges.add((module, resolver.module_of(imported), "imports"))
+    return edges
+
+
+def _call_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tuple[str, str, str]]:
     """Find the calls made by the functions and methods of one module.
 
     Args:
         module: Path of the module.
-        file: Its source file.
+        tree: Its syntax tree.
         resolver: Name resolution for the whole project.
 
     Returns:
         `(caller, callee, "calls")` relations; nested functions count as their enclosing function.
     """
-    try:
-        tree = ast.parse(file.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return set()
     edges = set()
     for function, path, owner in _functions(tree, module, None):
         if path not in resolver.entities:

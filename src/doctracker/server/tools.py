@@ -34,7 +34,11 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             level: `modules` (every module) or `packages` (modules merged into their package).
 
         Returns:
-            `nodes` (path, role, summary, enclosing `parent`) and `edges` (imports; `cycle` marks import cycles).
+            `nodes` (id, `role`: package, subpackage or module; `frame`: a package drawn around
+            its modules; enclosing `parent`; `page`: entity path; summary; a package's own
+            `__init__.py` is the module `<package>.__init__`) and `edges` (imports; at module
+            level directed, with `cycle` marking import cycles; at package level one undirected
+            link per pair of packages, `weight` = imports both ways, `counts` by direction).
         """
         return architecture(state, level)
 

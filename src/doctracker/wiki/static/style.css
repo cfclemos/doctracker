@@ -566,12 +566,12 @@ main:has(.graph-page) { max-width: none; }
 }
 .graph-canvas > .empty { padding: 1rem; }
 
-/* CLASSES: UML boxes in the style of database diagrams (DBeaver), over SVG relation lines. */
+/* CLASSES and ARCHITECTURE: boxes in the style of database diagrams (DBeaver), over SVG lines. */
 .uml-canvas { position: relative; overflow: hidden; cursor: grab; touch-action: none; }
 .uml-canvas:active { cursor: grabbing; }
 .uml-stage { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
-.uml-lines { position: absolute; top: 0; left: 0; overflow: visible; }
-.uml-class {
+.uml-lines { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.uml-box {
   position: absolute;
   top: 0;
   left: 0;
@@ -628,9 +628,9 @@ main:has(.graph-page) { max-width: none; }
 .uml-type-path { --icon: url("icons/file.svg"); }
 .uml-type-other { --icon: url("icons/point.svg"); background: var(--muted); }
 .uml-type-method { --icon: url("icons/math-function.svg"); background: var(--method); }
-.uml-class.selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
-.uml-class.match { box-shadow: 0 0 0 3px var(--fg); }
-.uml-class.faded, .uml-line.faded { opacity: 0.15; }
+.uml-box.selected { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent); }
+.uml-box.match { box-shadow: 0 0 0 3px var(--fg); }
+.uml-box.faded, .uml-line.faded { opacity: 0.15; }
 .uml-line { fill: none; stroke-width: 1.4; }
 .uml-line.has { stroke: var(--accent); }
 .uml-line.inherits { stroke: var(--fg); }
@@ -641,6 +641,61 @@ main:has(.graph-page) { max-width: none; }
 .uml-marker-open { fill: none; stroke: var(--muted); stroke-width: 1.4; }
 #uml-diamond { color: var(--accent); }
 #uml-triangle { color: var(--fg); }
+/* ARCHITECTURE: one shade of blue per level — package darkest, subpackage, module lightest. */
+.uml-canvas { --arch-package: color-mix(in srgb, var(--accent) 55%, var(--fg));
+  --arch-subpackage: var(--accent); --arch-module: color-mix(in srgb, var(--accent) 45%, var(--bg)); }
+.arch-package { --arch: var(--arch-package); }
+.arch-subpackage { --arch: var(--arch-subpackage); }
+.arch-module { --arch: var(--arch-module); }
+.arch-box { border-color: var(--arch); }
+.arch-box .uml-head { background: var(--arch); color: #ffffff; }
+.arch-box.arch-module .uml-head { color: var(--fg); }
+.arch-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1.5px solid var(--arch);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--arch) 5%, transparent);
+}
+.arch-frame.arch-package { border-width: 2px; }
+.arch-frame-head {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 22px;
+  padding: 0 0.55rem;
+  border-radius: 6px 0 6px 0;
+  background: var(--arch);
+  color: #ffffff;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: move;
+}
+.arch-frame.inner { cursor: move; }
+.arch-frame-role { font-size: 0.66rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.85; }
+.arch-icon {
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.arch-icon-package { --icon: url("icons/brand-python.svg"); }
+.arch-icon-subpackage { --icon: url("icons/folder.svg"); }
+.arch-icon-module { --icon: url("icons/file-code.svg"); }
+.uml-line.imports { stroke: var(--arch-subpackage); }
+.uml-line.imports.cycle { stroke: var(--raises); stroke-width: 2.2; }
+.arch-marker { fill: var(--accent); }
+.arch-marker-cycle { fill: var(--raises); }
+.graph-legend .box { display: inline-block; width: 0.95rem; height: 0.7rem; border-radius: 2px; }
+.graph-legend .box.package { background: color-mix(in srgb, var(--accent) 55%, var(--fg)); }
+.graph-legend .box.subpackage { background: var(--accent); }
+.graph-legend .box.module { background: color-mix(in srgb, var(--accent) 45%, var(--bg)); border: 1px solid var(--border); }
 
 /* Side panel with the selected node and its relations. */
 .graph-info {
