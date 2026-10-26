@@ -309,7 +309,8 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
        `open`); merging main into a feature does not end main.
     3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
        extent past the lane of the branch it was made from, so the main line is lane 0 and
-       branches made from it take the next lanes.
+       branches made from it take the next lanes. Two branches may share a lane when they
+       only meet at a commit of neither (one ends at a merge, the other starts from it).
 
     Args:
         commits: Newest first, with `hash` and `parents`; changed in place.
@@ -389,18 +390,31 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
             tip["open"] = True
             stretch(name, 0)
 
-    lanes: list[list[tuple[int, int]]] = []  # lanes[i] = row ranges already taken on lane i
+    def fits(name: str, low: int, high: int, start: int, end: int, other: str) -> bool:
+        """Whether two branches' row ranges can share a lane: apart, or meeting at a commit of neither
+        (one curves into it, the other curves out of it, e.g. at a merge into main)."""
+        if high < start or low > end:
+            return True
+        if high == start:
+            shared = high
+        elif low == end:
+            shared = low
+        else:
+            return False
+        return track[commits[shared]["hash"]] not in (name, other)
+
+    lanes: list[list[tuple[int, int, str]]] = []  # lanes[i] = (row range, branch) already on lane i
     lane_of: dict[str, int] = {}
     for name in sorted(extent, key=lambda name: -row[oldest[name]["hash"]]):
         low, high = extent[name]
         parents = oldest[name]["parents"]
         base = lane_of.get(track.get(parents[0], ""), -1) if parents else -1  # lane of the branch it was made from
         free = (index for index in range(base + 1, len(lanes))
-                if all(high < start or low > end for start, end in lanes[index]))
+                if all(fits(name, low, high, start, end, other) for start, end, other in lanes[index]))
         lane = next(free, len(lanes))
         if lane == len(lanes):
             lanes.append([])
-        lanes[lane].append((low, high))
+        lanes[lane].append((low, high, name))
         lane_of[name] = lane
     for commit in commits:
         commit["lane"] = lane_of[track[commit["hash"]]]
