@@ -70,11 +70,21 @@ function showGitFile(panel, index) {
   panel.querySelector(`.git-file-diff[data-file="${index}"]`)?.scrollTo(0, 0);
 }
 
+// Mark a commit of the git page's list as selected (which opens its full message) and scroll
+// the list so it is at the top. Used by clicks on the list and on the branch graph.
+function markGitCommit(hash) {
+  for (const item of document.querySelectorAll(".git-commit-item")) {
+    item.classList.toggle("current", item.dataset.hash === hash);
+    if (item.dataset.hash !== hash) continue;
+    const list = item.closest(".git-commits");
+    list.scrollTop += item.closest(".git-commit").getBoundingClientRect().top - list.getBoundingClientRect().top;
+  }
+}
+
 document.addEventListener("click", (event) => {
   const commit = event.target.closest(".git-commit-item");
   if (commit) {
-    for (const item of document.querySelectorAll(".git-commit-item.current")) item.classList.remove("current");
-    commit.classList.add("current");
+    markGitCommit(commit.dataset.hash);
     return;
   }
   const step = event.target.closest(".git-step");

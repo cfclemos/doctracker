@@ -25,8 +25,11 @@ RECORD = "\x1e"
 FIELD = "\x1f"
 """Separates the fields of a commit header in the `git log` output."""
 
-LOG_FORMAT = FIELD.join(["%H", "%h", "%an", "%aI", "%s"])
-"""Commit header: full hash, short hash, author, author date (ISO 8601) and subject."""
+BODY_END = "\x1d"
+"""Ends the message body (which may span many lines) in the `git log` output."""
+
+LOG_FORMAT = FIELD.join(["%H", "%h", "%an", "%aI", "%s", "%b"]) + BODY_END
+"""Commit header: full hash, short hash, author, author date (ISO 8601), subject and body."""
 
 
 @dataclass
@@ -39,6 +42,7 @@ class Commit:
         author: Author name.
         date: Author date, ISO 8601.
         subject: First line of the message.
+        body: The rest of the message (the reasons behind the change); empty when there is none.
         added: Files created by the commit, relative to the project root.
         modified: Files changed by the commit.
         deleted: Files removed by the commit.
@@ -50,6 +54,7 @@ class Commit:
     author: str
     date: str
     subject: str
+    body: str = ""
     added: list[str] = field(default_factory=list)
     modified: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
@@ -214,8 +219,8 @@ def _keep(file: FileDiff, line: DiffLine) -> None:
         file.truncated = True
 
 
-GRAPH_FORMAT = FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s"])
-"""Commit line of the branch graph: hash, short hash, parents, references, author, date, subject."""
+GRAPH_FORMAT = RECORD + FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s", "%b"])
+"""Commit of the branch graph: hash, short hash, parents, references, author, date, subject, body."""
 
 
 REFLOG_FORMAT = FIELD.join(["%gD", "%H", "%gs"])
@@ -264,22 +269,24 @@ async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None
     Returns:
         Newest first: `hash`, `short`, `parents`, `refs` (branch and tag names), `head`
         (the checked-out commit), `branch` (from the reflog; empty when unknown), `lane`,
-        `open` (tip of a branch that goes on to the present), `author`, `date`, `subject`;
-        `None` when git or the repository is missing.
+        `open` (tip of a branch that goes on to the present), `merged_into` (for the tip of
+        a branch merged through a later commit: the merge where its lane ends),
+        `next_on_branch` (the next commit of the same branch when it is not a child),
+        `author`, `date`, `subject`, `body`; `None` when git or the repository is missing.
     """
     output = await _git(project_root, "log", "--all", "--topo-order", f"-n{limit}", f"--format={GRAPH_FORMAT}")
     if output is None:
         return None
     commits = []
-    for line in output.splitlines():
-        parts = line.split(FIELD)
-        if len(parts) != 7:
+    for record in output.split(RECORD):
+        parts = record.split(FIELD)
+        if len(parts) != 8:
             continue
-        full, short, parents, refs, author, date, subject = parts
+        full, short, parents, refs, author, date, subject, body = parts
         names = [ref.strip() for ref in refs.split(",") if ref.strip()]
         commits.append({
             "hash": full, "short": short, "parents": parents.split(), "author": author, "date": date,
-            "subject": subject,
+            "subject": subject, "body": body.strip(),
             "head": any(name == "HEAD" or name.startswith("HEAD -> ") for name in names),
             "refs": [name.removeprefix("HEAD -> ") for name in names if name != "HEAD"],
         })
@@ -292,13 +299,17 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
 
     1. Branch: the reflog's when known; otherwise the branch of the child that has the
        commit as first parent (the newest such child); a commit with no such child starts
-       an unnamed branch.
+       an unnamed branch. When the next commit of the same branch is not a child (e.g. after
+       a fast-forward), the commit gets `next_on_branch`, so its lane is drawn through.
     2. Extent: the rows a branch takes, from its commits and the edges to their parents
-       and children. A branch still open (its tip has a branch name and was not merged,
-       directly or through a later commit) goes on to the newest row; its tip gets `open`.
+       and children. A branch ends where an older branch takes it in: its lane runs on until
+       the merge that brought it in, directly or through a later branch (its tip gets
+       `merged_into`, unless it is a parent of that merge), or stops at a fast-forward. A
+       branch that still exists and was not taken in runs on to the newest row (its tip gets
+       `open`); merging main into a feature does not end main.
     3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
-       extent above the lane of the branch it was made from, so the main line stays at the
-       bottom and branches made from it step up.
+       extent past the lane of the branch it was made from, so the main line is lane 0 and
+       branches made from it take the next lanes.
 
     Args:
         commits: Newest first, with `hash` and `parents`; changed in place.
@@ -315,9 +326,20 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
         oldest[name] = commit
         newest.setdefault(name, commit)
         commit["open"] = False
+        commit["merged_into"] = ""
+        commit["next_on_branch"] = ""
         commit["branch"] = branches.get(commit["hash"], "")
         if commit["parents"]:
             continued.setdefault(commit["parents"][0], name)
+
+    # A branch's lane is one line: two of its commits in a row that are not parent and child
+    # (the branch went through another one's commits, e.g. after a fast-forward) are joined too.
+    newer: dict[str, dict] = {}  # branch -> its commit seen last (newest first, so the next newer one)
+    for commit in commits:
+        name = track[commit["hash"]]
+        if name in newer and commit["hash"] not in newer[name]["parents"]:
+            commit["next_on_branch"] = newer[name]["hash"]
+        newer[name] = commit
 
     extent: dict[str, tuple[int, int]] = {}
 
@@ -333,20 +355,38 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
                 stretch(track[commit["hash"]], row[parent])
                 stretch(track[parent], here)
 
-    # A branch that still exists and was not merged goes on to the present (row 0). Merged:
-    # brought in by a merge, directly or as an ancestor of the merged commit.
+    # Where a branch ends: where an older branch takes it in — the oldest merge that brought
+    # its tip (what the merged parents add over the first parent), or a fast-forward (the next
+    # commit after its tip is on an older branch). Otherwise, while it exists, in the present.
     parents_of = {commit["hash"]: commit["parents"] for commit in commits}
-    merged: set[str] = set()
-    pending = [parent for commit in commits for parent in commit["parents"][1:]]
-    while pending:
-        current = pending.pop()
-        if current in parents_of and current not in merged:
-            merged.add(current)
-            pending.extend(parents_of[current])
+
+    def ancestors(starts: list[str]) -> set[str]:
+        seen: set[str] = set()
+        pending = [start for start in starts if start in parents_of]
+        while pending:
+            current = pending.pop()
+            if current not in seen:
+                seen.add(current)
+                pending.extend(parent for parent in parents_of[current] if parent in parents_of)
+        return seen
+
+    begun = {name: row[commit["hash"]] for name, commit in oldest.items()}  # higher row: older branch
+    merge_of: dict[str, dict] = {}  # commit hash -> the oldest merge that brought it in
+    for merge in reversed(commits):  # oldest first
+        if len(merge["parents"]) > 1:
+            for brought in ancestors(merge["parents"][1:]) - ancestors(merge["parents"][:1]):
+                merge_of.setdefault(brought, merge)
     for name, tip in newest.items():
-        named = any(not ref.startswith("tag: ") for ref in tip.get("refs", []))
-        tip["open"] = named and tip["hash"] not in merged
-        if tip["open"]:
+        exists = any(not ref.startswith("tag: ") for ref in tip.get("refs", []))
+        merge = merge_of.get(tip["hash"])
+        fast_forwarded = any(begun[track[commit["hash"]]] > begun[name]
+                             for commit in commits if commit["parents"][:1] == [tip["hash"]])
+        if merge is not None and begun[track[merge["hash"]]] > begun[name]:
+            if tip["hash"] not in merge["parents"] and (exists or tip["branch"]):  # a direct parent is already linked
+                tip["merged_into"] = merge["hash"]
+                stretch(name, row[merge["hash"]])
+        elif exists and not fast_forwarded:
+            tip["open"] = True
             stretch(name, 0)
 
     lanes: list[list[tuple[int, int]]] = []  # lanes[i] = row ranges already taken on lane i
@@ -396,14 +436,14 @@ def parse_log(output: str) -> list[Commit]:
     """
     commits = []
     for record in output.split(RECORD):
-        lines = [line for line in record.splitlines() if line.strip()]
-        if not lines:
+        header, _, changes = record.partition(BODY_END)
+        parts = header.split(FIELD)
+        if len(parts) != 6:
             continue
-        parts = lines[0].split(FIELD)
-        if len(parts) != 5:
-            continue
-        commit = Commit(*parts)
-        for line in lines[1:]:
+        commit = Commit(*parts[:5], body=parts[5].strip())
+        for line in changes.splitlines():
+            if not line.strip():
+                continue
             status, *files = line.split("\t")
             if status.startswith("R") and len(files) == 2:
                 commit.renamed.append((files[0], files[1]))

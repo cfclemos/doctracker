@@ -71,6 +71,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     """
     templates = Environment(loader=PackageLoader("doctracker.wiki", "templates"), autoescape=select_autoescape())
     templates.filters["markdown"] = pages.render_markdown
+    templates.filters["commit_message"] = pages.render_commit_message
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
         static_url=_static_url,
@@ -129,9 +130,16 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
 
     async def git_branches(request: Request) -> Response:
-        """Commits of every branch placed on lanes, for the branch graph at the top of the git page."""
+        """Commits of every branch placed on lanes, for the branch graph at the top of the git page.
+
+        Each commit also gets `body_html`: its message body rendered as Markdown, like in the commit list.
+        """
         commits = await read_branch_graph(project_root, GIT_COMMITS)
-        return JSONResponse({"commits": commits} if commits is not None else {"error": "Not a git repository."})
+        if commits is None:
+            return JSONResponse({"error": "Not a git repository."})
+        for commit in commits:
+            commit["body_html"] = pages.render_commit_message(commit["body"])
+        return JSONResponse({"commits": commits})
 
     async def git_commit(request: Request) -> Response:
         """Changed lines of one commit, file by file (right side of the git page)."""

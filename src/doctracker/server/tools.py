@@ -73,7 +73,9 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             limit: Most recent commits to list.
 
         Returns:
-            `commits` (short hash, author, date, subject), or `error` when the project is not a git repository.
+            `commits` (short hash, author, date, subject, body: the full message after the
+            subject, where the reasons for a change usually are), or `error` when the project
+            is not a git repository.
         """
         commits = await entity_history(state, project_root, path, max(1, limit))
         return {"commits": commits} if commits is not None else {"error": "Unknown entity or not a git repository."}
@@ -91,8 +93,10 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
         Returns:
             `commits`, newest first: hash, short, parents, refs (branches and tags), branch
             (from the reflog; empty when unknown), lane, open (tip of a branch that goes on
-            to the present), author, date, subject; or `error` when the project is not a git
-            repository.
+            to the present), merged_into (merge where a branch merged through a later commit
+            ends), next_on_branch (next commit of the same branch when it is not a child),
+            author, date, subject, body (rest of the message); or `error` when the project is
+            not a git repository.
         """
         commits = await read_branch_graph(project_root, max(1, limit))
         return {"commits": commits} if commits is not None else {"error": "Not a git repository."}

@@ -226,74 +226,42 @@ async function initViews() {
 document.addEventListener("DOMContentLoaded", initViews);
 document.addEventListener("htmx:afterSettle", initViews);
 
-// Git page: branch graph at the top, in the style of the VS Code "Git Graph" extension:
-// one bright color per branch lane, filled commit dots (the checked-out HEAD hollow), S-curved
-// forks and merges, and branch/tag names as pills. Oldest commit on the left.
-// Clicking a commit shows its changes below.
+// Git page: branch graph at the top, in the style of the VS Code "Git Graph" extension, drawn as SVG:
+// one lane and one bright color per branch, filled commit dots (the checked-out HEAD hollow),
+// S-curved forks and merges, and every commit's short hash in a badge of its lane color below its
+// dot. Above the dot, the names of the main branch (local and remote) and tags; feature branch names
+// are only in the tooltip. Oldest commit on the left. A branch's lane runs on until the merge that
+// brought it in, or to the present while the branch exists. Clicking a commit shows its changes below.
 const LANE_COLORS = ["#0085d9", "#d9008f", "#00c40a", "#d98500", "#a300d9", "#ff3b30", "#00b8ad", "#e138e8", "#85b800", "#dc5b23"];
 const COMMIT_SPACING = 70;
-const LANE_SPACING = 30;
-const MAX_LABEL_CHARS = 26;
+const LANE_SPACING = 20;
+const GRAPH_PADDING = { x: 60, top: 36, bottom: 24 };
+const MAIN_BRANCHES = ["main", "master"];
 
-// Text and kind of the pill shown on a commit: local branches first, then tags, then remotes.
-function refLabel(refs) {
-  if (!refs.length) return { text: "", kind: "" };
-  const tags = refs.filter((ref) => ref.startsWith("tag: ")).map((ref) => ref.slice(5));
-  const remotes = refs.filter((ref) => !ref.startsWith("tag: ") && ref.includes("/"));
-  const locals = refs.filter((ref) => !ref.startsWith("tag: ") && !ref.includes("/"));
-  const names = [...locals, ...tags.map((tag) => `◆ ${tag}`), ...remotes];
-  let text = names.join("  ");
-  if (text.length > MAX_LABEL_CHARS) text = `${text.slice(0, MAX_LABEL_CHARS - 1)}…`;
-  const kind = locals.length ? "local" : tags.length ? "tag" : "remote";
-  return { text, kind };
+// Names shown above a commit: tags, and the main branch with its remote copies (e.g. origin/main, origin/HEAD).
+function mainRefs(refs) {
+  return refs.filter((ref) => {
+    if (ref.startsWith("tag: ")) return true;
+    const name = ref.split("/").pop();
+    return MAIN_BRANCHES.includes(name) || (ref.includes("/") && name === "HEAD");
+  }).map((ref) => ref.replace(/^tag: /, "◆ "));
 }
 
-// Invisible node where a line bends or ends; `spot` has `id`, `x` and `lane`.
-function waypoint(spot) {
-  return { data: { id: spot.id }, position: { x: spot.x, y: spot.lane * LANE_SPACING }, classes: "waypoint" };
-}
-
-// Style of an S-curve over (dx, dy): it leaves the source and reaches the target horizontally.
-// Control points (dx/2, 0) and (dx/2, dy), given as Cytoscape weights along the source→target
-// line and distances along its normal (-dy, dx) / length.
-function sCurve(dx, dy) {
-  const length2 = dx * dx + dy * dy;
-  const length = Math.sqrt(length2);
-  return {
-    "curve-style": "unbundled-bezier", "edge-distances": "endpoints", "source-endpoint": "0 0", "target-endpoint": "0 0",
-    "control-point-weights": `${(dx * dx) / 2 / length2} ${(dx * dx / 2 + dy * dy) / length2}`,
-    "control-point-distances": `${(-dx * dy) / 2 / length} ${(dx * dy) / 2 / length}`,
-  };
-}
-
-// Line from an older `from` to a newer `to` (each with `id`, `x`, `lane`), drawn on `lane`.
-// Between lanes it bends with an S-curve one step from the commit on the other lane (right after
-// the parent of a fork, right before a merge commit), and runs straight the rest of the way.
-function linkCommits(elements, from, to, lane, color) {
-  const edge = (source, target, style) => elements.push({
-    data: { id: `${source.id}-${target.id}`, source: source.id, target: target.id, color },
-    ...(style ? { style } : {}),
-  });
-  const curve = (source, target) => edge(source, target, sCurve(target.x - source.x, (target.lane - source.lane) * LANE_SPACING));
-  if (from.lane === to.lane) return edge(from, to);
-  if (to.x - from.x <= COMMIT_SPACING) return curve(from, to);
-  if (from.lane !== lane) {
-    const bend = { id: `${from.id}-${to.id}-bend`, x: from.x + COMMIT_SPACING, lane: to.lane };
-    elements.push(waypoint(bend));
-    curve(from, bend);
-    edge(bend, to);
-  } else {
-    const bend = { id: `${from.id}-${to.id}-bend`, x: to.x - COMMIT_SPACING, lane: from.lane };
-    elements.push(waypoint(bend));
-    edge(from, bend);
-    curve(bend, to);
-  }
+// SVG path from an older commit to a newer one (`x`, `y`, `lane` each), drawn on `lane`.
+// On one lane it is straight. Between lanes it bends with the Git Graph curve (a cubic Bézier
+// leaving and arriving horizontally) one step from the commit on the other lane — right after
+// the parent of a fork, right before a merge commit — and runs straight the rest of the way.
+function branchPath(from, to, lane) {
+  const curve = (x1, y1, x2, y2) => `C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
+  const start = `M ${from.x} ${from.y}`;
+  if (from.lane === to.lane) return `${start} L ${to.x} ${to.y}`;
+  if (to.x - from.x <= COMMIT_SPACING) return `${start} ${curve(from.x, from.y, to.x, to.y)}`;
+  if (from.lane !== lane) return `${start} ${curve(from.x, from.y, from.x + COMMIT_SPACING, to.y)} L ${to.x} ${to.y}`;
+  return `${start} L ${to.x - COMMIT_SPACING} ${from.y} ${curve(to.x - COMMIT_SPACING, from.y, to.x, to.y)}`;
 }
 
 function selectGitCommit(hash) {
-  for (const item of document.querySelectorAll(".git-commit-item")) {
-    item.classList.toggle("current", item.dataset.hash === hash);
-  }
+  markGitCommit(hash);
   htmx.ajax("GET", `/git/commit/${hash}`, { target: "#git-diff" });
 }
 
@@ -307,115 +275,95 @@ async function initBranches() {
     return;
   }
   const commits = data.commits;
-  const known = new Set(commits.map((commit) => commit.hash));
-  const laneOf = Object.fromEntries(commits.map((commit) => [commit.hash, commit.lane]));
+  const byHash = Object.fromEntries(commits.map((commit) => [commit.hash, commit]));
   const color = (lane) => LANE_COLORS[lane % LANE_COLORS.length];
   const last = commits.length - 1;
-  const point = (hash) => ({ id: hash, x: (last - commits.findIndex((commit) => commit.hash === hash)) * COMMIT_SPACING, lane: laneOf[hash] });
-  const elements = [];
-  let previousLabelAbove = false;
-  // Oldest to newest, so neighbouring labels can alternate above and below their commits.
-  for (let index = last; index >= 0; index -= 1) {
-    const commit = commits[index];
-    const label = refLabel(commit.refs);
-    const above = label.text ? !previousLabelAbove : true;
-    if (label.text) previousLabelAbove = above;
-    else previousLabelAbove = false;
-    elements.push({
-      data: { id: commit.hash, label: label.text, labelKind: label.kind, color: color(commit.lane), commit },
-      position: { x: (last - index) * COMMIT_SPACING, y: commit.lane * LANE_SPACING },
-      classes: [commit.head ? "head" : "", label.text ? (above ? "label-above" : "label-below") : ""].join(" "),
-    });
-    for (const parent of commit.parents) {
-      if (!known.has(parent)) continue;
-      // A fork or merge takes the color of the lane that is not the main line (the higher one).
-      const lane = Math.max(commit.lane, laneOf[parent]);
-      linkCommits(elements, point(parent), point(commit.hash), lane, color(lane));
-    }
-    // A branch that still exists and was not merged goes on to the present: its lane runs to the right end.
-    if (commit.open && index > 0) {
-      const end = { id: `${commit.hash}-end`, x: last * COMMIT_SPACING, lane: commit.lane };
-      elements.push(waypoint(end));
-      linkCommits(elements, point(commit.hash), end, commit.lane, color(commit.lane));
-    }
-  }
-
-  canvas.innerHTML = "";
-  const bg = cssVar("--bg");
-  const fg = cssVar("--fg");
-  const cy = cytoscape({
-    container: canvas,
-    elements,
-    layout: { name: "preset" },
-    style: [
-      { selector: "node", style: {
-        width: 12, height: 12, "background-color": "data(color)", "border-width": 2, "border-color": bg,
-      } },
-      // The checked-out commit (HEAD): a hollow circle, as in Git Graph.
-      { selector: "node.head", style: { "background-color": bg, "border-color": "data(color)", "border-width": 3, width: 14, height: 14 } },
-      { selector: "node:selected", style: { width: 18, height: 18, "border-color": fg, "border-width": 3 } },
-      { selector: "node.waypoint", style: { width: 1, height: 1, "background-opacity": 0, "border-width": 0, events: "no" } },
-      // Branch and tag names: small pills in the lane color, alternating above and below.
-      { selector: "node[label != '']", style: {
-        label: "data(label)", "font-size": 9, "font-weight": "bold", color: "#ffffff",
-        "text-background-color": "data(color)", "text-background-opacity": 1, "text-background-shape": "round-rectangle",
-        "text-background-padding": 3, "text-border-color": "data(color)", "text-border-width": 1, "text-border-opacity": 1,
-        "text-halign": "center",
-      } },
-      { selector: "node.label-above", style: { "text-valign": "top", "text-margin-y": -7 } },
-      { selector: "node.label-below", style: { "text-valign": "bottom", "text-margin-y": 7 } },
-      { selector: "node[labelKind = 'remote']", style: { "text-background-opacity": 0.12, color: "data(color)" } },
-      { selector: "node[labelKind = 'tag']", style: { "text-background-color": bg, color: "data(color)" } },
-      { selector: "edge", style: { width: 2.5, "line-color": "data(color)", "curve-style": "straight" } },
-    ],
-    minZoom: 0.2,
-    maxZoom: 3,
-    wheelSensitivity: WHEEL_SENSITIVITY,
-    autoungrabify: true,
-    boxSelectionEnabled: false,
+  const spots = {};  // commit hash -> where its dot is
+  commits.forEach((commit, index) => {
+    spots[commit.hash] = {
+      x: GRAPH_PADDING.x + (last - index) * COMMIT_SPACING, y: GRAPH_PADDING.top + commit.lane * LANE_SPACING, lane: commit.lane,
+    };
   });
 
-  // Small histories fit the strip; long ones start at the newest commit (right end).
-  if (cy.elements().boundingBox().w < canvas.clientWidth - 80) {
-    cy.fit(undefined, 40);
-    cy.zoom(Math.min(cy.zoom(), 1.4));
-    cy.center();
-  } else {
-    cy.zoom(1);
-    const newest = cy.getElementById(commits[0].hash);
-    cy.pan({ x: canvas.clientWidth - newest.position("x") - 80, y: canvas.clientHeight / 2 - newest.position("y") });
+  const lines = [];
+  const line = (from, to, lane) => lines.push(`<path d="${branchPath(from, to, lane)}" style="--lane:${color(lane)}"/>`);
+  for (const commit of commits) {
+    const here = spots[commit.hash];
+    for (const parent of commit.parents) {
+      // A fork or merge takes the color of the lane that is not the main line (the higher one).
+      if (spots[parent]) line(spots[parent], here, Math.max(commit.lane, spots[parent].lane));
+    }
+    if (commit.next_on_branch && spots[commit.next_on_branch]) line(here, spots[commit.next_on_branch], commit.lane);
+    if (commit.merged_into && spots[commit.merged_into]) line(here, spots[commit.merged_into], commit.lane);
+    else if (commit.open) line(here, { ...here, x: spots[commits[0].hash].x }, commit.lane);
   }
+  const dots = commits.map((commit) => {
+    const { x, y } = spots[commit.hash];
+    const names = mainRefs(commit.refs).join("  ");
+    const label = names ? `<rect class="git-ref" rx="3"/><text class="git-ref" x="${x}" y="${y - 12}">${escapeHtml(names)}</text>` : "";
+    return `<g class="git-node${commit.head ? " head" : ""}" data-hash="${commit.hash}" style="--lane:${color(commit.lane)}">
+      <circle cx="${x}" cy="${y}" r="5"/><rect class="git-hash" rx="3"/><text class="git-hash" x="${x}" y="${y + 16}">${escapeHtml(commit.short)}</text>${label}</g>`;
+  });
+  const lanes = Math.max(...commits.map((commit) => commit.lane)) + 1;
+  const width = 2 * GRAPH_PADDING.x + last * COMMIT_SPACING;
+  const height = GRAPH_PADDING.top + (lanes - 1) * LANE_SPACING + GRAPH_PADDING.bottom;
+  canvas.innerHTML = `<svg class="git-graph" width="${width}" height="${height}">${lines.join("")}${dots.join("")}</svg>`;
 
-  const selected = canvas.dataset.selected && cy.getElementById(canvas.dataset.selected);
-  if (selected && selected.length) selected.select();
+  // Badges (hash below, names above) fit their text.
+  for (const text of canvas.querySelectorAll(".git-node text")) {
+    const box = text.getBBox();
+    const badge = text.previousElementSibling;
+    badge.setAttribute("x", box.x - 3);
+    badge.setAttribute("y", box.y);
+    badge.setAttribute("width", box.width + 6);
+    badge.setAttribute("height", box.height);
+  }
+  canvas.scrollLeft = canvas.scrollWidth;  // long histories start at the newest commit
 
-  cy.on("tap", "node", (event) => {
-    cy.$(":selected").unselect();
-    event.target.select();
-    selectGitCommit(event.target.id());
+  const select = (hash) => {
+    for (const node of canvas.querySelectorAll(".git-node")) node.classList.toggle("selected", node.dataset.hash === hash);
+  };
+  select(canvas.dataset.selected);
+  canvas.addEventListener("click", (event) => {
+    const node = event.target.closest(".git-node");
+    if (!node) return;
+    select(node.dataset.hash);
+    selectGitCommit(node.dataset.hash);
   });
   document.addEventListener("click", (event) => {
     const item = event.target.closest(".git-commit-item");
-    if (!item || !document.body.contains(canvas)) return;
-    cy.$(":selected").unselect();
-    cy.getElementById(item.dataset.hash).select();
+    if (item && document.body.contains(canvas)) select(item.dataset.hash);
   });
 
-  // Everything else about a commit (message, author, date, all its names) is in the tooltip.
+  // Everything else about a commit (full message, author, date, all its names) is in the tooltip.
+  // It stays open while the mouse moves into it, so a long message can be scrolled and selected.
   const tooltip = canvas.parentElement.querySelector(".graph-tooltip");
-  cy.on("mouseover", "node", (event) => {
-    const commit = event.target.data("commit");
+  let hiding = 0;
+  const hide = () => { hiding = setTimeout(() => { tooltip.hidden = true; }, 250); };
+  canvas.addEventListener("mouseover", (event) => {
+    const node = event.target.closest(".git-node");
+    if (!node) return;
+    clearTimeout(hiding);
+    const commit = byHash[node.dataset.hash];
+    const names = [commit.head ? "HEAD" : "", commit.branch ? `on ${commit.branch}` : "", ...commit.refs].filter(Boolean);
     tooltip.innerHTML = `
-      <span class="graph-tooltip-role" style="color:${event.target.data("color")}">${escapeHtml(commit.short)}${commit.head ? " · HEAD" : ""}${commit.refs.length ? " · " + escapeHtml(commit.refs.join(", ")) : ""}</span>
+      <span class="graph-tooltip-role" style="color:${color(commit.lane)}">${escapeHtml([commit.short, ...names].join(" · "))}</span>
       <strong>${escapeHtml(commit.subject)}</strong>
-      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date.slice(0, 16).replace("T", " "))}</span>`;
-    const position = event.target.renderedPosition();
-    tooltip.style.left = `${position.x + 14}px`;
-    tooltip.style.top = `${position.y + 10}px`;
+      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date.slice(0, 16).replace("T", " "))}</span>
+      ${commit.body_html ? `<div class="graph-tooltip-body">${commit.body_html}</div>` : ""}`;
+    const dot = node.querySelector("circle").getBoundingClientRect();
+    const area = canvas.parentElement.getBoundingClientRect();
+    tooltip.style.left = `${dot.right - area.left + 8}px`;
+    tooltip.style.top = `${dot.bottom - area.top + 4}px`;
+    tooltip.scrollTop = 0;
     tooltip.hidden = false;
   });
-  cy.on("mouseout", "node", () => { tooltip.hidden = true; });
-  cy.on("viewport", () => { tooltip.hidden = true; });
+  canvas.addEventListener("mouseout", (event) => {
+    if (event.target.closest(".git-node")) hide();
+  });
+  tooltip.addEventListener("mouseenter", () => clearTimeout(hiding));
+  tooltip.addEventListener("mouseleave", hide);
+  canvas.addEventListener("scroll", () => { tooltip.hidden = true; });
 }
 
 document.addEventListener("DOMContentLoaded", initBranches);

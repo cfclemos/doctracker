@@ -16,6 +16,9 @@ from doctracker.server.state import DocState
 _markdown = MarkdownIt("commonmark", {"html": False})
 """Markdown renderer for docstrings; raw HTML is disabled, so it is escaped."""
 
+_commit_markdown = MarkdownIt("commonmark", {"html": False}).disable("emphasis")
+"""Markdown renderer for commit messages: no emphasis, so names like `__init__` stay as written."""
+
 _formatter = HtmlFormatter(nowrap=True)
 """Outputs only the token spans: the template provides `<pre><code>`, the CSS provides the colors."""
 
@@ -45,6 +48,18 @@ def render_markdown(text: str) -> str:
         The HTML.
     """
     return _markdown.render(text or "")
+
+
+def render_commit_message(text: str) -> str:
+    """Render a commit message body as HTML: lines wrapped by git join into paragraphs, `-` items into lists.
+
+    Args:
+        text: The body; empty or `None` gives an empty string.
+
+    Returns:
+        The HTML; raw HTML in the message is escaped.
+    """
+    return _commit_markdown.render(text or "")
 
 
 CODE_THEMES = sorted(get_all_styles())

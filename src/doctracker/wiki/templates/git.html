@@ -17,16 +17,22 @@
     <div class="graph-tooltip" role="tooltip" hidden></div>
   </div>
   <div class="git-layout">
-    {# Left: the commits, newest first. Clicking one loads its changes on the right. #}
+    {# Left: the commits, newest first, each with its hash on the side. Clicking one loads its
+       changes on the right and opens its full message (the reasons behind it) below the subject. #}
     <ol class="git-commits">
       {% for commit in commits %}
-      <li>
-        <button type="button" class="git-commit-item{% if commit.hash == selected %} current{% endif %}" data-hash="{{ commit.hash }}"
-                hx-get="/git/commit/{{ commit.hash }}" hx-target="#git-diff">
-          <span class="git-commit-head"><code>{{ commit.short }}</code> {{ commit.subject }}</span>
-          <span class="git-commit-meta">{{ commit.author }} · {{ commit.date[:16] | replace("T", " ") }}
-            · {{ (commit.added | length) + (commit.modified | length) + (commit.deleted | length) + (commit.renamed | length) }} files</span>
-        </button>
+      <li class="git-commit">
+        <span class="git-commit-hash">{{ commit.short }}</span>
+        <div class="git-commit-main">
+          <button type="button" class="git-commit-item{% if commit.hash == selected %} current{% endif %}" data-hash="{{ commit.hash }}"
+                  hx-get="/git/commit/{{ commit.hash }}" hx-target="#git-diff">
+            <span class="git-commit-head">{{ commit.subject }}</span>
+            <span class="git-commit-meta git-commit-author">{{ commit.author }}</span>
+            <span class="git-commit-meta">{{ commit.date[:16] | replace("T", " ") }}
+              · {{ (commit.added | length) + (commit.modified | length) + (commit.deleted | length) + (commit.renamed | length) }} files</span>
+          </button>
+          {% if commit.body %}<div class="git-commit-body">{{ commit.body | commit_message | safe }}</div>{% endif %}
+        </div>
       </li>
       {% endfor %}
     </ol>
