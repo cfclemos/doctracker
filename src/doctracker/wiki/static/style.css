@@ -15,6 +15,7 @@
   --raises: #cf222e;
   --note: #9a6700;
   --neutral: #6e7781;
+  --folder: #c58f00;
   color-scheme: light dark;
 }
 
@@ -36,6 +37,7 @@
     --raises: #ff7b72;
     --note: #d29922;
     --neutral: #8b949e;
+    --folder: #e3b341;
   }
 }
 
@@ -241,6 +243,7 @@ main { grid-area: main; }
 
 /* Collapsible branches: the arrow toggles, the name navigates. */
 #tree summary, #tree .leaf { display: flex; align-items: center; gap: 0.3rem; }
+#tree summary:has(> a.role-package) { gap: 0.55rem; }
 #tree summary { list-style: none; }
 #tree summary::-webkit-details-marker { display: none; }
 #tree summary .icon { cursor: pointer; }
@@ -285,6 +288,13 @@ main { grid-area: main; }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
 .icon { color: var(--tint, inherit); }
+/* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
+.icon-architecture { --tint: var(--method); }
+.icon-classes { --tint: var(--class); }
+.icon-calls { --tint: var(--function); }
+.icon-git { --tint: var(--raises); }
+.icon.icon-package { --tint: var(--attribute); }
+.icon.icon-subpackage { --tint: var(--folder); }
 
 main { padding: 1.5rem 2.5rem; max-width: 60rem; min-width: 0; }
 h1 { font-size: 1.5rem; margin: 0.2rem 0; overflow-wrap: anywhere; }
@@ -495,13 +505,14 @@ td p { margin: 0; }
 }
 
 /* CODE heading when the project has several root packages. */
-#tree .tree-group { display: flex; align-items: center; margin: 0; padding: 0.1rem 0.3rem 0.1rem 0; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
+#tree .tree-group { display: flex; align-items: center; gap: 0.55rem; margin: 0; padding: 0.1rem 0.3rem 0.1rem 0; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
 
 /* Links to the graph views at the top of the tree. */
 #tree .view-links { margin: 0 0 0.7rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
 #tree .view-link {
   display: flex;
   align-items: center;
+  gap: 0.55rem;
   padding: 0.2rem 0.3rem;
   border-radius: 4px;
   color: var(--fg);
@@ -510,7 +521,6 @@ td p { margin: 0; }
   letter-spacing: 0.03em;
 }
 #tree .view-link:hover { background: var(--bg); text-decoration: none; }
-#tree .view-link .icon { color: var(--accent); }
 #tree .view-link.current { background: var(--accent); color: var(--bg); }
 #tree .view-link.current .icon { color: inherit; }
 
