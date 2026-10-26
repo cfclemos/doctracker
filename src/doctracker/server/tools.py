@@ -80,14 +80,18 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
 
     @mcp.tool()
     async def git_branches(limit: int = 50) -> dict:
-        """List the recent commits of every branch, placed on lanes like `git log --graph`.
+        """List the recent commits of every branch, one lane per branch.
+
+        The branch a commit was made on comes from the local reflog while it remembers it;
+        older commits follow the topology, like `git log --graph`.
 
         Args:
             limit: Most recent commits to list, across all branches.
 
         Returns:
-            `commits`, newest first: hash, short, parents, refs (branches and tags), lane,
-            author, date, subject; or `error` when the project is not a git repository.
+            `commits`, newest first: hash, short, parents, refs (branches and tags), branch
+            (from the reflog; empty when unknown), lane, author, date, subject; or `error`
+            when the project is not a git repository.
         """
         commits = await read_branch_graph(project_root, max(1, limit))
         return {"commits": commits} if commits is not None else {"error": "Not a git repository."}

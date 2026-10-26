@@ -218,12 +218,43 @@ GRAPH_FORMAT = FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s"])
 """Commit line of the branch graph: hash, short hash, parents, references, author, date, subject."""
 
 
-async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None:
-    """Read the commits of every branch and place them on lanes, like `git log --graph`.
+REFLOG_FORMAT = FIELD.join(["%gD", "%H", "%gs"])
+"""Reflog entry: reference with its index (e.g. `refs/heads/main@{0}`), commit hash, action."""
 
-    Commits are read newest first in topological order. Each one takes the lane that was
-    waiting for it (the lane of a child that named it as parent), or a new lane; its first
-    parent continues on the same lane, other parents (merges) get lanes of their own.
+MADE_ON_BRANCH = ("commit", "cherry-pick", "revert")
+"""Reflog actions that create a commit on the checked-out branch."""
+
+
+async def read_commit_branches(project_root: Path) -> dict[str, str]:
+    """Find the branch each commit was made on, as far as the local reflog remembers.
+
+    git itself does not record it; the reflog does, but only for this clone and only for a
+    while (entries expire, deleted branches lose theirs).
+
+    Args:
+        project_root: Root of the documented project.
+
+    Returns:
+        Branch name by full commit hash; commits the reflog does not cover are left out.
+    """
+    output = await _git(project_root, "log", "--walk-reflogs", "--all", f"--format={REFLOG_FORMAT}")
+    branches: dict[str, str] = {}
+    for line in (output or "").splitlines():
+        parts = line.split(FIELD)
+        if len(parts) != 3:
+            continue
+        selector, full, action = parts
+        if selector.startswith("refs/heads/") and action.startswith(MADE_ON_BRANCH):
+            branches.setdefault(full, selector.removeprefix("refs/heads/").rsplit("@{", 1)[0])
+    return branches
+
+
+async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None:
+    """Read the commits of every branch and place them on lanes, one lane per branch.
+
+    The branch of a commit comes from the reflog while it remembers it (`read_commit_branches`);
+    older commits follow the topology, like `git log --graph`: a commit continues the branch
+    of the child that has it as first parent. See `place_on_lanes`.
 
     Args:
         project_root: Root of the documented project.
@@ -231,8 +262,8 @@ async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None
 
     Returns:
         Newest first: `hash`, `short`, `parents`, `refs` (branch and tag names), `head`
-        (the checked-out commit), `lane`, `author`, `date`, `subject`; `None` when git or
-        the repository is missing.
+        (the checked-out commit), `branch` (from the reflog; empty when unknown), `lane`,
+        `author`, `date`, `subject`; `None` when git or the repository is missing.
     """
     output = await _git(project_root, "log", "--all", "--topo-order", f"-n{limit}", f"--format={GRAPH_FORMAT}")
     if output is None:
@@ -250,27 +281,61 @@ async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None
             "head": any(name == "HEAD" or name.startswith("HEAD -> ") for name in names),
             "refs": [name.removeprefix("HEAD -> ") for name in names if name != "HEAD"],
         })
-    lanes: list[str | None] = []  # lanes[i] = hash of the commit lane i is waiting for
-    for commit in commits:
-        waiting = [index for index, expected in enumerate(lanes) if expected == commit["hash"]]
-        if waiting:
-            lane = waiting[0]
-            for other in waiting[1:]:  # branches that end here (merged into this commit)
-                lanes[other] = None
-        else:
-            lane = lanes.index(None) if None in lanes else len(lanes)
-            if lane == len(lanes):
-                lanes.append(None)
-        commit["lane"] = lane
-        parents = commit["parents"]
-        lanes[lane] = parents[0] if parents else None
-        for parent in parents[1:]:
-            if parent not in lanes:
-                free = lanes.index(None) if None in lanes else len(lanes)
-                if free == len(lanes):
-                    lanes.append(None)
-                lanes[free] = parent
+    place_on_lanes(commits, await read_commit_branches(project_root))
     return commits
+
+
+def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
+    """Give every commit a `branch` and a `lane`, one lane per branch.
+
+    1. Branch: the reflog's when known; otherwise the branch of the child that has the
+       commit as first parent (the newest such child); a commit with no such child starts
+       an unnamed branch.
+    2. Extent: the rows a branch takes, from its commits and the edges to their parents
+       and children.
+    3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
+       extent, so the main line stays at the bottom and branches made from it step up.
+
+    Args:
+        commits: Newest first, with `hash` and `parents`; changed in place.
+        branches: Branch by commit hash, from `read_commit_branches`.
+    """
+    row = {commit["hash"]: index for index, commit in enumerate(commits)}
+    track: dict[str, str] = {}
+    continued: dict[str, str] = {}  # commit hash -> branch of the child that has it as first parent
+    for commit in commits:  # newest first: children come before their parents
+        name = branches.get(commit["hash"]) or continued.get(commit["hash"]) or f"#{len(track)}"
+        track[commit["hash"]] = name
+        commit["branch"] = branches.get(commit["hash"], "")
+        if commit["parents"]:
+            continued.setdefault(commit["parents"][0], name)
+
+    extent: dict[str, tuple[int, int]] = {}
+
+    def stretch(name: str, index: int) -> None:
+        low, high = extent.get(name, (index, index))
+        extent[name] = (min(low, index), max(high, index))
+
+    for commit in commits:
+        here = row[commit["hash"]]
+        stretch(track[commit["hash"]], here)
+        for parent in commit["parents"]:
+            if parent in row:
+                stretch(track[commit["hash"]], row[parent])
+                stretch(track[parent], here)
+
+    lanes: list[list[tuple[int, int]]] = []  # lanes[i] = row ranges already taken on lane i
+    lane_of: dict[str, int] = {}
+    for name in sorted(extent, key=lambda name: (-extent[name][1], extent[name][0])):
+        low, high = extent[name]
+        free = (index for index, taken in enumerate(lanes) if all(high < start or low > end for start, end in taken))
+        lane = next(free, len(lanes))
+        if lane == len(lanes):
+            lanes.append([])
+        lanes[lane].append((low, high))
+        lane_of[name] = lane
+    for commit in commits:
+        commit["lane"] = lane_of[track[commit["hash"]]]
 
 
 async def read_history(project_root: Path, limit: int, path: str = "") -> list[Commit] | None:
