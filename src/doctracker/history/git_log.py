@@ -294,7 +294,8 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
     2. Extent: the rows a branch takes, from its commits and the edges to their parents
        and children.
     3. Lanes: branches from the oldest to the newest, each on the lowest lane free over its
-       extent, so the main line stays at the bottom and branches made from it step up.
+       extent above the lane of the branch it was made from, so the main line stays at the
+       bottom and branches made from it step up.
 
     Args:
         commits: Newest first, with `hash` and `parents`; changed in place.
@@ -302,10 +303,12 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
     """
     row = {commit["hash"]: index for index, commit in enumerate(commits)}
     track: dict[str, str] = {}
+    oldest: dict[str, dict] = {}  # branch -> its oldest commit
     continued: dict[str, str] = {}  # commit hash -> branch of the child that has it as first parent
     for commit in commits:  # newest first: children come before their parents
         name = branches.get(commit["hash"]) or continued.get(commit["hash"]) or f"#{len(track)}"
         track[commit["hash"]] = name
+        oldest[name] = commit
         commit["branch"] = branches.get(commit["hash"], "")
         if commit["parents"]:
             continued.setdefault(commit["parents"][0], name)
@@ -326,9 +329,12 @@ def place_on_lanes(commits: list[dict], branches: dict[str, str]) -> None:
 
     lanes: list[list[tuple[int, int]]] = []  # lanes[i] = row ranges already taken on lane i
     lane_of: dict[str, int] = {}
-    for name in sorted(extent, key=lambda name: (-extent[name][1], extent[name][0])):
+    for name in sorted(extent, key=lambda name: -row[oldest[name]["hash"]]):
         low, high = extent[name]
-        free = (index for index, taken in enumerate(lanes) if all(high < start or low > end for start, end in taken))
+        parents = oldest[name]["parents"]
+        base = lane_of.get(track.get(parents[0], ""), -1) if parents else -1  # lane of the branch it was made from
+        free = (index for index in range(base + 1, len(lanes))
+                if all(high < start or low > end for start, end in lanes[index]))
         lane = next(free, len(lanes))
         if lane == len(lanes):
             lanes.append([])
