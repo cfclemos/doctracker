@@ -70,6 +70,21 @@ function showGitFile(panel, index) {
   panel.querySelector(`.git-file-diff[data-file="${index}"]`)?.scrollTo(0, 0);
 }
 
+// A × inside a text field (.field-clearable) empties it; it shows only while the field has text.
+document.addEventListener("input", (event) => {
+  const clear = event.target.closest(".field-clearable")?.querySelector(".field-clear");
+  if (clear) clear.hidden = !event.target.value;
+});
+document.addEventListener("click", (event) => {
+  const clear = event.target.closest(".field-clear");
+  if (!clear) return;
+  event.preventDefault();
+  const input = clear.closest(".field-clearable").querySelector("input");
+  input.value = "";
+  clear.hidden = true;
+  input.focus();
+});
+
 // Mark a commit of the git page's list as selected (which opens its full message) and scroll
 // the list so it is at the top. Used by clicks on the list and on the branch graph.
 function markGitCommit(hash) {

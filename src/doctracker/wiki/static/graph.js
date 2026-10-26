@@ -7,6 +7,9 @@
 // Zoom per mouse wheel step: 1 is Cytoscape's default, higher zooms faster.
 const WHEEL_SENSITIVITY = 3;
 
+// Largest zoom when a graph is fitted to the canvas: small graphs stay at a readable size.
+const MAX_FIT_ZOOM = 3;
+
 // CSS variable of each node role.
 const ROLE_COLORS = {
   package: "--accent", subpackage: "--accent", module: "--accent",
@@ -486,15 +489,10 @@ async function drawDiagram(canvas, view) {
       box.element.classList.toggle("faded", Boolean(text) && !match);
     }
   });
+  // The focus is highlighted; the view stays fitted and centered on the whole diagram.
   const focus = canvas.dataset.focus;
   const focused = focus && (boxes[focus] ? focus : boxes[`${focus}.__init__`] ? `${focus}.__init__` : "");
-  if (focused) {
-    highlight(focused);
-    const box = boxes[focused];
-    panX = canvas.clientWidth / 2 - (box.x + box.width / 2) * scale;
-    panY = canvas.clientHeight / 2 - (box.y + box.height / 2) * scale;
-    apply();
-  }
+  if (focused) highlight(focused);
 }
 
 // Hover tooltip, click panel (with ×), double-click to open, highlight and fit tools.
@@ -565,7 +563,11 @@ function connectTools(cy, page) {
       matches.addClass("match");
     });
   });
-  page.querySelector(".graph-fit")?.addEventListener("click", () => cy.fit(cy.elements().not(".hidden"), 30));
+  page.querySelector(".graph-fit")?.addEventListener("click", () => {
+    cy.fit(cy.elements().not(".hidden"), 30);
+    cy.zoom(Math.min(cy.zoom(), MAX_FIT_ZOOM));
+    cy.center(cy.elements().not(".hidden"));
+  });
 
   return showInfo;
 }
@@ -598,13 +600,14 @@ async function initViews() {
       hideEdgesOnViewport: true,
       pixelRatio: 1,
     });
+    // The whole graph fits and is centered, without blowing small graphs up; the focus only gets its panel.
+    cy.fit(undefined, 40);
+    cy.zoom(Math.min(cy.zoom(), MAX_FIT_ZOOM));
+    cy.center();
     const page = canvas.closest(".graph-page");
     const showInfo = connectTools(cy, page);
     const focus = canvas.dataset.focus && cy.getElementById(canvas.dataset.focus);
-    if (focus && focus.length) {
-      showInfo(focus);
-      cy.animate({ center: { eles: focus }, zoom: Math.max(cy.zoom(), 1) }, { duration: 300 });
-    }
+    if (focus && focus.length) showInfo(focus);
   }
 }
 

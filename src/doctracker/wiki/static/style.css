@@ -240,7 +240,7 @@ main { grid-area: main; }
 #tree ul ul { margin-left: 0.55rem; padding-left: 0.55rem; border-left: 1px solid var(--border); }
 
 /* Collapsible branches: the arrow toggles, the name navigates. */
-#tree summary, #tree .leaf { display: flex; align-items: center; }
+#tree summary, #tree .leaf { display: flex; align-items: center; gap: 0.3rem; }
 #tree summary { list-style: none; }
 #tree summary::-webkit-details-marker { display: none; }
 #tree summary .icon { cursor: pointer; }
@@ -530,6 +530,24 @@ main:has(.graph-page) { max-width: none; }
 .graph-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .graph-filter .focus-input { width: 26rem; max-width: 60vw; }
 .graph-actions { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; font-size: 0.85rem; color: var(--muted); }
+/* A text field with a × to empty it (see live.js). */
+.field-clearable { position: relative; display: inline-flex; align-items: center; }
+.field-clear {
+  position: absolute;
+  right: 0.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.field-clear:hover { background: var(--panel); color: var(--fg); }
+.field-clear[hidden] { display: none; }
 .graph-filter select, .graph-filter input,
 .graph-actions select, .graph-actions input, .graph-actions button {
   height: 2rem;
@@ -540,6 +558,7 @@ main:has(.graph-page) { max-width: none; }
   color: var(--fg);
   font: inherit;
 }
+.field-clearable input { padding-right: 1.9rem; }
 .graph-actions button { cursor: pointer; }
 .graph-actions input[type="range"] { height: auto; padding: 0; border: 0; vertical-align: middle; accent-color: var(--accent); }
 .graph-actions button:hover { border-color: var(--accent); color: var(--accent); }
