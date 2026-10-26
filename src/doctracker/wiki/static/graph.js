@@ -261,9 +261,7 @@ function branchPath(from, to, lane) {
 }
 
 function selectGitCommit(hash) {
-  for (const item of document.querySelectorAll(".git-commit-item")) {
-    item.classList.toggle("current", item.dataset.hash === hash);
-  }
+  markGitCommit(hash);
   htmx.ajax("GET", `/git/commit/${hash}`, { target: "#git-diff" });
 }
 
@@ -337,26 +335,34 @@ async function initBranches() {
     if (item && document.body.contains(canvas)) select(item.dataset.hash);
   });
 
-  // Everything else about a commit (message, author, date, all its names) is in the tooltip.
+  // Everything else about a commit (full message, author, date, all its names) is in the tooltip.
+  // It stays open while the mouse moves into it, so a long message can be scrolled and selected.
   const tooltip = canvas.parentElement.querySelector(".graph-tooltip");
+  let hiding = 0;
+  const hide = () => { hiding = setTimeout(() => { tooltip.hidden = true; }, 250); };
   canvas.addEventListener("mouseover", (event) => {
     const node = event.target.closest(".git-node");
     if (!node) return;
+    clearTimeout(hiding);
     const commit = byHash[node.dataset.hash];
     const names = [commit.head ? "HEAD" : "", commit.branch ? `on ${commit.branch}` : "", ...commit.refs].filter(Boolean);
     tooltip.innerHTML = `
       <span class="graph-tooltip-role" style="color:${color(commit.lane)}">${escapeHtml([commit.short, ...names].join(" · "))}</span>
       <strong>${escapeHtml(commit.subject)}</strong>
-      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date.slice(0, 16).replace("T", " "))}</span>`;
+      <span class="graph-tooltip-text">${escapeHtml(commit.author)} · ${escapeHtml(commit.date.slice(0, 16).replace("T", " "))}</span>
+      ${commit.body_html ? `<div class="graph-tooltip-body">${commit.body_html}</div>` : ""}`;
     const dot = node.querySelector("circle").getBoundingClientRect();
     const area = canvas.parentElement.getBoundingClientRect();
     tooltip.style.left = `${dot.right - area.left + 8}px`;
     tooltip.style.top = `${dot.bottom - area.top + 4}px`;
+    tooltip.scrollTop = 0;
     tooltip.hidden = false;
   });
   canvas.addEventListener("mouseout", (event) => {
-    if (event.target.closest(".git-node")) tooltip.hidden = true;
+    if (event.target.closest(".git-node")) hide();
   });
+  tooltip.addEventListener("mouseenter", () => clearTimeout(hiding));
+  tooltip.addEventListener("mouseleave", hide);
   canvas.addEventListener("scroll", () => { tooltip.hidden = true; });
 }
 

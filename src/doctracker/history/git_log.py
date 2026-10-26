@@ -25,8 +25,11 @@ RECORD = "\x1e"
 FIELD = "\x1f"
 """Separates the fields of a commit header in the `git log` output."""
 
-LOG_FORMAT = FIELD.join(["%H", "%h", "%an", "%aI", "%s"])
-"""Commit header: full hash, short hash, author, author date (ISO 8601) and subject."""
+BODY_END = "\x1d"
+"""Ends the message body (which may span many lines) in the `git log` output."""
+
+LOG_FORMAT = FIELD.join(["%H", "%h", "%an", "%aI", "%s", "%b"]) + BODY_END
+"""Commit header: full hash, short hash, author, author date (ISO 8601), subject and body."""
 
 
 @dataclass
@@ -39,6 +42,7 @@ class Commit:
         author: Author name.
         date: Author date, ISO 8601.
         subject: First line of the message.
+        body: The rest of the message (the reasons behind the change); empty when there is none.
         added: Files created by the commit, relative to the project root.
         modified: Files changed by the commit.
         deleted: Files removed by the commit.
@@ -50,6 +54,7 @@ class Commit:
     author: str
     date: str
     subject: str
+    body: str = ""
     added: list[str] = field(default_factory=list)
     modified: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
@@ -214,8 +219,8 @@ def _keep(file: FileDiff, line: DiffLine) -> None:
         file.truncated = True
 
 
-GRAPH_FORMAT = FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s"])
-"""Commit line of the branch graph: hash, short hash, parents, references, author, date, subject."""
+GRAPH_FORMAT = RECORD + FIELD.join(["%H", "%h", "%P", "%D", "%an", "%aI", "%s", "%b"])
+"""Commit of the branch graph: hash, short hash, parents, references, author, date, subject, body."""
 
 
 REFLOG_FORMAT = FIELD.join(["%gD", "%H", "%gs"])
@@ -267,21 +272,21 @@ async def read_branch_graph(project_root: Path, limit: int) -> list[dict] | None
         `open` (tip of a branch that goes on to the present), `merged_into` (for the tip of
         a branch merged through a later commit: the merge where its lane ends),
         `next_on_branch` (the next commit of the same branch when it is not a child),
-        `author`, `date`, `subject`; `None` when git or the repository is missing.
+        `author`, `date`, `subject`, `body`; `None` when git or the repository is missing.
     """
     output = await _git(project_root, "log", "--all", "--topo-order", f"-n{limit}", f"--format={GRAPH_FORMAT}")
     if output is None:
         return None
     commits = []
-    for line in output.splitlines():
-        parts = line.split(FIELD)
-        if len(parts) != 7:
+    for record in output.split(RECORD):
+        parts = record.split(FIELD)
+        if len(parts) != 8:
             continue
-        full, short, parents, refs, author, date, subject = parts
+        full, short, parents, refs, author, date, subject, body = parts
         names = [ref.strip() for ref in refs.split(",") if ref.strip()]
         commits.append({
             "hash": full, "short": short, "parents": parents.split(), "author": author, "date": date,
-            "subject": subject,
+            "subject": subject, "body": body.strip(),
             "head": any(name == "HEAD" or name.startswith("HEAD -> ") for name in names),
             "refs": [name.removeprefix("HEAD -> ") for name in names if name != "HEAD"],
         })
@@ -431,14 +436,14 @@ def parse_log(output: str) -> list[Commit]:
     """
     commits = []
     for record in output.split(RECORD):
-        lines = [line for line in record.splitlines() if line.strip()]
-        if not lines:
+        header, _, changes = record.partition(BODY_END)
+        parts = header.split(FIELD)
+        if len(parts) != 6:
             continue
-        parts = lines[0].split(FIELD)
-        if len(parts) != 5:
-            continue
-        commit = Commit(*parts)
-        for line in lines[1:]:
+        commit = Commit(*parts[:5], body=parts[5].strip())
+        for line in changes.splitlines():
+            if not line.strip():
+                continue
             status, *files = line.split("\t")
             if status.startswith("R") and len(files) == 2:
                 commit.renamed.append((files[0], files[1]))

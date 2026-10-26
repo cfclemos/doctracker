@@ -273,7 +273,7 @@ async def entity_history(state: DocState, project_root: Path, path: str, limit: 
         limit: Most recent commits to list.
 
     Returns:
-        Commits (short hash, author, date, subject); `None` when git or the repository
+        Commits (short hash, author, date, subject, body); `None` when git or the repository
         is missing, or the entity is unknown.
     """
     entity = state.entities.get(path)
@@ -282,4 +282,5 @@ async def entity_history(state: DocState, project_root: Path, path: str, limit: 
     commits = await read_history(project_root, limit, entity["filepath"])
     if commits is None:
         return None
-    return [{"hash": c.hash, "short": c.short, "author": c.author, "date": c.date, "subject": c.subject} for c in commits]
+    return [{"hash": c.hash, "short": c.short, "author": c.author, "date": c.date, "subject": c.subject, "body": c.body}
+            for c in commits]
