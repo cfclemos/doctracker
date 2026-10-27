@@ -92,30 +92,35 @@ REVIEWS = {"title": "Reviews", "goal": "Commits made outside the flow, to be che
 ADDED_COLUMNS = (("notes", "moments", "TEXT NOT NULL DEFAULT '[]'"), ("plans", "fixed", "INTEGER NOT NULL DEFAULT 0"))
 """Columns added after the first version of the tables: `ALTER TABLE` adds them to an older database."""
 
+ID_TABLES = {"plans": "plan", "features": "feature", "tasks": "task", "annotations": "", "evidence": "",
+             "notes": "note"}
+"""Tables whose ids are shown and kept elsewhere (links, commits, the archive), with the kind of their
+references: their ids are never reused (`AUTOINCREMENT`), so a new item never takes a deleted one's."""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS plans (
-  id INTEGER PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL DEFAULT '',
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, goal TEXT NOT NULL DEFAULT '',
   requirements TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]', branches TEXT NOT NULL DEFAULT '[]',
   due TEXT NOT NULL DEFAULT '', source TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS features (
-  id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
   title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '',
   due TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL, source TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY, feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
   title TEXT NOT NULL, criteria TEXT NOT NULL DEFAULT '[]', branch TEXT NOT NULL DEFAULT '', due TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'todo', position INTEGER NOT NULL, source TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS annotations (
-  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   text TEXT NOT NULL, source TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS evidence (
-  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   source TEXT NOT NULL, detail TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS dependencies (
   item TEXT NOT NULL, depends_on TEXT NOT NULL, reason TEXT NOT NULL, source TEXT NOT NULL, created TEXT NOT NULL,
   PRIMARY KEY (item, depends_on));
 CREATE TABLE IF NOT EXISTS notes (
-  id INTEGER PRIMARY KEY, type TEXT NOT NULL, statement TEXT NOT NULL, why TEXT NOT NULL DEFAULT '',
+  id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, statement TEXT NOT NULL, why TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS links (
   source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (source, target, kind));
@@ -233,6 +238,7 @@ class NoteStore:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.executescript(SCHEMA)
             _add_columns(connection)
+            _never_reuse_ids(connection)
             if write:
                 with connection:
                     yield connection
@@ -1129,7 +1135,7 @@ class NoteStore:
             for task in feature["tasks"]:
                 rows.append((task["item"], "task", task["title"], plan["title"], feature["title"],
                              {"criteria": task["criteria"], "annotations": [a["text"] for a in task["annotations"]],
-                              "evidence": [e["detail"] for e in task["evidence"]]}, self._commits_of(task["item"])))
+                              "evidence": [e["detail"] for e in task["evidence"]]}, self._commits_of(task)))
         now = _now()
         with self._connect(write=True) as connection:
             connection.executemany(
@@ -1137,12 +1143,16 @@ class NoteStore:
                 [(ref, row_kind, title, plan_title, feature_title, json.dumps(content), json.dumps(commits), now)
                  for ref, row_kind, title, plan_title, feature_title, content, commits in rows])
 
-    def _commits_of(self, task: str) -> list[str]:
-        """Full hashes of the flow's commits that carried out a task."""
+    def _commits_of(self, task: dict) -> list[str]:
+        """Full hashes of the flow's commits that carried out a task.
+
+        Only commits made after the task was created count: before ids were never reused, an older
+        task with the same id may have its own commits recorded under it.
+        """
         with self._connect() as connection:
             return [row["hash"] for row in connection.execute(
-                "SELECT hash FROM commits WHERE EXISTS (SELECT 1 FROM json_each(tasks) WHERE value = ?) ORDER BY created",
-                (task,))]
+                "SELECT hash FROM commits WHERE EXISTS (SELECT 1 FROM json_each(tasks) WHERE value = ?) AND created >= ? "
+                "ORDER BY created", (task["item"], task["created"]))]
 
     def archived(self, commit_hash: str = "") -> list[dict]:
         """Archived planner items, oldest first.
@@ -1419,3 +1429,40 @@ def _work_out_states(plans: list[dict], features: list[dict], tasks: list[dict],
             left = [child["state"] for child in children if child["state"] != "done"]
             if waiting(item) or (left and all(state == "blocked" for state in left)):
                 item["state"] = "blocked"
+
+
+def _never_reuse_ids(connection: sqlite3.Connection) -> None:
+    """Bring an older database up to date: rebuild the `ID_TABLES` made without `AUTOINCREMENT`.
+
+    Every row keeps its id. Each table's counter starts after the highest id it ever gave, counting
+    the items kept in the archive and named by the flow's commits, so no deleted id comes back.
+    """
+    old = [name for name, sql in connection.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+           if name in ID_TABLES and "AUTOINCREMENT" not in sql]
+    if not old:
+        return
+    named = [item for (item,) in connection.execute("SELECT item FROM archive")]
+    named += [item for (tasks,) in connection.execute("SELECT tasks FROM commits") for item in json.loads(tasks)]
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("BEGIN")
+    try:
+        for table in old:
+            sql = connection.execute("SELECT sql FROM sqlite_master WHERE name = ?", (table,)).fetchone()[0]
+            connection.execute(sql.replace(f"CREATE TABLE {table} (", f"CREATE TABLE {table}_new (", 1)
+                               .replace("id INTEGER PRIMARY KEY,", "id INTEGER PRIMARY KEY AUTOINCREMENT,", 1))
+            columns = ", ".join(row[1] for row in connection.execute(f"PRAGMA table_info({table})"))
+            connection.execute(f"INSERT INTO {table}_new ({columns}) SELECT {columns} FROM {table}")
+            connection.execute(f"DROP TABLE {table}")
+            connection.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+            kind = ID_TABLES[table]
+            ids = [int(number) for kind_of, _, number in (item.partition(":") for item in named)
+                   if kind and kind_of == kind and number.isdigit()]
+            highest = max([*ids, connection.execute(f"SELECT coalesce(max(id), 0) FROM {table}").fetchone()[0]])
+            connection.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
+            connection.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (table, highest))
+        connection.execute("COMMIT")
+    except sqlite3.Error:
+        connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
