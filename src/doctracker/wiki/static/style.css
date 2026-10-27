@@ -1104,9 +1104,12 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .dialog-danger { margin-top: 1rem; text-align: right; }
 
 /* Planner: plan cards on top; the chosen plans on the left, the clicked item on the right. */
-.plan-cards { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.4rem 0 0.6rem; }
+/* The cards scroll on one row (like the Git page timeline); New plan stays beside the row, on the right, as
+   tall as the cards: the row's scrollbar, measured by live.js into --plan-scrollbar, is left out under it. */
+.plan-cards { display: flex; gap: 0.5rem; align-items: stretch; margin: 0.4rem 0 0.6rem; }
+.plan-cards-row { display: flex; gap: 0.5rem; flex: 1 1 auto; min-width: 0; overflow-x: auto; padding-bottom: 0.3rem; }
 .plan-card {
-  display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.45rem; align-items: center; min-width: 13rem; max-width: 20rem;
+  flex: 0 0 auto; display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.45rem; align-items: center; min-width: 13rem; max-width: 20rem;
   padding: 0.45rem 0.7rem; border: 1px solid var(--border); border-left: 4px solid var(--tint); border-radius: 6px;
   background: var(--bg); color: var(--fg); font-size: 0.85rem;
 }
@@ -1118,7 +1121,7 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .plan-card-facts { color: var(--muted); font-size: 0.75rem; }
 .plan-card-bar { grid-column: 1 / -1; height: 4px; margin-top: 0.25rem; border-radius: 2px; background: var(--panel); overflow: hidden; }
 .plan-card-bar i { display: block; height: 100%; background: #2da44e; }
-.notes-page .plan-card-new { align-self: stretch; }
+.notes-page .plan-card-new { flex: 0 0 auto; margin-bottom: calc(var(--plan-scrollbar, 0px) + 0.3rem); }
 /* Left and right start as halves; the splitter between them (see live.js) sets --split, the left share. */
 .planner-layout { display: grid; grid-template-columns: minmax(0, calc(var(--split, 50%) - 0.6rem)) 1.2rem minmax(0, 1fr);
   margin-top: 0.8rem; }
@@ -1139,7 +1142,6 @@ body.splitting { cursor: col-resize; user-select: none; }
   .planner-detail { height: auto; min-height: 0; }
 }
 @media (max-width: 720px) {
-  .plan-card { flex: 1 1 100%; max-width: none; }
   .notes-tab { padding: 0.4rem 0.7rem; }
   .note-head { flex-wrap: wrap; }
   .notes-filter { flex-wrap: wrap; gap: 0.4rem 1rem; }
