@@ -55,6 +55,15 @@ def entity_text(entity: dict) -> str:
     return text[:MAX_TEXT_CHARS]
 
 
+NOT_SEARCHED = ("__all__",)
+"""Entity names left out of every search: `__all__` only lists names that are entities themselves."""
+
+
+def searchable(entity: dict) -> bool:
+    """Whether an entity is found by the searches (see `NOT_SEARCHED`)."""
+    return entity["name"] not in NOT_SEARCHED
+
+
 def entity_documents(entities: dict[str, dict]) -> dict[str, tuple[str, str]]:
     """The searchable documents of the code: each entity's name and text, by path.
 
@@ -62,9 +71,9 @@ def entity_documents(entities: dict[str, dict]) -> dict[str, tuple[str, str]]:
         entities: Extracted entities, by path.
 
     Returns:
-        `{path: (name, text)}`, ready for `SearchIndex.update_texts`.
+        `{path: (name, text)}`, ready for `SearchIndex.update_texts`; `NOT_SEARCHED` names left out.
     """
-    return {path: (entity["name"], entity_text(entity)) for path, entity in entities.items()}
+    return {path: (entity["name"], entity_text(entity)) for path, entity in entities.items() if searchable(entity)}
 
 
 def tokenize(text: str) -> list[str]:

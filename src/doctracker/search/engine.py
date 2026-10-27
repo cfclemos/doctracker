@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from doctracker.embeddings.service import EmbeddingService
 from doctracker.notes import NoteStore, document_text, note_group
 from doctracker.server.state import DocState
+from doctracker.storage.index import searchable
 from doctracker.wiki.pages import description_text, summary
 
 RRF_K = 60
@@ -169,6 +170,8 @@ class SearchEngine:
             return []
         scored = []
         for path, entity in self.state.entities.items():
+            if not searchable(entity):
+                continue
             name = entity["name"].lower()
             if name == query:
                 tier = 0
