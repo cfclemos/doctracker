@@ -16,6 +16,7 @@
   <p class="chips decorators">{% for decorator in entity.decorators %}<code class="chip">@{{ decorator }}</code>{% endfor %}</p>
   {% endif %}
   <pre class="signature code-block"><code>{{ signature(entity) | highlight }}</code></pre>
+  {{ ui.previous_names(previous_names) }}
   {% if entity.kind == "class" and entity.bases %}
   <p class="bases">Bases: {% for base in entity.bases %}<code class="chip">{{ base }}</code>{% endfor %}</p>
   {% endif %}

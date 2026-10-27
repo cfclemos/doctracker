@@ -14,7 +14,7 @@ from starlette.staticfiles import StaticFiles
 
 from doctracker.config import Config, set_config_value
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
-from doctracker.history import commit_diff, read_branch_graph, read_history
+from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
 from doctracker.search import DEFAULT_LIMIT, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
@@ -102,7 +102,22 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         html = templates.get_template(template).render(content=content, page_url=url, state=state, **context)
         return HTMLResponse(html, status_code=status)
 
-    def render(request: Request, path: str) -> HTMLResponse:
+    async def earlier_names(path: str) -> list[dict]:
+        """The earlier names of an entity, newest first, each with the commit that changed it.
+
+        Each has `path`, `how`, `commit`, `short`, `date_local` and, when git still has the commit, its
+        `subject`, `author` and `body_html` (for the same tooltip as the git page).
+        """
+        earlier = []
+        for entry in notes.previous_names(path):
+            commit = await read_commit(project_root, entry["commit"])
+            earlier.append({**entry, "short": entry["commit"][:7],
+                            "date_local": pages.local_time(commit.date if commit else entry["created"]),
+                            "subject": commit.subject if commit else "", "author": commit.author if commit else "",
+                            "body_html": pages.render_commit_message(commit.body) if commit else ""})
+        return earlier
+
+    async def render(request: Request, path: str) -> HTMLResponse:
         entity = state.entities.get(path)
         context = {"path": path, "entity": entity, "tree": pages.tree(state, path)}
         if not state.ready:
@@ -112,6 +127,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         else:
             content, status = ("module.html" if entity["kind"] == "module" else "entity.html"), 200
             context["breadcrumbs"] = pages.breadcrumbs(state, path)
+            context["previous_names"] = await earlier_names(path)
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
@@ -439,10 +455,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     async def index(request: Request) -> Response:
         if state.ready and state.roots:
             return RedirectResponse(f"/wiki/{state.roots[0]}")
-        return render(request, "")
+        return await render(request, "")
 
     async def wiki(request: Request) -> Response:
-        return render(request, request.path_params["path"])
+        return await render(request, request.path_params["path"])
 
     async def source(request: Request) -> Response:
         entity = state.entities.get(request.path_params["path"])

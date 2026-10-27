@@ -432,11 +432,28 @@ async def read_history(project_root: Path, limit: int, path: str = "") -> list[C
         The commits, newest first; `None` when git is not installed or the project is not a repository.
     """
     # --relative: file paths relative to the project root, even when it is a subfolder of the repository.
+    # --follow (one file only): the history goes on before the file was moved or renamed.
     args = ["log", f"-n{limit}", "--name-status", "-M", "--relative", f"--format={RECORD}{LOG_FORMAT}"]
     if path:
-        args += ["--", path]
+        args += ["--follow", "--", path] if (project_root / path).is_file() else ["--", path]
     output = await _git(project_root, *args)
     return None if output is None else parse_log(output)
+
+
+async def read_commit(project_root: Path, commit_hash: str) -> Commit | None:
+    """Read one commit: its message, author, date and files.
+
+    Args:
+        project_root: Root of the documented project.
+        commit_hash: The commit, full or abbreviated.
+
+    Returns:
+        The commit; `None` when git, the repository or the commit is missing.
+    """
+    output = await _git(project_root, "log", "-1", "--name-status", "-M", "--relative",
+                        f"--format={RECORD}{LOG_FORMAT}", commit_hash)
+    commits = parse_log(output) if output else []
+    return commits[0] if commits else None
 
 
 def parse_log(output: str) -> list[Commit]:

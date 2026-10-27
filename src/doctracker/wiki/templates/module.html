@@ -7,6 +7,7 @@
   {% else %}
   <p class="empty">No docstring.</p>
   {% endif %}
+  {{ ui.previous_names(previous_names) }}
 {% endcall %}
 
 {% if entity.exports %}
