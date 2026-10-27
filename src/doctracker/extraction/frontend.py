@@ -173,7 +173,9 @@ def _css_rules(source: str) -> list[tuple[str, str, int, int, str, str]]:
         for child in node.named_children:
             if child.type == "rule_set":
                 selectors = child.child_by_field_name("selectors") or child.named_children[0]
-                names = {part.text.decode("utf-8") for part in _walk(selectors) if part.type == "class_name"}
+                names = {part.text.decode("utf-8") for part in _walk(selectors)  # not :hover, :not(...)
+                         if part.type == "class_name" and part.parent is not None
+                         and part.parent.type == "class_selector"}
                 for name in sorted(names):
                     add(f".{name}", "css class", child)
                 if not names:
@@ -258,3 +260,208 @@ def _file_comment(kind: str, source: str) -> str:
         else:
             break
     return _comment_text(comments)
+
+
+_CLASS_ATTRIBUTE = re.compile(r"""\bclass\s*=\s*(["'])(.*?)\1""", re.S)
+_HANDLER_ATTRIBUTE = re.compile(r"""\bon[a-z]+\s*=\s*(["'])(.*?)\1""", re.S)
+_URL_ATTRIBUTE = re.compile(
+    r"""\b(?:hx-(?:get|post|put|patch|delete)|href|action|src|data-url)\s*=\s*(["'])(/.*?)\1""", re.S)
+_CALLED = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\(")
+_TOKEN = re.compile(r"[A-Za-z_][\w-]*")
+_SELECTOR_CLASS = re.compile(r"\.([A-Za-z_][\w-]*)")
+_DYNAMIC_CLASS = re.compile(r"([A-Za-z_][\w-]*-)(?:\{\{|\$\{)")
+_JINJA_BLOCK = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.S)
+
+
+def frontend_edges(entities: dict[str, dict], root: Path, registered: dict[str, str],
+                   routes: list[tuple[str, str, str]]) -> list[dict]:
+    """Find what the front-end files use: templates, macros, Python helpers, CSS classes, JS functions, routes.
+
+    Templates use the Python functions registered for them (`refers`), the templates they include,
+    extend or import (`uses`) and the macros they call (`calls`); templates and scripts use CSS
+    classes (`uses`: class attributes, class names in JS strings and selectors) and call JS
+    functions (`calls`: JS calls, inline `on…` handlers); a URL they name (`hx-get`, `href`,
+    `action`, `fetch(...)`...) reaches the Python entity declaring its route (`refers`, with `via`:
+    the route and its handler). Each relation starts at the macro or JS function the use is in, else
+    at the file.
+
+    Args:
+        entities: Every extracted entity, Python and front-end, by path.
+        root: Project root.
+        registered: Names the templates use → Python function or class registered under them.
+        routes: `(URL pattern, entity declaring the route, handler)` from the Python code.
+
+    Returns:
+        `{"source", "target", "kind"}` (and `via` for routes) relations, without duplicates.
+    """
+    index = _Index(entities, routes)
+    found: dict[tuple[str, str, str], str] = {}
+    for path, entity in entities.items():
+        if entity["kind"] not in FRONTEND_KINDS.values() or entity["kind"] == "stylesheet":
+            continue
+        try:
+            source = (root / entity["filepath"]).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if entity["kind"] == "template":
+            uses = _template_uses(source, registered, index)
+        else:
+            uses = _script_uses(source, index)
+        for line, target, kind, via in uses:
+            source_path = index.owner(path, line)
+            if target != source_path:
+                found.setdefault((source_path, target, kind), via)
+    return [{"source": source, "target": target, "kind": kind, **({"via": via} if via else {})}
+            for (source, target, kind), via in sorted(found.items())]
+
+
+class _Index:
+    """The front-end entities by what names them, and the routes as patterns.
+
+    Args:
+        entities: Every extracted entity, by path.
+        routes: `(URL pattern, entity declaring the route, handler)`.
+    """
+
+    def __init__(self, entities: dict[str, dict], routes: list[tuple[str, str, str]]) -> None:
+        self.entities = entities
+        self.classes: dict[str, list[str]] = {}
+        self.functions: dict[str, list[str]] = {}
+        self.templates: dict[str, str] = {}
+        for path, entity in entities.items():
+            if entity["kind"] == "css class":
+                self.classes.setdefault(entity["name"][1:], []).append(path)
+            elif entity["kind"] == "js function":
+                self.functions.setdefault(entity["name"], []).append(path)
+            elif entity["kind"] == "template":
+                self.templates[path] = path
+        self.routes = []
+        for pattern, declared_by, handler in routes:
+            # `{name}` matches one part of the path, `{name:path}` the rest of it.
+            parts = re.split(r"(\{[^}]*\})", pattern)
+            regex = "".join(("(.+)" if part.endswith(":path}") else "([^/]+)") if part.startswith("{")
+                            else re.escape(part) for part in parts)
+            literal = len("".join(part for part in parts if not part.startswith("{")))
+            self.routes.append((re.compile(f"^{regex}$"), literal, declared_by, f"{pattern} → {handler}"))
+
+    def owner(self, file: str, line: int) -> str:
+        """The innermost member of a file (macro, JS function) holding a line; the file itself otherwise."""
+        holding = [member for member in self.entities[file]["members"]
+                   if self.entities[member]["lineno"] <= line <= self.entities[member]["endlineno"]]
+        return min(holding, default=file,
+                   key=lambda member: self.entities[member]["endlineno"] - self.entities[member]["lineno"])
+
+    def template(self, name: str) -> str | None:
+        """The template a Jinja name (`macros.html`, `sub/page.html`) points to, when only one matches."""
+        matching = [path for path in self.templates if path.endswith(f"/{name}")]
+        return matching[0] if len(matching) == 1 else None
+
+    def route(self, url: str) -> tuple[str, str] | None:
+        """The entity declaring the route a URL reaches, and `pattern → handler`; the most literal route wins."""
+        path = url.split("?", 1)[0].split("#", 1)[0]
+        matching = [(literal, declared_by, via) for regex, literal, declared_by, via in self.routes
+                    if regex.match(path)]
+        return max(matching)[1:] if matching else None
+
+    def class_uses(self, text: str, line: int, selectors: bool = False) -> list[tuple[int, str, str, str]]:
+        """The CSS classes a text names: `.name` in a selector, or any word that is a class name.
+
+        A name built with a value (`state-{{ x }}`, `state-${x}`) uses every class starting with its fixed part.
+        """
+        names = set(_SELECTOR_CLASS.findall(text) if selectors else _TOKEN.findall(text))
+        prefixes = set(_DYNAMIC_CLASS.findall(text)) | {name for name in names if name.endswith("-")}
+        for prefix in prefixes:  # `"note-" ~ note.type` too
+            names |= {name for name in self.classes if name.startswith(prefix)}
+        return [(line, path, "uses", "") for name in sorted(names) for path in self.classes.get(name, [])]
+
+    def url_use(self, url: str, line: int) -> list[tuple[int, str, str, str]]:
+        """The route a URL reaches, as a use."""
+        reached = self.route(_JINJA_BLOCK.sub("x", url))
+        return [(line, reached[0], "refers", reached[1])] if reached else []
+
+
+def _line(source: str, offset: int) -> int:
+    """The line (from 1) of a character offset."""
+    return source.count("\n", 0, offset) + 1
+
+
+def _template_uses(source: str, registered: dict[str, str], index: _Index) -> list[tuple[int, str, str, str]]:
+    """What a template uses: `(line, target, kind, via)` for each use."""
+    uses = []
+    try:
+        tree = Environment().parse(source)
+    except TemplateSyntaxError:
+        tree = None
+    if tree is not None:
+        aliases: dict[str, str] = {}  # name → the template it imports
+        imported: dict[str, str] = {}  # name → the macro it imports
+        for node in tree.find_all((nodes.Extends, nodes.Include, nodes.Import, nodes.FromImport)):
+            if not (isinstance(node.template, nodes.Const) and (target := index.template(node.template.value))):
+                continue
+            uses.append((node.lineno, target, "uses", ""))
+            if isinstance(node, nodes.Import):
+                aliases[node.target] = target
+            elif isinstance(node, nodes.FromImport):
+                for name in node.names:
+                    name, alias = name if isinstance(name, tuple) else (name, name)
+                    imported[alias] = f"{target}:{name}"
+        local = {macro.name for macro in tree.find_all(nodes.Macro)}
+        for node in tree.find_all(nodes.Call):
+            called = node.node
+            target = None
+            if (isinstance(called, nodes.Getattr) and isinstance(called.node, nodes.Name)
+                    and called.node.name in aliases):
+                target = f"{aliases[called.node.name]}:{called.attr}"
+            elif isinstance(called, nodes.Name):
+                target = imported.get(called.name)
+            if target and target in index.entities:
+                uses.append((node.lineno, target, "calls", ""))
+        for node in tree.find_all((nodes.Name, nodes.Filter, nodes.Test)):
+            if node.name in registered and node.name not in local and getattr(node, "ctx", "load") == "load":
+                uses.append((node.lineno, registered[node.name], "refers", ""))
+        for node in tree.find_all(nodes.Const):
+            if isinstance(node.value, str) and node.value.startswith("/"):
+                uses.extend(index.url_use(node.value, node.lineno))
+            elif isinstance(node.value, str):  # class names given to a macro or joined with ~
+                uses.extend(index.class_uses(node.value, node.lineno))
+    for match in _CLASS_ATTRIBUTE.finditer(source):
+        value = match.group(2)
+        quoted = " ".join(re.findall(r"""["']([^"']*)["']""", value))  # names written inside {{ }} or {% %}
+        dynamic = " ".join(_DYNAMIC_CLASS.findall(value))
+        uses.extend(index.class_uses(f"{_JINJA_BLOCK.sub(' ', value)} {quoted} {value if dynamic else ''}",
+                                     _line(source, match.start())))
+    for match in _HANDLER_ATTRIBUTE.finditer(source):
+        line = _line(source, match.start())
+        uses.extend((line, path, "calls", "") for name in _CALLED.findall(match.group(2))
+                    for path in index.functions.get(name, []))
+    for match in _URL_ATTRIBUTE.finditer(source):
+        uses.extend(index.url_use(match.group(2), _line(source, match.start())))
+    return uses
+
+
+def _script_uses(source: str, index: _Index) -> list[tuple[int, str, str, str]]:
+    """What a script uses: `(line, target, kind, via)` for each use."""
+    uses = []
+    for node in _walk(_JS.parse(source.encode("utf-8")).root_node):
+        line = node.start_point[0] + 1
+        if node.type == "call_expression":
+            called = node.child_by_field_name("function")
+            if called is not None and called.type == "identifier":
+                name = called.text.decode("utf-8")
+                uses.extend((line, path, "calls", "") for path in index.functions.get(name, []))
+        elif node.type == "identifier" and node.parent is not None:
+            # A function named without being called: a callback, a value in an object or a list.
+            parent = node.parent
+            called = parent.type == "call_expression" and parent.child_by_field_name("function") == node
+            declared = parent.child_by_field_name("name") == node
+            if not called and not declared:
+                uses.extend((line, path, "refers", "") for path in index.functions.get(node.text.decode("utf-8"), []))
+        elif node.type in ("string", "template_string"):
+            text = node.text.decode("utf-8")[1:-1]
+            if text.startswith("/") and len(text) > 1:
+                uses.extend(index.url_use(re.sub(r"\$\{[^}]*\}", "x", text), line))
+            looks_like_selector = any(mark in text for mark in (".", "#", "[", ":", ">"))
+            uses.extend(index.class_uses(text, line, selectors=looks_like_selector and "class=" not in text))
+            for match in _CLASS_ATTRIBUTE.finditer(text):
+                uses.extend(index.class_uses(match.group(2), line))
+    return uses
