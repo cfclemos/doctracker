@@ -6,6 +6,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from doctracker.config import Config, set_config_value
 from doctracker.graph import architecture, call_graph, class_diagram, entity_history
 from doctracker.history import commit_diff, read_branch_graph
+from doctracker.notes.context import CONTEXT_KINDS, context_for
 from doctracker.search import AGENT_WAIT_SECONDS, DEFAULT_LIMIT, SearchEngine
 from doctracker.server.guide import documentation_guide as build_guide
 from doctracker.server.state import DocState
@@ -191,6 +192,42 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             `status`, and when ready, `total`, `offset` and `results`: path, kind, fused score (higher is better) and summary.
         """
         return search.describe(await search.run("hybrid", query, max(1, limit), AGENT_WAIT_SECONDS, offset))
+
+    @mcp.tool()
+    async def recall(query: str) -> dict:
+        """Find what the project knows about a subject: open planning first, then guidelines, memory and code.
+
+        Use it before planning, before changing code and before writing a note, to build on what is
+        already recorded. Each group lists at most a few results; open planner items come before
+        done ones. Hybrid search when the embedding model is ready, BM25 meanwhile.
+
+        Args:
+            query: Words or a question, in any language.
+
+        Returns:
+            `mode`, then `planning`, `guidelines`, `memory` and `code`: lists of `ref` (e.g. `task:3`,
+            `note:7`, an entity path), `kind`, `title`, `state` (planner items) and `score`.
+        """
+        return await search.recall(query)
+
+    @mcp.tool(description=f"""Get what doctracker tells agents at one moment of the work.
+
+The same texts the hooks give by themselves: `session` (where everything is kept, the guidelines
+given always, the open planning, the reviews waiting), `planning` (how to plan here, the planning
+guidelines, the open requirements), `file` (the notes about the code of a file), `commit` (the
+guidelines given when committing).
+
+Args:
+    kind: One of {", ".join(CONTEXT_KINDS)}.
+    path: For `file`: the file, absolute or relative to the project root.
+
+Returns:
+    `context`: the text (empty when there is nothing to say).""")
+    def agent_context(kind: str, path: str = "") -> dict:
+        try:
+            return {"context": context_for(kind, search.notes, state.entities, project_root, path)}
+        except ValueError as refused:
+            raise ToolError(str(refused)) from refused
 
     @mcp.tool()
     def embedding_status() -> dict:
