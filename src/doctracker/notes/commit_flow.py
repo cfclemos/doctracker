@@ -11,12 +11,16 @@ review of commits made outside it.
    `merge_if_ready` merges the branch into main when the work planned for it is all done and
    committed (`merge_ready`).
 4. `review_outside_commits` turns each commit not made by the flow into a task of the Reviews plan.
+
+The renames and moves of classes and functions are listed at the pre-commit and recorded in the
+rename registry for every commit, made by the flow (`record_renames`) or outside it.
 """
 
 from datetime import datetime, timezone
 from pathlib import Path
 
 from doctracker.history import working
+from doctracker.history.renames import detect_renames, source_roots
 from doctracker.notes.context import commit_context
 from doctracker.notes.store import NoteStore, parse_item
 
@@ -25,7 +29,7 @@ COMMITTED = "Committed as "
 
 
 async def prepare_commit(notes: NoteStore, project_root: Path, groups: list[dict] | None = None,
-                         diffs: list[str] | None = None) -> dict:
+                         diffs: list[str] | None = None, entities: dict[str, dict] | None = None) -> dict:
     """The pre-commit: the material to plan the commits, the diffs asked for, or the check of the groups.
 
     The material lists the files without their diffs (a branch may change many files); the diffs of
@@ -36,13 +40,15 @@ async def prepare_commit(notes: NoteStore, project_root: Path, groups: list[dict
         project_root: Root of the project.
         groups: The planned commits, `[{"files": [...], "message": "...", "tasks": ["task:3"]}]`.
         diffs: Paths whose changes to give (each cut at `working.MAX_FILE_DIFF_LINES` lines).
+        entities: The extracted entities, to find where the packages are and so the renames.
 
     Returns:
         With groups: `ready` (nothing missing), `problems` (to solve with the user) and `left_out`
         (changed files in no group: they stay uncommitted). With diffs: `diffs` (path, status, diff,
         truncated). Otherwise: `files` (path, status, lines `added` and `removed`), `tasks` (the open
-        ones and those done but not committed yet: title, state, criteria, annotations, evidence) and
-        `guidelines`.
+        ones and those done but not committed yet: title, state, criteria, annotations, evidence),
+        `renames` (classes and functions renamed or moved since the last commit: `old`, `new`, `how`)
+        and `guidelines`.
     """
     top = await working.top_level(project_root)
     if top is None:
@@ -58,7 +64,9 @@ async def prepare_commit(notes: NoteStore, project_root: Path, groups: list[dict
             if file["status"] == "added" and file["path"] not in counts:
                 added = _line_count(top / file["path"])
             listed.append({**file, "added": added, "removed": removed})
-        return {"files": listed, "tasks": _tasks_to_commit(notes), "guidelines": commit_context(notes)}
+        renames = await detect_renames(top, project_root, source_roots(entities or {}), files)
+        return {"files": listed, "tasks": _tasks_to_commit(notes), "renames": renames,
+                "guidelines": commit_context(notes)}
     changed = {file["path"] for file in files}
     problems, seen = [], {}
     for number, group in enumerate(groups, start=1):
@@ -160,6 +168,31 @@ def after_commit(notes: NoteStore) -> dict:
         if plan_clean and plan["features"]:
             can_clean.append({"ref": plan["item"], "title": plan["title"]})
     return {"recorded": recorded, "pending": pending, "can_clean": can_clean}
+
+
+async def record_renames(notes: NoteStore, project_root: Path, entities: dict[str, dict],
+                         commits: list[str]) -> list[dict]:
+    """Record in the rename registry the renames and moves each commit made, against its parent.
+
+    Args:
+        notes: The store.
+        project_root: Root of the project.
+        entities: The extracted entities, to find where the packages are.
+        commits: Full hashes of the commits.
+
+    Returns:
+        What was recorded: `old`, `new`, `how` and `commit`.
+    """
+    top = await working.top_level(project_root)
+    if top is None:
+        return []
+    roots, recorded = source_roots(entities), []
+    for commit_hash in commits:
+        files = await working.files_of_commit(top, commit_hash)
+        renames = await detect_renames(top, project_root, roots, files, older=f"{commit_hash}^", newer=commit_hash)
+        notes.add_renames(commit_hash, renames)
+        recorded.extend({**entry, "commit": commit_hash} for entry in renames)
+    return recorded
 
 
 async def merge_ready(notes: NoteStore, project_root: Path) -> dict | None:
@@ -268,8 +301,9 @@ def clean_done(notes: NoteStore, items: list[str]) -> dict:
     return {"deleted": deleted, "refused": refused, "pending": report["pending"]}
 
 
-async def review_outside_commits(notes: NoteStore, project_root: Path) -> list[dict]:
-    """Turn every new commit not made by the flow into a task of the Reviews plan.
+async def review_outside_commits(notes: NoteStore, project_root: Path, entities: dict[str, dict] | None = None
+                                 ) -> list[dict]:
+    """Turn every new commit not made by the flow into a task of the Reviews plan, and record its renames.
 
     The first time, only the current commit is remembered: the history before is not reviewed.
     While the flow is committing, nothing is done (its commits are recorded right after).
@@ -277,6 +311,7 @@ async def review_outside_commits(notes: NoteStore, project_root: Path) -> list[d
     Args:
         notes: The store, holding the sync marker (`last_commit`, `last_check`).
         project_root: Root of the project.
+        entities: The extracted entities, to find where the packages are (for the renames).
 
     Returns:
         The review tasks added.
@@ -298,6 +333,7 @@ async def review_outside_commits(notes: NoteStore, project_root: Path) -> list[d
             detail = (f"Commit {found.short} by {found.author}, {found.date}: {found.subject}\n"
                       f"{found.body}\n\nFiles: {', '.join(files)}").replace("\n\n\n", "\n\n")
             added.append(notes.add_review(f"Review commit {found.short}: {found.subject}", detail))
+            await record_renames(notes, project_root, entities or {}, [found.hash])
     if current and not notes.committing:
         notes.set_meta("last_commit", current)
         notes.set_meta("last_check", now)

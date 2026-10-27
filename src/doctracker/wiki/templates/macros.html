@@ -58,3 +58,23 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   {{ caller() }}
 </details>
 {%- endmacro %}
+
+{# The earlier names of a renamed or moved entity (from the rename registry), newest first. Each commit
+   links to the git page and shows its message on hover, in the same tooltip as the git page. #}
+{% macro previous_names(earlier) -%}
+{% macro earlier_name(entry) -%}
+<code class="chip">{{ entry.path }}</code> — {{ entry.how }} in
+<a class="commit-chip" href="/git?commit={{ entry.commit }}" data-subject="{{ entry.subject }}"
+   data-author="{{ entry.author }}" data-date="{{ entry.date_local }}">{{ entry.short }}</a><template
+   class="commit-chip-body">{{ entry.body_html | safe }}</template>, {{ entry.date_local }}
+{%- endmacro %}
+{% if earlier | length == 1 %}
+<p class="previous-names">Previously, {{ earlier_name(earlier[0]) }}</p>
+{% elif earlier %}
+<div class="previous-names">
+  <p>Previously:</p>
+  <ul>{% for entry in earlier %}<li>{{ earlier_name(entry) }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{%- endmacro %}
+

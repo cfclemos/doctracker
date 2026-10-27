@@ -6,6 +6,7 @@ instead of results. The index also holds the notes and planner items: the search
 modes keep only the code's entities, `recall` returns everything.
 """
 
+import re
 from dataclasses import dataclass, field
 
 from doctracker.embeddings.service import EmbeddingService
@@ -100,6 +101,7 @@ class SearchOutcome:
         offset: Position of the first result of the page in the whole list (0 is the best).
         ready: False when the embedding backend is still being prepared (semantic and hybrid only).
         status: Embedding backend status (progress, error) when `ready` is False.
+        renamed: The old names the query held, searched with their current name too (`old`, `new`, `commit`).
     """
 
     results: list[tuple[str, float]] = field(default_factory=list)
@@ -107,6 +109,7 @@ class SearchOutcome:
     offset: int = 0
     ready: bool = True
     status: dict | None = None
+    renamed: list[dict] = field(default_factory=list)
 
 
 class SearchEngine:
@@ -144,6 +147,7 @@ class SearchEngine:
         Returns:
             The page and the total, or the backend progress when it is not ready yet.
         """
+        query, renamed = self.with_current_names(query)
         if mode == "bm25":
             ranked = self.bm25(query)
         elif mode in ("semantic", "hybrid"):
@@ -154,7 +158,29 @@ class SearchEngine:
             ranked = self.text(query)
         ranked = [(path, score) for path, score in ranked if path in self.state.entities]
         offset = max(0, offset)
-        return SearchOutcome(ranked[offset : offset + limit], total=len(ranked), offset=offset)
+        return SearchOutcome(ranked[offset : offset + limit], total=len(ranked), offset=offset, renamed=renamed)
+
+    def with_current_names(self, query: str) -> tuple[str, list[dict]]:
+        """The query with the current name of every old name it holds, so a search by an old name still finds.
+
+        An old name counts when the query holds its full path, or its last part as a whole word while
+        no entity has that name any more (so `start` finds `cli.serve` once `cli.start` was renamed).
+
+        Args:
+            query: Text to search for.
+
+        Returns:
+            The query, extended with the current names, and those renames: `old`, `new` and `commit`.
+        """
+        names = {path.rsplit(".", 1)[-1] for path in self.state.entities}
+        renamed = []
+        for row in self.notes.renames():
+            old, short = row["old"], row["old"].rsplit(".", 1)[-1]
+            held = old in query or (short not in names and re.search(rf"\b{re.escape(short)}\b", query))
+            new = self.notes.current_name(old)
+            if held and new in self.state.entities and new not in query and all(r["new"] != new for r in renamed):
+                renamed.append({"old": old, "new": new, "commit": row["commit"]})
+        return " ".join([query, *(entry["new"] for entry in renamed)]), renamed
 
     def text(self, query: str) -> list[tuple[str, float]]:
         """Find the text as typed: exact name, name prefix, name, path or description containing it.
@@ -252,8 +278,10 @@ class SearchEngine:
         Returns:
             `mode` (`hybrid` or `bm25`) and one list per group of `RECALL_GROUPS`, in that
             order, each with at most `RECALL_LIMIT` results: `ref`, `kind`, `title`, `score`, and
-            for planner items `state` and `plan` (the id of their plan), for archived work `commits`.
+            for planner items `state` and `plan` (the id of their plan), for archived work `commits`;
+            `renamed` (old, new, commit) when the query held old names, searched with the current ones too.
         """
+        query, renamed = self.with_current_names(query)
         ranked = await self.hybrid(query, wait)
         mode = "hybrid"
         if ranked is None:
@@ -273,7 +301,8 @@ class SearchEngine:
                 groups["code"].append(
                     {"ref": key, "kind": entity["kind"], "title": summary(entity), "score": round(score, 4)})
         groups["planning"].sort(key=lambda result: result.get("state") == "done")
-        return {"mode": mode, **{group: results[:RECALL_LIMIT] for group, results in groups.items()}}
+        return {"mode": mode, **({"renamed": renamed} if renamed else {}),
+                **{group: results[:RECALL_LIMIT] for group, results in groups.items()}}
 
     async def similar_notes(self, type: str, statement: str, why: str = "", entities: list[str] | None = None,
                             wait: float = RECALL_WAIT_SECONDS) -> list[dict] | None:
@@ -351,7 +380,8 @@ class SearchEngine:
 
         Returns:
             `status` (`ready` or `preparing`) and either the page (`results`: path, kind,
-            score, summary; `total`, `offset`) or the embedding backend status.
+            score, summary; `total`, `offset`; `renamed` when the query held old names) or the
+            embedding backend status.
         """
         if not outcome.ready:
             return {"status": "preparing", **(outcome.status or {})}
@@ -361,4 +391,5 @@ class SearchEngine:
             if entity is None:
                 continue
             results.append({"path": path, "kind": entity["kind"], "score": round(score, 4), "summary": summary(entity)})
-        return {"status": "ready", "total": outcome.total, "offset": outcome.offset, "results": results}
+        return {"status": "ready", "total": outcome.total, "offset": outcome.offset, "results": results,
+                **({"renamed": outcome.renamed} if outcome.renamed else {})}

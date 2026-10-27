@@ -7,8 +7,10 @@ from doctracker.history.git_log import (
     commit_diff,
     git_dir,
     read_branch_graph,
+    read_commit,
     read_history,
 )
 
-__all__ = ["Commit", "DiffLine", "FileDiff", "commit_diff", "git_dir", "read_branch_graph", "read_history"]
+__all__ = ["Commit", "DiffLine", "FileDiff", "commit_diff", "git_dir", "read_branch_graph", "read_commit",
+           "read_history"]
 """Public API of the history package."""

@@ -568,3 +568,35 @@ function reopenTypes(root) {
 document.addEventListener("DOMContentLoaded", () => reopenTypes(document));
 document.addEventListener("htmx:afterSwap", () => reopenTypes(document));
 document.addEventListener("htmx:oobAfterSwap", () => reopenTypes(document));
+
+// A commit named on a page (e.g. the earlier names of an entity) shows its message on hover, in the same
+// tooltip as the git page; it stays open while the mouse is on it, so a long message can be read.
+const commitTip = document.createElement("div");
+commitTip.className = "graph-tooltip commit-tooltip";
+commitTip.hidden = true;
+document.body.append(commitTip);
+let commitTipHiding = 0;
+const hideCommitTip = () => { commitTipHiding = setTimeout(() => { commitTip.hidden = true; }, 250); };
+document.addEventListener("mouseover", (event) => {
+  const chip = event.target.closest(".commit-chip");
+  if (!chip) return;
+  clearTimeout(commitTipHiding);
+  const text = (value) => { const span = document.createElement("span"); span.textContent = value; return span.innerHTML; };
+  const body = chip.nextElementSibling?.matches("template.commit-chip-body") ? chip.nextElementSibling.innerHTML.trim() : "";
+  commitTip.innerHTML = `
+    <span class="graph-tooltip-role">${text(chip.textContent)}</span>
+    <strong>${text(chip.dataset.subject || "Commit no longer in git")}</strong>
+    ${chip.dataset.author ? `<span class="graph-tooltip-text">${text(chip.dataset.author)} · ${text(chip.dataset.date)}</span>` : ""}
+    ${body ? `<div class="graph-tooltip-body">${body}</div>` : ""}`;
+  const box = chip.getBoundingClientRect();
+  commitTip.style.left = `${box.left}px`;
+  commitTip.style.top = `${box.bottom + 4}px`;
+  commitTip.scrollTop = 0;
+  commitTip.hidden = false;
+});
+document.addEventListener("mouseout", (event) => {
+  if (event.target.closest(".commit-chip")) hideCommitTip();
+});
+commitTip.addEventListener("mouseenter", () => clearTimeout(commitTipHiding));
+commitTip.addEventListener("mouseleave", hideCommitTip);
+

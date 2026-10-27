@@ -164,6 +164,36 @@ async def merge_branch(top: Path, branch: str, into: str) -> tuple[str | None, s
     return await head(top), ""
 
 
+async def file_at(top: Path, commit: str, path: str) -> str | None:
+    """A file's content in a commit (e.g. `HEAD`); None when it did not exist there.
+
+    Args:
+        top: Top folder of the repository.
+        commit: The commit.
+        path: The file, relative to the top folder.
+    """
+    code, output, _ = await _run(top, "show", f"{commit}:{path}")
+    return output if code == 0 else None
+
+
+async def files_of_commit(top: Path, commit: str) -> list[dict]:
+    """The files a commit changed, as `changed_files` gives them (renamed files with `old_path`).
+
+    Args:
+        top: Top folder of the repository; the paths are relative to it.
+        commit: The commit.
+    """
+    code, output, _ = await _run(top, "show", "--name-status", "-M", "--format=", commit)
+    files = []
+    for line in output.splitlines() if code == 0 else []:
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = STATUS_NAMES.get(parts[0][:1], "modified")
+        files.append({"path": parts[-1], "status": status, **({"old_path": parts[1]} if len(parts) == 3 else {})})
+    return files
+
+
 async def head(top: Path) -> str:
     """The hash of the checked-out commit; empty in a repository without commits."""
     code, output, _ = await _run(top, "rev-parse", "HEAD")

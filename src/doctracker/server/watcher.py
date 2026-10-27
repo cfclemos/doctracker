@@ -131,6 +131,6 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
             elif git != previous_git and previous_git is not None:
                 state.notify()
             if git != previous_git:  # also at startup: the commits made while the server was off
-                await review_outside_commits(notes, project_root)
+                await review_outside_commits(notes, project_root, state.entities)
             previous_code, previous_git = code, git
             await asyncio.sleep(config.watch_interval)
