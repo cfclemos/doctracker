@@ -334,15 +334,17 @@ Returns:
         """Get the full technical reference of one entity.
 
         Args:
-            path: Qualified path of the entity (e.g. `mypkg.api.get_weather`).
+            path: Qualified path of the entity (e.g. `mypkg.api.get_weather`); an earlier name of a
+                renamed or moved entity gives the entity it is now.
 
         Returns:
-            Signature data, parameters, docstring sections, location in the code and members.
+            Signature data, parameters, docstring sections, location in the code and members, and
+            `previous_names` (earlier paths, newest first: path, how, commit, created).
         """
-        entity = state.entities.get(path)
+        entity = state.entities.get(path) or state.entities.get(search.notes.current_name(path))
         if entity is None:
             raise ToolError(f"Unknown entity: {path}")
-        return entity
+        return {**entity, "previous_names": search.notes.previous_names(entity["path"])}
 
     @mcp.tool()
     def status() -> dict:
