@@ -1,9 +1,9 @@
 """Claude Code integration: the hooks that give doctracker's context to the agent, and their settings.
 
 `doctracker init` and `doctracker start` write the hooks into the project's
-`.claude/settings.local.json` (local, never committed). Each hook runs `doctracker hook <event>`
-with the server's address, which reads the event Claude Code sends, asks the running server for the
-context of that moment (`/hooks/context/...`) and answers it as `additionalContext`. When a session
+`.claude/settings.local.json` and the MCP server into `.mcp.json` (both local, never committed).
+Each hook runs `doctracker hook <event>` with the server's address, which reads the event Claude
+Code sends, asks the running server for the context of that moment (`/hooks/context/...`) and answers it as `additionalContext`. When a session
 opens and the server does not answer, the hook starts it and waits (`doctracker.integrations.autostart`).
 """
 
@@ -16,13 +16,19 @@ from pathlib import Path
 import httpx2
 
 from doctracker.config import NOTES_DATABASE_PATH
-from doctracker.integrations import NOT_STARTED, RECORD_THE_PLAN, SERVER_DOWN
+from doctracker.integrations import NOT_STARTED, RECORD_THE_PLAN, SERVER_DOWN, exclude_from_git
 from doctracker.integrations.autostart import START_TIMEOUT, ensure_server
 from doctracker.notes import NoteStore
 from doctracker.notes.context import session_context
 
 SETTINGS_PATH = Path(".claude") / "settings.local.json"
 """Claude Code settings of the project that stay on this machine."""
+
+MCP_PATH = Path(".mcp.json")
+"""The project's MCP servers for Claude Code."""
+
+MCP_NAME = "doctracker"
+"""The name of doctracker's server in `.mcp.json` (its tools are `mcp__doctracker__...`)."""
 
 HOOKS = {
     "SessionStart": "",
@@ -122,10 +128,11 @@ def hook_command(event: str, base_url: str) -> str:
 
 
 def write_settings(project_root: Path, base_url: str) -> Path:
-    """Write doctracker's hooks into `.claude/settings.local.json` and switch Claude Code's own memory off.
+    """Write doctracker's hooks into `.claude/settings.local.json`, approve its MCP server, turn auto memory off.
 
     The file's other settings and hooks are kept; doctracker's own hooks (those running
     `doctracker hook`) are replaced, so writing again only refreshes them (e.g. after a port change).
+    The server of `.mcp.json` is listed in `enabledMcpjsonServers`, so Claude Code does not ask for it.
 
     Args:
         project_root: Root of the project.
@@ -143,9 +150,33 @@ def write_settings(project_root: Path, base_url: str) -> Path:
         ours = {"hooks": [{"type": "command", "command": hook_command(event, base_url), "timeout": timeout}]}
         groups.append({"matcher": matcher, **ours} if matcher else ours)
         hooks[event] = groups
+    enabled = settings.setdefault("enabledMcpjsonServers", [])
+    if MCP_NAME not in enabled:
+        enabled.append(MCP_NAME)
     settings["autoMemoryEnabled"] = False
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return file
+
+
+def write_mcp_config(project_root: Path, base_url: str) -> Path:
+    """Write doctracker's MCP server into `.mcp.json` and keep the file out of git.
+
+    The file's other servers are kept; writing again only refreshes the address. The file is added
+    to `.git/info/exclude`, which does not apply when the project already tracks it.
+
+    Args:
+        project_root: Root of the project.
+        base_url: The doctracker server, e.g. `http://127.0.0.1:8765`.
+
+    Returns:
+        The MCP config file.
+    """
+    file = project_root / MCP_PATH
+    config = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {}
+    config.setdefault("mcpServers", {})[MCP_NAME] = {"type": "http", "url": f"{base_url}/mcp"}
+    file.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    exclude_from_git(project_root, MCP_PATH.as_posix())
     return file
 
 

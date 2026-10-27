@@ -140,7 +140,7 @@ def _initialize(project_root: Path) -> None:
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:
-    """Write the Claude Code hooks and, when OpenCode is used, its plugin; print where they went.
+    """Write the Claude Code hooks and MCP server and, when OpenCode is used, its plugin; print where they went.
 
     Args:
         project_root: Root of the project.
@@ -148,6 +148,8 @@ def _write_integrations(project_root: Path, config: Config) -> None:
     """
     settings = claude_code.write_settings(project_root, _base_url(config))
     click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
+    mcp_config = claude_code.write_mcp_config(project_root, _base_url(config))
+    click.echo(f"Claude Code MCP server: {mcp_config.relative_to(project_root).as_posix()}")
     if opencode.uses_opencode(project_root):
         plugin = opencode.write_plugin(project_root, _base_url(config))
         click.echo(f"OpenCode plugin: {plugin.relative_to(project_root).as_posix()}")

@@ -1,4 +1,6 @@
-"""Integrations with the agents that use doctracker (Claude Code, OpenCode), and the texts they share."""
+"""Integrations with the agents that use doctracker (Claude Code, OpenCode), and what they share."""
+
+from pathlib import Path
 
 SERVER_DOWN = ("doctracker is not running at {url}, so its plans, guidelines and memory are not available. "
                "Ask the user whether to start it (`doctracker start` in the project) or to work with local "
@@ -14,3 +16,21 @@ RECORD_THE_PLAN = ("Plans are kept in doctracker's Planner: once the user approv
                    "(create_plan, or add_feature / add_task to an open plan) with its requirements, the decisions "
                    "taken with the user and the criteria of each task.")
 """Given when plan mode ends."""
+
+
+def exclude_from_git(project_root: Path, path: str) -> None:
+    """Add a path to `.git/info/exclude` when the project is the top of a git repository and it is not there yet.
+
+    Args:
+        project_root: Root of the project.
+        path: The file, relative to the root, e.g. `.mcp.json`.
+    """
+    git = project_root / ".git"
+    if not git.is_dir():
+        return
+    exclude = git / "info" / "exclude"
+    lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.exists() else []
+    if f"/{path}" in lines:
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("\n".join([*lines, f"/{path}"]) + "\n", encoding="utf-8")

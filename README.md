@@ -89,27 +89,14 @@ stop it with `Ctrl+C`.
 ## Connecting an agent
 
 The MCP server uses the Streamable HTTP transport at `http://127.0.0.1:8765/mcp`.
-Start the server before the agent.
 
-**Claude Code** — add a `.mcp.json` file at the root of your project:
-
-```json
-{
-  "mcpServers": {
-    "doctracker": { "type": "http", "url": "http://127.0.0.1:8765/mcp" }
-  }
-}
-```
-
-or register it from the terminal:
-
-```bash
-claude mcp add --transport http doctracker http://127.0.0.1:8765/mcp
-```
-
-`init` and `start` also write doctracker's hooks into `.claude/settings.local.json`
-(your other settings are kept) and switch Claude Code's own auto memory off for
-the project, so notes are kept only in doctracker.
+**Claude Code** — nothing to configure. `init` and `start` add the server to the
+project's `.mcp.json` (other servers are kept; the file is added to
+`.git/info/exclude` unless the project already tracks it) and write doctracker's
+hooks into `.claude/settings.local.json` (your other settings are kept). There the
+server is pre-approved, and Claude Code's own auto memory is switched off for the
+project, so notes are kept only in doctracker. When a session opens and the server
+is not running, the session hook starts it.
 
 **OpenCode** (version 2) — nothing to configure. When OpenCode is installed (or the
 project has an `.opencode/` folder), `init` and `start` write the plugin

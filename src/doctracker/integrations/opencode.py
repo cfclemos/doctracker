@@ -10,7 +10,7 @@ import json
 import shutil
 from pathlib import Path
 
-from doctracker.integrations import RECORD_THE_PLAN, SERVER_DOWN
+from doctracker.integrations import RECORD_THE_PLAN, SERVER_DOWN, exclude_from_git
 
 PLUGIN_PATH = Path(".opencode") / "plugins" / "doctracker.js"
 """Where OpenCode loads the project's plugin from."""
@@ -43,18 +43,5 @@ def write_plugin(project_root: Path, base_url: str) -> Path:
     file = project_root / PLUGIN_PATH
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(text, encoding="utf-8")
-    _exclude(project_root, PLUGIN_PATH.as_posix())
+    exclude_from_git(project_root, PLUGIN_PATH.as_posix())
     return file
-
-
-def _exclude(project_root: Path, path: str) -> None:
-    """Add a path to `.git/info/exclude` when the project is the top of a git repository and it is not there yet."""
-    git = project_root / ".git"
-    if not git.is_dir():
-        return
-    exclude = git / "info" / "exclude"
-    lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.exists() else []
-    if f"/{path}" in lines:
-        return
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    exclude.write_text("\n".join([*lines, f"/{path}"]) + "\n", encoding="utf-8")
