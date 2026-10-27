@@ -125,6 +125,45 @@ async def commit_files(top: Path, files: list[str], message: str) -> tuple[str |
     return output.strip(), ""
 
 
+async def current_branch(top: Path) -> str:
+    """The checked-out branch; empty when HEAD is detached."""
+    code, output, _ = await _run(top, "branch", "--show-current")
+    return output.strip() if code == 0 else ""
+
+
+async def main_branch(top: Path) -> str:
+    """The branch work is merged into: `main`, or `master` in older repositories; empty when neither exists."""
+    for name in ("main", "master"):
+        code, _, _ = await _run(top, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}")
+        if code == 0:
+            return name
+    return ""
+
+
+async def merge_branch(top: Path, branch: str, into: str) -> tuple[str | None, str]:
+    """Merge a branch into another with a merge commit (`--no-ff`), leaving `into` checked out.
+
+    On a conflict the merge is aborted and the branch checked out again, so nothing is left half done.
+
+    Args:
+        top: Top folder of the repository.
+        branch: The branch whose work is merged.
+        into: The branch that receives it, e.g. `main`.
+
+    Returns:
+        The merge commit's full hash and an empty error, or `None` and what git said.
+    """
+    code, _, errors = await _run(top, "checkout", "-q", into)
+    if code != 0:
+        return None, errors.strip()
+    code, output, errors = await _run(top, "merge", "--no-ff", "-m", f"Merge branch '{branch}'", branch)
+    if code != 0:
+        await _run(top, "merge", "--abort")
+        await _run(top, "checkout", "-q", branch)
+        return None, (errors.strip() or output.strip())
+    return await head(top), ""
+
+
 async def head(top: Path) -> str:
     """The hash of the checked-out commit; empty in a repository without commits."""
     code, output, _ = await _run(top, "rev-parse", "HEAD")

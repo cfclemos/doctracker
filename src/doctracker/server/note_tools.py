@@ -387,16 +387,31 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
 
     @mcp.tool()
     @refusals_reported
-    def after_commit() -> dict:
+    async def after_commit() -> dict:
         """Post-commit: record the commits on their tasks, then show what is pending and what can be cleaned.
 
         Show the user the pending tasks (the next steps) and the done items that can be deleted; delete
-        only what the user confirms, with clean_done.
+        only what the user confirms, with clean_done. When `merge` is given, the work planned for this
+        branch is complete: ask the user whether to merge it into main (merge_branch).
 
         Returns:
-            `recorded`, `pending` (ref, title, state) and `can_clean` (ref, title).
+            `recorded`, `pending` (ref, title, state), `can_clean` (ref, title) and `merge` (branch, into)
+            or null.
         """
-        return commit_flow.after_commit(notes)
+        return {**commit_flow.after_commit(notes), "merge": await commit_flow.merge_ready(notes, project_root)}
+
+    @mcp.tool()
+    @refusals_reported
+    async def merge_branch() -> dict:
+        """Merge the checked-out branch into main (--no-ff), after the user confirmed it in the post-commit.
+
+        On a conflict nothing is merged: the merge is aborted, the branch stays checked out, and git's
+        message comes back to show the user.
+
+        Returns:
+            `merged` (branch, into, hash), or `error`.
+        """
+        return await commit_flow.merge(notes, project_root)
 
     @mcp.tool()
     @refusals_reported
