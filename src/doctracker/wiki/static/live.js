@@ -1,13 +1,25 @@
 // Live updates: the server sends a "changed" event when the code or the notes change,
 // and every element listening to "docs-changed" reloads itself through htmx.
 // While a modal is open (something is being filled in), the reload waits until it closes.
+// When the connection comes back after dropping (e.g. the server restarted), the page reloads too:
+// changes made while it was down were never announced to it.
 const events = new EventSource("/events");
 let reloadWaiting = false;
 let ownChangeUntil = 0;  // a change this page just sent: its own answer already shows it
-events.addEventListener("changed", () => {
-  if (Date.now() < ownChangeUntil) return;
+let dropped = false;  // the connection dropped since it last opened
+function reloadContent() {
   if (document.querySelector("dialog[open]")) reloadWaiting = true;
   else htmx.trigger(document.body, "docs-changed");
+}
+events.addEventListener("changed", () => {
+  if (Date.now() < ownChangeUntil) return;
+  reloadContent();
+});
+events.addEventListener("error", () => { dropped = true; });
+events.addEventListener("open", () => {
+  if (!dropped) return;
+  dropped = false;
+  reloadContent();
 });
 document.addEventListener("htmx:beforeRequest", (event) => {
   if (event.detail.requestConfig?.verb === "post" && event.detail.requestConfig.path?.startsWith("/notes/")) {
@@ -20,6 +32,27 @@ document.addEventListener("close", (event) => {
     htmx.trigger(document.body, "docs-changed");
   }
 }, true);  // "close" does not bubble: listen while it goes down
+
+// The row of plan cards (newest first) keeps where the user scrolled to when a reload puts it back, and
+// tells the New plan button beside it how tall its scrollbar is (none when the cards fit), so the button
+// stays as tall as the cards and the scrollbar runs under the cards only.
+let planCardsLeft = 0;  // scroll position of the row, kept across reloads of the same page
+function measurePlanCards() {
+  for (const row of document.querySelectorAll(".plan-cards-row")) {
+    row.parentElement.style.setProperty("--plan-scrollbar", `${row.offsetHeight - row.clientHeight}px`);
+  }
+}
+function scrollPlanCards() {
+  for (const row of document.querySelectorAll(".plan-cards-row:not([data-scrolled])")) {
+    row.dataset.scrolled = "1";
+    row.scrollLeft = planCardsLeft;
+    row.addEventListener("scroll", () => { planCardsLeft = row.scrollLeft; });
+  }
+  measurePlanCards();
+}
+document.addEventListener("DOMContentLoaded", scrollPlanCards);
+document.addEventListener("htmx:afterSettle", scrollPlanCards);
+window.addEventListener("resize", measurePlanCards);
 
 // Modals of the notes page: their content is loaded into the dialog, which then opens; × closes it.
 document.addEventListener("htmx:afterSwap", (event) => {
