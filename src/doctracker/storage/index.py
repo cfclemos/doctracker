@@ -1,8 +1,9 @@
 """Search indexes kept on disk in one SQLite database: BM25 (FTS5) and embedding vectors.
 
 Nothing stays in memory between searches: every search opens the database, brings
-the indexes in line with the current entities (only new or changed texts are
-processed, in one transaction) and runs the query.
+the indexes in line with the current documents (only new or changed texts are
+processed, in one transaction) and runs the query. The documents are the code's
+entities (by path) and the notes and planner items (by `note:<id>`, `task:<id>`...).
 
 Vector similarity runs inside SQLite with the `sqlite-vec` extension when this
 Python allows loading extensions; otherwise the vectors are read and compared with numpy.
@@ -52,6 +53,18 @@ def entity_text(entity: dict) -> str:
     """
     text = f"{entity['kind']} {entity['path']}\n{signature(entity)}\n{description_text(entity)}"
     return text[:MAX_TEXT_CHARS]
+
+
+def entity_documents(entities: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """The searchable documents of the code: each entity's name and text, by path.
+
+    Args:
+        entities: Extracted entities, by path.
+
+    Returns:
+        `{path: (name, text)}`, ready for `SearchIndex.update_texts`.
+    """
+    return {path: (entity["name"], entity_text(entity)) for path, entity in entities.items()}
 
 
 def tokenize(text: str) -> list[str]:
@@ -110,16 +123,16 @@ class SearchIndex:
         with self._connect() as (connection, _):
             return connection.execute("SELECT count(*) FROM vectors").fetchone()[0]
 
-    def update_texts(self, entities: dict[str, dict]) -> None:
-        """Bring the stored texts and the BM25 index in line with `entities`, in one transaction.
+    def update_texts(self, documents: dict[str, tuple[str, str]]) -> None:
+        """Bring the stored texts and the BM25 index in line with `documents`, in one transaction.
 
-        New or changed entities are re-indexed and lose their vector (made again on
-        the next semantic search); removed entities are deleted everywhere.
+        New or changed documents are re-indexed and lose their vector (made again on
+        the next semantic search); removed documents are deleted everywhere.
 
         Args:
-            entities: Current entities, by path.
+            documents: Every current document, `{key: (name, text)}`: the entities and the notes.
         """
-        texts = {path: entity_text(entity) for path, entity in entities.items()}
+        texts = {path: text[:MAX_TEXT_CHARS] for path, (_, text) in documents.items()}
         hashes = {path: _hash(text) for path, text in texts.items()}
         with self._connect() as (connection, _):
             stored = dict(connection.execute("SELECT path, hash FROM documents"))
@@ -133,13 +146,12 @@ class SearchIndex:
                     connection.execute("DELETE FROM bm25 WHERE path = ?", (path,))
                     connection.execute("DELETE FROM vectors WHERE path = ?", (path,))
                 for path in changed:
-                    entity = entities[path]
                     connection.execute(
                         "INSERT INTO documents (path, hash, text) VALUES (?, ?, ?)", (path, hashes[path], texts[path])
                     )
                     connection.execute(
                         "INSERT INTO bm25 (path, name, body) VALUES (?, ?, ?)",
-                        (path, " ".join(tokenize(entity["name"])), " ".join(tokenize(texts[path]))),
+                        (path, " ".join(tokenize(documents[path][0])), " ".join(tokenize(texts[path]))),
                     )
 
     def search_bm25(self, query: str, limit: int = -1) -> list[tuple[str, float]]:

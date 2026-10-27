@@ -1,15 +1,6 @@
 {% import "macros.html" as ui %}
-{% if query.strip() %}
-<ul class="search-options" role="listbox">
-  {% if preparing %}
-  {# Semantic or hybrid search is getting ready (download, start or indexing): show the progress. #}
-  <li class="search-empty">
-    Preparing the embedding model: <strong>{{ preparing.state }}</strong>
-    {% if preparing.error %}<br><span class="search-error">{{ preparing.error }}</span>{% endif %}
-    <br>Type again in a moment.
-  </li>
-  {% else %}
-  {% for item in results %}
+{# One code entity in the results. #}
+{% macro code_row(item) %}
   <li role="option" aria-selected="false">
     <a class="search-link" {{ ui.nav(item.path) }}>
       {{ ui.icon(item.role, item.symbol) }}
@@ -26,6 +17,42 @@
       </span>
     </a>
   </li>
+{% endmacro %}
+{% if query.strip() %}
+<ul class="search-options" role="listbox">
+  {% if preparing %}
+  {# Semantic or hybrid search is getting ready (download, start or indexing): show the progress. #}
+  <li class="search-empty">
+    Preparing the embedding model: <strong>{{ preparing.state }}</strong>
+    {% if preparing.error %}<br><span class="search-error">{{ preparing.error }}</span>{% endif %}
+    <br>Type again in a moment.
+  </li>
+  {% elif groups is defined %}
+  {# The `all` mode: what recall gives the agents, group by group (open planning first). #}
+  {% for group in groups %}
+  <li class="search-group">{{ group.name }}</li>
+  {% for item in group.rows %}
+  {% if group.name == "code" %}{{ code_row(item) }}{% else %}
+  <li role="option" aria-selected="false">
+    <a class="search-link" {{ ui.nav_url(item.url) }}>
+      <span class="search-text">
+        <span class="search-name">{{ item.title }}</span>
+        <span class="search-path">{{ item.ref }}</span>
+      </span>
+      <span class="search-meta">
+        <span class="search-kind">{{ item.kind }}{% if item.state %} · {{ item.state }}{% endif %}</span>
+        <span class="search-score">{{ "%.3f" | format(item.score) }}</span>
+      </span>
+    </a>
+  </li>
+  {% endif %}
+  {% endfor %}
+  {% else %}
+  <li class="search-empty">No results</li>
+  {% endfor %}
+  {% else %}
+  {% for item in results %}
+  {{ code_row(item) }}
   {% else %}
   <li class="search-empty">No results</li>
   {% endfor %}
