@@ -1,11 +1,14 @@
-"""Command line interface: `doctracker init` and `doctracker start`."""
+"""Command line interface: `doctracker init`, `doctracker start` and `doctracker hook` (called by Claude Code)."""
 
+import json
+import sys
 from pathlib import Path
 
 import click
 
 from doctracker import __version__
 from doctracker.config import CONFIG_PATH, Config, detect_packages, load_config, write_config
+from doctracker.integrations import claude_code
 
 
 @click.group()
@@ -60,14 +63,43 @@ def start(host: str | None, port: int | None) -> None:
         config.port = port
     if not config.packages:
         raise click.ClickException(f"No packages to document. Add them to {CONFIG_PATH.as_posix()}.")
-    scheme = "https" if config.ssl_certfile else "http"
-    click.echo(f"Wiki: {scheme}://{config.host}:{config.port}/")
-    click.echo(f"MCP:  {scheme}://{config.host}:{config.port}/mcp")
+    click.echo(f"Hooks: {claude_code.write_settings(project_root).relative_to(project_root).as_posix()}")
+    click.echo(f"Wiki: {_base_url(config)}/")
+    click.echo(f"MCP:  {_base_url(config)}/mcp")
     run(project_root, config)
 
 
+@main.command(hidden=True)
+@click.argument("event")
+def hook(event: str) -> None:
+    """Answer a Claude Code hook: read its event on stdin, print the context of that moment.
+
+    \f
+    Never fails: a hook that cannot answer prints nothing, so the agent goes on.
+
+    Args:
+        event: The Claude Code event the hook was set for (the event's own name is read from stdin).
+    """
+    try:
+        received = json.loads(sys.stdin.read() or "{}")
+        received.setdefault("hook_event_name", event)
+        project_root = Path(received.get("cwd") or Path.cwd())
+        if not (project_root / CONFIG_PATH).exists():
+            return
+        reply = claude_code.answer(received, _base_url(load_config(project_root)))
+    except (OSError, ValueError):
+        return
+    if reply:
+        click.echo(json.dumps(reply))
+
+
+def _base_url(config: Config) -> str:
+    """The address of the server, e.g. `http://127.0.0.1:8765`."""
+    return f"{'https' if config.ssl_certfile else 'http'}://{config.host}:{config.port}"
+
+
 def _initialize(project_root: Path) -> None:
-    """Write a default configuration with the packages found in the project.
+    """Write a default configuration with the packages found in the project, and the Claude Code hooks.
 
     Args:
         project_root: Root of the project to configure.
@@ -77,3 +109,5 @@ def _initialize(project_root: Path) -> None:
     write_config(project_root, config)
     found = ", ".join(config.packages) or "none (edit the file to add them)"
     click.echo(f"Created {CONFIG_PATH.as_posix()}. Packages: {found}")
+    settings = claude_code.write_settings(project_root)
+    click.echo(f"Wrote the Claude Code hooks to {settings.relative_to(project_root).as_posix()}.")

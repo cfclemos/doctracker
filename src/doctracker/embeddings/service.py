@@ -19,7 +19,6 @@ from doctracker.config import DATABASE_PATH, Config, models_dir
 from doctracker.embeddings import llama_cpp
 from doctracker.embeddings.downloads import download
 from doctracker.storage.index import SearchIndex
-from doctracker.server.state import DocState
 
 HUGGING_FACE = "https://huggingface.co"
 """Where `owner/repo/file.gguf` models are downloaded from."""
@@ -38,18 +37,18 @@ CONTEXT_TOKENS = "8192"
 
 
 class EmbeddingService:
-    """Prepares the embedding backend on demand, embeds texts and keeps the entity index up to date.
+    """Prepares the embedding backend on demand, embeds texts and keeps the search index up to date.
 
     Args:
         project_root: Root of the documented project.
         config: Project settings, shared with the rest of the server.
-        state: Extracted entities, shared with the rest of the server.
+        documents: Gives every searchable document, `{key: (name, text)}`: entities and notes.
 
     Attributes:
         project_root: Root of the documented project.
         config: Project settings; `config.embeddings` is read on every use, so changes apply right away.
-        state: Extracted entities, the source of the index.
-        index: BM25 and vector indexes of the entities, in `doc/sqlite/doctracker.db`.
+        documents: Source of the index.
+        index: BM25 and vector indexes of the documents, in `doc/sqlite/doctracker.db`.
         process: The managed llama-server, while it runs.
         build: The llama.cpp build in use, once one has started.
         ready: Whether texts can be embedded right now.
@@ -60,10 +59,11 @@ class EmbeddingService:
         _lock: Keeps index updates from running at the same time.
     """
 
-    def __init__(self, project_root: Path, config: Config, state: DocState) -> None:
+    def __init__(self, project_root: Path, config: Config,
+                 documents: Callable[[], dict[str, tuple[str, str]]]) -> None:
         self.project_root = project_root
         self.config = config
-        self.state = state
+        self.documents = documents
         self.index = SearchIndex(project_root / DATABASE_PATH)
         self.process: asyncio.subprocess.Process | None = None
         self.build: llama_cpp.Build | None = None
@@ -110,7 +110,7 @@ class EmbeddingService:
             "models_dir": str(self.models_dir),
             "server_running": self.process is not None and self.process.returncode is None,
             "indexed": self.index.count(),
-            "entities": len(self.state.entities),
+            "documents": len(self.documents()),
         }
 
     # Lifecycle -------------------------------------------------------------
@@ -318,10 +318,14 @@ class EmbeddingService:
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return vectors / np.where(norms == 0, 1, norms)
 
+    def update_texts(self) -> None:
+        """Bring the stored texts and the BM25 index in line with the current documents."""
+        self.index.update_texts(self.documents())
+
     async def update_index(self) -> None:
-        """Embed the entities that are new or changed since the last update."""
+        """Embed the documents that are new or changed since the last update."""
         async with self._lock:
-            self.index.update_texts(self.state.entities)
+            self.update_texts()
             await self.index.update_vectors(self.model_id, self.embed, self._index_progress)
 
     def _index_progress(self, done: int, total: int) -> None:

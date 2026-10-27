@@ -1,6 +1,7 @@
 """Frontend routes: wiki pages, source code on demand and live-update events."""
 
 import asyncio
+import inspect
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -14,8 +15,9 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import Config, set_config_value
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_history
-from doctracker.notes import NOTE_GROUPS, NOTE_TYPES, NoteStore, parse_item
-from doctracker.search import DEFAULT_LIMIT, MODES, WIKI_WAIT_SECONDS, SearchEngine
+from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
+                              NoteStore, parse_item)
+from doctracker.search import DEFAULT_LIMIT, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
 
@@ -157,7 +159,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         tab = params.get("tab", "") if params.get("tab", "") in ("planner", *NOTE_GROUPS) else "planner"
         note_type = params.get("type", "") if params.get("type", "") in NOTE_GROUPS.get(tab, ()) else ""
         note_status = params.get("status", "active") if params.get("status", "active") in ("active", "superseded", "") else "active"
-        context = {"tab": tab, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "note_type": note_type,
+        context = {"tab": tab, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "note_group_texts": NOTE_GROUP_TEXTS,
+                   "note_type_uses": NOTE_TYPE_USES, "not_a_note": NOT_A_NOTE, "note_type": note_type,
                    "note_status": note_status}
         if tab in NOTE_GROUPS:
             selected = params.get("selected", "")
@@ -239,7 +242,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         `kind` is plan, feature, task or note; `item` (e.g. `task:3`) or `note` (an id) opens an existing
         one; `plan_id` / `feature_id` / `type` prefill a new one.
         """
-        context = {"query": query, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "tab": query.get("tab", "planner"),
+        context = {"query": query, "note_types": NOTE_TYPES, "note_groups": NOTE_GROUPS, "moments": MOMENTS,
+                   "tab": query.get("tab", "planner"),
                    "note_type": query.get("filter_type", ""), "note_status": query.get("filter_status", "active"),
                    "plans": query.get("plans", ""), "selected": query.get("selected") or query.get("item", ""),
                    "panel": query.get("panel") == "1",
@@ -286,6 +290,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         def optional(name: str) -> str | None:
             return form.get(name)
 
+        def moments() -> list[str] | None:
+            # The moment checkboxes of a guideline; unticked boxes are not sent, so a marker says they were shown.
+            return submitted.getlist("moments") if form.get("moments_shown") else None
+
         actions = {
             "create_plan": lambda: notes.create_plan(form.get("title", ""), form.get("goal", ""), lines(form.get("requirements")),
                                                      lines(form.get("decisions")), lines(form.get("branches")), form.get("due", ""),
@@ -316,10 +324,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                                                            form.get("reason", ""), "wiki"),
             "remove_dependency": lambda: notes.remove_dependency(form.get("item", ""), form.get("depends_on", "")),
             "delete_item": lambda: notes.delete_item(form.get("item", "")),
-            "create_note": lambda: notes.create_note(form.get("type", ""), form.get("statement", ""), form.get("why", ""),
-                                                     lines(form.get("entities")), "wiki"),
+            "create_note": lambda: search.create_reviewed_note(form.get("type", ""), form.get("statement", ""),
+                                                               form.get("why", ""), lines(form.get("entities")),
+                                                               form.get("different_because", ""), "wiki", moments()),
             "update_note": lambda: notes.update_note(number("note_id"), optional("statement"), optional("why"),
-                                                     lines(optional("entities"))),
+                                                     lines(optional("entities")), moments()),
             "supersede_note": lambda: notes.supersede_note(number("note_id"), form.get("statement", ""), form.get("why", ""),
                                                            source="wiki"),
             "delete_note": lambda: notes.delete_note(number("note_id")),
@@ -330,11 +339,19 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         params = {"tab": form.get("tab", "planner"), "plans": form.get("plans", ""), "selected": form.get("selected", ""),
                   "type": form.get("filter_type", ""), "status": form.get("filter_status", "active")}
         error = ""
+        name = request.path_params["action"]
         try:
             result = action()
+            if inspect.isawaitable(result):
+                result = await result
+        except SimilarNotesFound as found:
+            # The review before adding: the modal stays open, filled in, with the similar notes listed.
+            context = form_context({**form, "kind": "note"})
+            reply = templates.get_template("notes_form.html").render(**context, similar=found.similar, filled=form,
+                                                                       filled_moments=submitted.getlist("moments"))
+            return HTMLResponse(reply, headers={"HX-Retarget": "#notes-dialog-body", "HX-Reswap": "innerHTML"})
         except ValueError as refused:
             error = str(refused)
-        name = request.path_params["action"]
         if name == "supersede_note" and not error:  # the panel goes on with the note that holds now
             params["selected"] = f"note:{result['id']}"
         if form.get("autosave") == "1":
@@ -399,7 +416,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         files = await commit_diff(project_root, commit_hash)
         if files is None:
             return HTMLResponse('<p class="empty">Commit not found.</p>', status_code=404)
-        html =templates.get_template("git_commit.html").render(files=files, hash=commit_hash)
+        html = templates.get_template("git_commit.html").render(files=files, hash=commit_hash,
+                                                                planned=notes.archived(commit_hash))
         return HTMLResponse(html)
 
     async def view_data(request: Request) -> Response:
@@ -433,12 +451,36 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         code = pages.source_code(project_root, entity)
         return HTMLResponse(templates.get_template("source.html").render(code=code))
 
+    def recall_groups(found: dict, query: str) -> list[dict]:
+        """Rows of the search box for the `all` mode: each `recall` group with results, in its order.
+
+        Planner items and notes link to the AGENT NOTES page with the item shown; code rows are
+        the same as in the other modes.
+        """
+        groups = []
+        for group in RECALL_GROUPS:
+            if not found[group]:
+                continue
+            if group == "code":
+                rows = pages.ranked_results(state, [(row["ref"], row["score"]) for row in found[group]], query)
+            elif group == "history":
+                rows = [{**row, "url": f"/git?commit={row['commits'][0]}" if row.get("commits") else "/git"}
+                        for row in found[group]]
+            else:
+                rows = [{**row, "url": (f"/notes?tab=planner&plans={row['plan']}&selected={row['ref']}"
+                                        if group == "planning" else f"/notes?tab={group}&selected={row['ref']}")}
+                        for row in found[group]]
+            groups.append({"name": group, "rows": rows})
+        return groups
+
     async def search_box(request: Request) -> Response:
         query = request.query_params.get("q", "")
         mode = request.query_params.get("mode", "default")
         page = int(request.query_params.get("page", "1")) if request.query_params.get("page", "1").isdigit() else 1
         context = {"query": query, "mode": mode, "show_score": mode != "default", "results": [], "preparing": None}
-        if query.strip():
+        if query.strip() and mode == "all":
+            context["groups"] = recall_groups(await search.recall(query, WIKI_WAIT_SECONDS), query)
+        elif query.strip():
             offset = DEFAULT_LIMIT * (max(1, page) - 1)
             outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset)
             if outcome.ready:

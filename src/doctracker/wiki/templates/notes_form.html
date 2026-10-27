@@ -15,6 +15,23 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
 <input type="hidden" name="filter_status" value="{{ note_status }}"><input type="hidden" name="plans" value="{{ plans }}">
 <input type="hidden" name="selected" value="{{ selected }}">{% if panel %}<input type="hidden" name="panel" value="1">{% endif %}
 {%- endmacro %}
+{# A link that shows a note on its tab, closing the modal (the page comes back). #}
+{% macro ui_nav_note(ref) -%}
+href="/notes?tab={{ tab }}&selected={{ ref }}" hx-get="/notes?tab={{ tab }}&selected={{ ref }}" hx-target="#content" hx-push-url="true"
+{%- endmacro %}
+{# When a guideline is given to the agents; a hidden marker tells the server the boxes were shown. #}
+{% macro moment_boxes(chosen) -%}
+<div class="moment-field"><input type="hidden" name="moments_shown" value="1">
+  <span>Given to agents <small>also when the code of its entities is read or edited</small></span>
+  <div class="moment-options">
+    {% for moment in moments %}<label><input type="checkbox" name="moments" value="{{ moment }}"{% if moment in chosen %} checked{% endif %}> {{ moment }}</label>{% endfor %}
+  </div>
+</div>
+{%- endmacro %}
+{# Foot of a creation modal: Cancel closes it (live.js), the button on the right sends the form. #}
+{% macro dialog_foot(label) -%}
+<div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">{{ label }}</button></div>
+{%- endmacro %}
 {% macro lines(items) %}{{ items | join("\n") }}{% endmacro %}
 {% macro when(stamp) %}<time datetime="{{ stamp }}">{{ stamp | local_time }}</time>{% endmacro %}
 {% macro state(value) %}<span class="notes-pill state-{{ value }}">{{ value }}</span>{% endmacro %}
@@ -95,7 +112,7 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
   <label>Branches <small>one per line</small><textarea name="branches" rows="2"></textarea></label>
   <label>Due <input type="date" name="due"></label>
   <p class="notes-meta">It starts with one feature and one task of the same title; add more from the plan.</p>
-  <button type="submit" class="primary">Create plan</button>
+  {{ dialog_foot("Create plan") }}
 </form>
 {% elif not item and kind == "feature" %}
 <form {{ post("add_feature") }} class="notes-form">{{ keep() }}
@@ -105,7 +122,7 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
   <label>Branch <input name="branch"></label>
   <label>Due <input type="date" name="due"></label>
   <p class="notes-meta">It starts with one task of the same title.</p>
-  <button type="submit" class="primary">Add feature</button>
+  {{ dialog_foot("Add feature") }}
 </form>
 {% elif not item and kind == "task" %}
 <form {{ post("add_task") }} class="notes-form">{{ keep() }}
@@ -114,10 +131,22 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
   <label>Criteria <small>what "done" means, one per line</small><textarea name="criteria" rows="3"></textarea></label>
   <label>Branch <input name="branch"></label>
   <label>Due <input type="date" name="due"></label>
-  <button type="submit" class="primary">Add task</button>
+  {{ dialog_foot("Add task") }}
 </form>
 
 {# --- An existing plan #}
+{% elif item and kind == "plan" and item.fixed %}
+{# The Reviews plan: its own fields never change and it is never deleted; its features and tasks do. #}
+{% call section("general", "General") %}
+<p class="notes-meta">A fixed plan: commits made outside the commit flow come here as tasks, to be checked
+  against the planning and the memory. It is hidden while it has no task.</p>
+<p><strong>{{ item.title }}</strong></p>
+<p>{{ item.goal }}</p>
+{% endcall %}
+{% call section("features", "Features") %}
+<ul class="dialog-list child-list">{% for feature in item.features %}{{ child_row(feature, "feature") }}{% endfor %}</ul>
+{{ create_button("kind=feature&plan_id=" ~ item.id, "+ Add feature") }}
+{% endcall %}
 {% elif item and kind == "plan" %}
 {% call section("general", "General") %}
 <form {{ autosave("update_plan") }} id="general-{{ item.item }}" class="notes-form">{{ keep() }}<input type="hidden" name="autosave" value="1">
@@ -252,14 +281,31 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
 {# --- A new note #}
 {% elif kind == "note" and not note %}
 {% set group = "guidelines" if query.type in note_groups.guidelines else "memory" %}
+{% set filled = filled or {} %}
 <form {{ post("create_note") }} class="notes-form">{{ keep() }}
   <label>Type
     <select name="type">{% for name in note_groups[group] %}<option value="{{ name }}"{% if name == query.type %} selected{% endif %}>{{ name }} — {{ note_types[name] }}</option>{% endfor %}</select>
   </label>
-  <label>Statement <textarea name="statement" rows="2" required autofocus></textarea></label>
-  <label>Why <textarea name="why" rows="2"></textarea></label>
-  <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2"></textarea></label>
-  <button type="submit" class="primary">Create note</button>
+  <label>Statement <textarea name="statement" rows="2" required autofocus>{{ filled.statement }}</textarea></label>
+  <label>Why <textarea name="why" rows="2">{{ filled.why }}</textarea></label>
+  <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2">{{ filled.entities }}</textarea></label>
+  {% if group == "guidelines" %}{{ moment_boxes(filled_moments or ["always"]) }}{% endif %}
+  {% if similar %}
+  {# The review before adding found notes close to this one: change one of them, or save this one anyway. #}
+  <div class="similar-notes">
+    <p class="notes-error">Similar notes already exist. Open one to change or supersede it, or save this one anyway.</p>
+    <ul class="dialog-list">
+      {% for other in similar %}
+      <li class="child-row"><a {{ ui_nav_note(other.ref) }}>{{ other.statement }}</a>
+        <span class="notes-meta">{{ other.type }} · {{ "%.2f" | format(other.score) }}</span></li>
+      {% endfor %}
+    </ul>
+    <input type="hidden" name="different_because" value="Saved anyway in the wiki.">
+  </div>
+  {{ dialog_foot("Save anyway") }}
+  {% else %}
+  {{ dialog_foot("Create note") }}
+  {% endif %}
 </form>
 
 {# --- An existing note #}
@@ -271,6 +317,7 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
   <label>Statement <textarea name="statement" rows="2" required>{{ note.statement }}</textarea></label>
   <label>Why <textarea name="why" rows="2">{{ note.why }}</textarea></label>
   <label>Entities <small>full paths, one per line</small><textarea name="entities" rows="2">{{ lines(note.entities) }}</textarea></label>
+  {% if note.group == "guidelines" %}{{ moment_boxes(note.moments) }}{% endif %}
 </form>
 <p class="notes-meta">{{ note.source }} · {{ when(note.updated) }}</p>
 {% endcall %}

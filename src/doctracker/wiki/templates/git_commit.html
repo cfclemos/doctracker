@@ -1,4 +1,20 @@
-{# Changes of one commit: one top line to pick the file (select, or ‹ › to step), its lines below. #}
+{# Changes of one commit: the planned work it carried out (archived tasks, folded), then one top line
+   to pick the file (select, or ‹ › to step), its lines below. #}
+{% if planned %}
+<details class="git-planned">
+  <summary>Planned work <span class="notes-meta">{{ planned | length }} task{{ "s" if planned | length > 1 }}, archived after the commit</span></summary>
+  <div class="git-planned-body">
+  {% for task in planned %}
+  <div class="git-planned-task">
+    <p><strong>{{ task.title }}</strong> <span class="notes-meta">{{ task.plan }}{% if task.feature and task.feature != task.title %} · {{ task.feature }}{% endif %}</span></p>
+    {% if task.criteria %}<ul class="git-planned-list">{% for criterion in task.criteria %}<li>{{ "☑" if criterion.done else "☐" }} {{ criterion.text }}</li>{% endfor %}</ul>{% endif %}
+    {% if task.annotations %}<p class="git-planned-head">Annotations</p><ul class="git-planned-list">{% for text in task.annotations %}<li>{{ text }}</li>{% endfor %}</ul>{% endif %}
+    {% if task.evidence %}<p class="git-planned-head">Evidence</p><ul class="git-planned-list">{% for text in task.evidence %}<li>{{ text }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+  {% endfor %}
+  </div>
+</details>
+{% endif %}
 {% if not files %}
 <p class="empty">This commit changed no files.</p>
 {% else %}

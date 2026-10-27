@@ -60,7 +60,20 @@
       </label>
     </form>
   </div>
-  <p class="notes-help">{% if tab == "guidelines" %}How to work: preferences of the user and rules of the project.{% else %}What is known: decisions and why, how parts work, pitfalls, references.{% endif %}</p>
+  {# What the group is for; the ? opens, on hover, when to write each type, with an example. #}
+  <div class="notes-help">
+    <span class="help-hover" tabindex="0" aria-label="When to write each type"><i class="help-icon"></i>
+      <span class="help-box" role="tooltip">
+        <dl>
+          {% for name in note_groups[tab] %}
+          <dt>{{ name }}</dt><dd>{{ note_types[name] }} {{ note_type_uses[name][0] }}<em>E.g. “{{ note_type_uses[name][1] }}”</em></dd>
+          {% endfor %}
+        </dl>
+        <span class="help-box-foot">{{ not_a_note }}</span>
+      </span>
+    </span>
+    <strong>{{ note_group_texts[tab][0] }}</strong> {{ note_group_texts[tab][1] }}
+  </div>
   {# Left: the notes of the group as a tree (types, then their notes); right: the note clicked. #}
   <div class="planner-layout">
     {% include "notes_tree.html" %}
