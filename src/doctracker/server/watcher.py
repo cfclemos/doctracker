@@ -4,8 +4,9 @@ Two things are watched by polling modification times (standard library only):
 
 - the project's Python files: a change rebuilds the documentation (the extraction runs
   in a separate process, so the server stays responsive);
-- the git state (HEAD, branches, tags): a commit, checkout or new branch only tells the
-  open wiki pages to reload, since the code itself did not change.
+- the git state (HEAD, branches, tags): a commit, checkout or new branch tells the open wiki
+  pages to reload, since the code itself did not change, and a commit made outside the commit
+  flow becomes a task of the Reviews plan (also for the commits made while the server was off).
 """
 
 import asyncio
@@ -15,6 +16,8 @@ from pathlib import Path
 from doctracker.config import DOC_DIR, Config
 from doctracker.extraction import extract_project
 from doctracker.history import git_dir
+from doctracker.notes import NoteStore
+from doctracker.notes.commit_flow import review_outside_commits
 from doctracker.server.state import DocState
 
 SKIPPED_DIRS = {DOC_DIR, ".git", ".venv", "venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache"}
@@ -92,7 +95,7 @@ def _scan(folder: Path, files: dict[str, int]) -> None:
                 pass
 
 
-async def watch(project_root: Path, config: Config, state: DocState) -> None:
+async def watch(project_root: Path, config: Config, state: DocState, notes: NoteStore) -> None:
     """Build the documentation once, then keep the wiki in line with the code and the git state.
 
     A changed Python file rebuilds the documentation; a changed git state (commit, checkout,
@@ -103,6 +106,7 @@ async def watch(project_root: Path, config: Config, state: DocState) -> None:
         project_root: Root of the documented project.
         config: Project settings (packages, search paths, docstring style, watch interval).
         state: Shared data, replaced after every extraction.
+        notes: The store, where commits made outside the commit flow become reviews.
     """
     loop = asyncio.get_running_loop()
     repository = await git_dir(project_root)
@@ -124,5 +128,7 @@ async def watch(project_root: Path, config: Config, state: DocState) -> None:
                 state.update(result)
             elif git != previous_git and previous_git is not None:
                 state.notify()
+            if git != previous_git:  # also at startup: the commits made while the server was off
+                await review_outside_commits(notes, project_root)
             previous_code, previous_git = code, git
             await asyncio.sleep(config.watch_interval)

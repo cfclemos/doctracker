@@ -1,25 +1,41 @@
 """MCP tools for the planner and the notes: thin wrappers over `NoteStore`, the same methods the wiki uses."""
 
 import functools
+import inspect
 from collections.abc import Callable
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from doctracker.notes import NOTE_GROUPS, NOTE_TYPES, NoteStore
+from doctracker.notes import MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES, NoteStore
+from doctracker.notes import commit_flow
+from doctracker.search import SearchEngine
 
-TYPES_HELP = "; ".join(f"`{name}`: {text}" for name, text in NOTE_TYPES.items())
-"""The note types and what each is for, shown in the tool descriptions."""
+TYPES_HELP = "\n".join(f"- `{name}`: {text} {NOTE_TYPE_USES[name][0]} E.g. \"{NOTE_TYPE_USES[name][1]}\""
+                       for name, text in NOTE_TYPES.items())
+"""The note types, what each is for and when to write it, with an example, shown in the tool descriptions."""
 
-GROUPS_HELP = "; ".join(f"`{group}`: {', '.join(types)}" for group, types in NOTE_GROUPS.items())
-"""The note groups and their types, shown in the tool descriptions."""
+GROUPS_HELP = "; ".join(f"`{group}` ({', '.join(types)}): {NOTE_GROUP_TEXTS[group][0]} {NOTE_GROUP_TEXTS[group][1].rstrip('.')}"
+                        for group, types in NOTE_GROUPS.items())
+"""The note groups, their types and how agents get them, shown in the tool descriptions."""
 
 
 def refusals_reported(tool: Callable) -> Callable:
     """Pass the store's refusals (unknown type, missing title, a cycle...) to the agent as tool errors.
 
     Without it, the MCP SDK hides an exception's text and the agent only sees that the tool failed.
+    Works for plain and async tools.
     """
+
+    if inspect.iscoroutinefunction(tool):
+        @functools.wraps(tool)
+        async def run_async(*args, **kwargs):
+            try:
+                return await tool(*args, **kwargs)
+            except ValueError as refused:
+                raise ToolError(str(refused)) from refused
+
+        return run_async
 
     @functools.wraps(tool)
     def run(*args, **kwargs):
@@ -31,7 +47,7 @@ def refusals_reported(tool: Callable) -> Callable:
     return run
 
 
-def register_note_tools(mcp: MCPServer, notes: NoteStore) -> None:
+def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) -> None:
     """Add the tools that read and change the planner (plans, features, tasks) and the notes.
 
     Every change made here is recorded with the source `agent`.
@@ -39,6 +55,7 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore) -> None:
     Args:
         mcp: Server to register the tools on.
         notes: Store of the plans and notes (the same one the wiki uses).
+        search: Search engine, for the review of a new note against similar ones.
     """
 
     @mcp.tool()
@@ -324,45 +341,127 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore) -> None:
         notes.delete_item(item)
         return {"deleted": item}
 
+    project_root = search.embeddings.project_root
+
+    @mcp.tool()
+    @refusals_reported
+    async def prepare_commit(groups: list[dict] | None = None, diffs: list[str] | None = None) -> dict:
+        r"""Pre-commit: plan the commits with the user before committing anything.
+
+        First call it without arguments: it gives the changed files (with lines added and removed), the
+        tasks a commit may carry out (with criteria, annotations and evidence) and the guidelines for
+        committing. Ask for the diffs of the files you need to look at with `diffs`. Read them with what
+        was done in the session and propose to the user the commits: which files go together (a file
+        goes in one commit, whole), the message of each (what changed and why), and the tasks each one
+        carries out. Then call it with those groups: it lists what is missing (a task not approved,
+        criteria not met, a file twice or without changes). Bring every problem to the user, who
+        decides; adjust and check again. Commit only the groups the user approved.
+
+        Args:
+            groups: `[{"files": ["src/a.py"], "message": "Subject\n\nWhy...", "tasks": ["task:3"]}]`.
+            diffs: Paths whose diffs to give, e.g. `["src/a.py"]`.
+
+        Returns:
+            With groups: `ready`, `problems`, `left_out`. With diffs: `diffs`. Otherwise: `files`, `tasks`,
+            `guidelines`.
+        """
+        return await commit_flow.prepare_commit(notes, project_root, groups, diffs)
+
+    @mcp.tool()
+    @refusals_reported
+    async def commit(groups: list[dict]) -> dict:
+        """Commit the groups the user approved in the pre-commit: git add and git commit, one after the other.
+
+        Nothing is checked here. At the first error it stops: the commits before stay, the failed group's
+        files are taken out of the index with their changes kept, and the rest is not run. Fix the cause
+        with the user and call it again with the groups left (if anything in them changed, check them
+        with prepare_commit first). Then call after_commit.
+
+        Args:
+            groups: The approved groups, as given to prepare_commit.
+
+        Returns:
+            `committed` (hash, subject, tasks), `failed` (group number and git's error, or null), `not_run`.
+        """
+        return await commit_flow.commit(notes, project_root, groups)
+
+    @mcp.tool()
+    @refusals_reported
+    def after_commit() -> dict:
+        """Post-commit: record the commits on their tasks, then show what is pending and what can be cleaned.
+
+        Show the user the pending tasks (the next steps) and the done items that can be deleted; delete
+        only what the user confirms, with clean_done.
+
+        Returns:
+            `recorded`, `pending` (ref, title, state) and `can_clean` (ref, title).
+        """
+        return commit_flow.after_commit(notes)
+
+    @mcp.tool()
+    @refusals_reported
+    def clean_done(items: list[str]) -> dict:
+        """Delete done and committed items the user confirmed (from after_commit's `can_clean`).
+
+        Args:
+            items: References, e.g. `["task:3", "feature:2"]`.
+
+        Returns:
+            `deleted`, `refused` (not cleanable) and `pending` (the open tasks left).
+        """
+        return commit_flow.clean_done(notes, items)
+
     @mcp.tool(description=f"""Write down a piece of lasting knowledge of the project, as one short fact.
 
-Use it instead of writing notes in files, memories or code comments. Types: {TYPES_HELP}.
-Groups: {GROUPS_HELP}. If a note on the same subject exists and no longer holds, use
-supersede_note; to fix it, use update_note.
+Use it instead of writing notes in files, memories or code comments. {NOT_A_NOTE}
+
+Types:
+{TYPES_HELP}
+
+Groups: {GROUPS_HELP}.
+
+Before it is added, the note is compared with the active notes of its group: when similar ones
+exist it is refused and they are listed. Then update one of them (update_note), replace one that
+no longer holds (supersede_note), or call again with `different_because`.
 
 Args:
     type: One of the types above.
     statement: The knowledge itself, in one or two sentences.
     why: Why it holds (the reason behind a rule or decision, how a pitfall shows up).
-    entities: Full paths of the code entities it is about (e.g. `pkg.module.Class`).
+    entities: Full paths of the code entities it is about (e.g. `pkg.module.Class`); the note is
+        also given to agents when that code is read or edited.
+    different_because: Only after a refusal: why this note is new although similar ones exist.
+    moments: Guidelines only: when the note is given to agents, any of {", ".join(MOMENTS)}
+        (every session, when planning, when committing); `always` by default.
+
+Returns:
+    The note, with `review`: what the comparison found.""")
+    @refusals_reported
+    async def create_note(type: str, statement: str, why: str = "", entities: list[str] | None = None,
+                          different_because: str = "", moments: list[str] | None = None) -> dict:
+        return await search.create_reviewed_note(type, statement, why, entities, different_because, moments=moments)
+
+    @mcp.tool(description=f"""Fix a note (wording, a missing entity, when a guideline is given).
+When it no longer holds, use supersede_note instead.
+
+Args:
+    note_id: The note.
+    statement: New statement.
+    why: New reason.
+    entities: New list of entity paths.
+    moments: Guidelines only: new list of moments, any of {", ".join(MOMENTS)}.
 
 Returns:
     The note.""")
     @refusals_reported
-    def create_note(type: str, statement: str, why: str = "", entities: list[str] | None = None) -> dict:
-        return notes.create_note(type, statement, why, entities)
-
-    @mcp.tool()
-    @refusals_reported
     def update_note(note_id: int, statement: str | None = None, why: str | None = None,
-                    entities: list[str] | None = None) -> dict:
-        """Fix a note (wording, a missing entity). When it no longer holds, use supersede_note instead.
-
-        Args:
-            note_id: The note.
-            statement: New statement.
-            why: New reason.
-            entities: New list of entity paths.
-
-        Returns:
-            The note.
-        """
-        return notes.update_note(note_id, statement, why, entities)
+                    entities: list[str] | None = None, moments: list[str] | None = None) -> dict:
+        return notes.update_note(note_id, statement, why, entities, moments)
 
     @mcp.tool()
     @refusals_reported
     def supersede_note(note_id: int, statement: str, why: str = "", entities: list[str] | None = None,
-                       type: str | None = None) -> dict:
+                       type: str | None = None, moments: list[str] | None = None) -> dict:
         """Replace a note that no longer holds by a new one; the old one is kept as superseded.
 
         Args:
@@ -371,11 +470,12 @@ Returns:
             why: Why it changed.
             entities: Entities of the new note; by default, those of the old one.
             type: Type of the new note; by default, that of the old one.
+            moments: Guidelines only: when the new note is given; by default, those of the old one.
 
         Returns:
             The new note.
         """
-        return notes.supersede_note(note_id, statement, why, entities, type)
+        return notes.supersede_note(note_id, statement, why, entities, type, moments=moments)
 
     @mcp.tool()
     @refusals_reported
@@ -400,9 +500,10 @@ Args:
     type: Only this type; empty for every type of the group.
     status: `active`, `superseded`, or empty for both.
     entity: Only notes about this entity path; empty for every note.
+    moment: Only the guidelines given at this moment ({", ".join(MOMENTS)}); empty for every note.
 
 Returns:
     `notes`.""")
     @refusals_reported
-    def list_notes(group: str = "", type: str = "", status: str = "active", entity: str = "") -> dict:
-        return {"notes": notes.list_notes(group, type, status, entity)}
+    def list_notes(group: str = "", type: str = "", status: str = "active", entity: str = "", moment: str = "") -> dict:
+        return {"notes": notes.list_notes(group, type, status, entity, moment)}
