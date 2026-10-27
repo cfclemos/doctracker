@@ -5,6 +5,7 @@ texts in the agent's context; the MCP tool `agent_context` gives the same texts 
 Everything is generated from the store, so the texts follow what is recorded.
 """
 
+from importlib.resources import files
 from pathlib import Path
 
 from doctracker.notes.store import NoteStore
@@ -165,15 +166,16 @@ def file_context(notes: NoteStore, entities: dict[str, dict], path: str) -> str:
 
 
 def commit_context(notes: NoteStore) -> str:
-    """The context of a commit: the guidelines given when committing.
+    """The context of a commit: the commit guide, then the guidelines given when committing.
 
     Args:
         notes: The store.
 
     Returns:
-        The text; empty when no guideline is given at commit.
+        The text; the commit guide stays when the guidelines are cut.
     """
-    return _fit(_guidelines(notes, "commit", "Guidelines for committing:"), [], [])
+    guide = files("doctracker.notes").joinpath("commit_guide.md").read_text(encoding="utf-8").strip()
+    return _fit([guide, *_guidelines(notes, "commit", "Guidelines for committing:")], [], [])
 
 
 def _guidelines(notes: NoteStore, moment: str, title: str) -> list[str]:
