@@ -1,4 +1,4 @@
-"""Command line interface: `doctracker init`, `doctracker start` and `doctracker hook` (called by Claude Code)."""
+"""Command line interface: `doctracker init`, `start`, `restart` and `hook` (called by Claude Code)."""
 
 import json
 import sys
@@ -8,7 +8,7 @@ import click
 
 from doctracker import __version__
 from doctracker.config import CONFIG_PATH, Config, detect_packages, load_config, write_config
-from doctracker.integrations import claude_code, opencode
+from doctracker.integrations import autostart, claude_code, opencode
 
 
 @click.group()
@@ -66,7 +66,32 @@ def start(host: str | None, port: int | None) -> None:
     _write_integrations(project_root, config)
     click.echo(f"Wiki: {_base_url(config)}/")
     click.echo(f"MCP:  {_base_url(config)}/mcp")
+    autostart.record_server(project_root, _base_url(config))
     run(project_root, config)
+
+
+@main.command()
+def restart() -> None:
+    """Stop the server of the current project and start it again in the background.
+
+    \f
+    The new server listens on the address of the one stopped (or the configured one when none was
+    running) and writes its output to `doc/logs/server.log`.
+
+    Raises:
+        click.ClickException: When the project has no configuration, or the server does not stop or start.
+    """
+    project_root = Path.cwd()
+    if not (project_root / CONFIG_PATH).exists():
+        raise click.ClickException(f"No {CONFIG_PATH.as_posix()} here: run `doctracker start` first.")
+    base_url = autostart.stop_server(project_root) or _base_url(load_config(project_root))
+    if autostart.answers(base_url):
+        raise click.ClickException(f"A server still answers at {base_url}; stop it by hand.")
+    if not autostart.ensure_server(project_root, base_url):
+        raise click.ClickException(f"The server did not start; see {autostart.LOG_PATH.as_posix()}.")
+    click.echo(f"Wiki: {base_url}/")
+    click.echo(f"MCP:  {base_url}/mcp")
+    click.echo(f"Log:  {autostart.LOG_PATH.as_posix()}")
 
 
 @main.command(hidden=True)
@@ -88,7 +113,7 @@ def hook(event: str, url: str | None) -> None:
         project_root = Path(received.get("cwd") or Path.cwd())
         if not (project_root / CONFIG_PATH).exists():
             return
-        reply = claude_code.answer(received, url or _base_url(load_config(project_root)))
+        reply = claude_code.answer(received, url or _base_url(load_config(project_root)), project_root)
     except (OSError, ValueError):
         return
     if reply:
@@ -115,7 +140,7 @@ def _initialize(project_root: Path) -> None:
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:
-    """Write the Claude Code hooks and, when OpenCode is used, its plugin; print where they went.
+    """Write the Claude Code hooks and MCP server and, when OpenCode is used, its plugin; print where they went.
 
     Args:
         project_root: Root of the project.
@@ -123,6 +148,8 @@ def _write_integrations(project_root: Path, config: Config) -> None:
     """
     settings = claude_code.write_settings(project_root, _base_url(config))
     click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
+    mcp_config = claude_code.write_mcp_config(project_root, _base_url(config))
+    click.echo(f"Claude Code MCP server: {mcp_config.relative_to(project_root).as_posix()}")
     if opencode.uses_opencode(project_root):
         plugin = opencode.write_plugin(project_root, _base_url(config))
         click.echo(f"OpenCode plugin: {plugin.relative_to(project_root).as_posix()}")

@@ -3,14 +3,16 @@
 `doctracker init` and `doctracker start` write `opencode_plugin.js` into the project's
 `.opencode/plugins/doctracker.js`, with the server's address and the shared texts filled in, and keep
 it out of git through `.git/info/exclude` (local, never the project's `.gitignore`). The plugin asks
-the running server for the context of each moment (`/hooks/context/...`), as the Claude Code hooks do.
+the running server for the context of each moment (`/hooks/context/...`), as the Claude Code hooks do,
+and when the server does not answer as it loads, starts it with the same command as their session hook.
 """
 
 import json
 import shutil
 from pathlib import Path
 
-from doctracker.integrations import RECORD_THE_PLAN, SERVER_DOWN
+from doctracker.integrations import RECORD_THE_PLAN, SERVER_DOWN, doctracker_command, exclude_from_git
+from doctracker.integrations.claude_code import START_HOOK_TIMEOUT
 
 PLUGIN_PATH = Path(".opencode") / "plugins" / "doctracker.js"
 """Where OpenCode loads the project's plugin from."""
@@ -36,25 +38,13 @@ def write_plugin(project_root: Path, base_url: str) -> Path:
     Returns:
         The plugin file.
     """
-    values = {"__BASE_URL__": base_url, "__SERVER_DOWN__": SERVER_DOWN, "__RECORD_THE_PLAN__": RECORD_THE_PLAN}
+    values = {"__BASE_URL__": base_url, "__SERVER_DOWN__": SERVER_DOWN, "__RECORD_THE_PLAN__": RECORD_THE_PLAN,
+              "__DOCTRACKER__": doctracker_command(), "__START_TIMEOUT_MS__": START_HOOK_TIMEOUT * 1000}
     text = TEMPLATE.read_text(encoding="utf-8")
     for placeholder, value in values.items():
         text = text.replace(placeholder, json.dumps(value))
     file = project_root / PLUGIN_PATH
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(text, encoding="utf-8")
-    _exclude(project_root, PLUGIN_PATH.as_posix())
+    exclude_from_git(project_root, PLUGIN_PATH.as_posix())
     return file
-
-
-def _exclude(project_root: Path, path: str) -> None:
-    """Add a path to `.git/info/exclude` when the project is the top of a git repository and it is not there yet."""
-    git = project_root / ".git"
-    if not git.is_dir():
-        return
-    exclude = git / "info" / "exclude"
-    lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.exists() else []
-    if f"/{path}" in lines:
-        return
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    exclude.write_text("\n".join([*lines, f"/{path}"]) + "\n", encoding="utf-8")

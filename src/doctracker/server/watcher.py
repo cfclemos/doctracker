@@ -10,6 +10,7 @@ Two things are watched by polling modification times (standard library only):
 """
 
 import asyncio
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -110,7 +111,8 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
     """
     loop = asyncio.get_running_loop()
     repository = await git_dir(project_root)
-    with ProcessPoolExecutor(max_workers=1) as executor:
+    # spawn, not fork: a forked worker would keep the server's listening socket after the server stops.
+    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as executor:
         previous_code = previous_git = None
         while True:
             code = await loop.run_in_executor(executor, snapshot, project_root, config.search_paths)

@@ -25,6 +25,9 @@ from doctracker.storage.index import entity_documents
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 """Hosts the MCP SDK already protects against DNS rebinding by itself."""
 
+SHUTDOWN_TIMEOUT = 3
+"""Seconds a stopping server waits for open connections (the wiki's live updates, MCP streams) to end."""
+
 
 def create_app(project_root: Path, config: Config) -> Starlette:
     """Create the ASGI app with every service the server provides.
@@ -130,4 +133,5 @@ def run(project_root: Path, config: Config) -> None:
         ssl_certfile=config.ssl_certfile,
         ssl_keyfile=config.ssl_keyfile,
         log_level="info",
+        timeout_graceful_shutdown=SHUTDOWN_TIMEOUT,
     )

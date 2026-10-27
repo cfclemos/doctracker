@@ -1,6 +1,7 @@
 """Download files with progress reporting and extract archives."""
 
 import asyncio
+import multiprocessing
 import os
 import stat
 import tarfile
@@ -70,7 +71,7 @@ async def extract(archive: Path, destination: Path) -> None:
         destination: Folder to extract into; created if needed.
     """
     loop = asyncio.get_running_loop()
-    with ProcessPoolExecutor(max_workers=1) as executor:
+    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as executor:
         await loop.run_in_executor(executor, extract_archive, str(archive), str(destination))
 
 
