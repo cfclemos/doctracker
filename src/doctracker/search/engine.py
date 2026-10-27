@@ -32,8 +32,9 @@ WIKI_WAIT_SECONDS = 10.0
 RECALL_WAIT_SECONDS = 5.0
 """How long `recall` waits for the embedding backend before answering with BM25 alone."""
 
-RECALL_GROUPS = ("planning", "guidelines", "memory", "code")
-"""Groups of `recall`, in the order they are given: the open planning comes first."""
+RECALL_GROUPS = ("planning", "guidelines", "memory", "code", "history")
+"""Groups of `recall`, in the order they are given: the open planning comes first, the archived
+work of past commits last."""
 
 RECALL_LIMIT = 5
 """Most results of each `recall` group."""
@@ -236,7 +237,7 @@ class SearchEngine:
         return sorted(scores.items(), key=lambda pair: pair[1], reverse=True)[:MAX_MEANING_RESULTS]
 
     async def recall(self, query: str, wait: float = RECALL_WAIT_SECONDS) -> dict:
-        """Find what the project knows about a subject: planning, guidelines, memory and code.
+        """Find what the project knows about a subject: planning, guidelines, memory, code and history.
 
         Runs the hybrid search over everything (BM25 alone while the embedding backend is
         not ready). Within the planning, items not done come before the done ones.
@@ -248,7 +249,7 @@ class SearchEngine:
         Returns:
             `mode` (`hybrid` or `bm25`) and one list per group of `RECALL_GROUPS`, in that
             order, each with at most `RECALL_LIMIT` results: `ref`, `kind`, `title`, `score`, and
-            for planner items `state` and `plan` (the id of their plan).
+            for planner items `state` and `plan` (the id of their plan), for archived work `commits`.
         """
         ranked = await self.hybrid(query, wait)
         mode = "hybrid"
@@ -262,6 +263,7 @@ class SearchEngine:
                 groups[document["group"]].append(
                     {"ref": key, "kind": document["kind"], "title": document["title"],
                      **({"state": document["state"], "plan": document["plan"]} if document["state"] else {}),
+                     **({"commits": document["commits"]} if "commits" in document else {}),
                      "score": round(score, 4)})
             elif key in self.state.entities:
                 entity = self.state.entities[key]

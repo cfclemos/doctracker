@@ -157,7 +157,9 @@ def after_commit(notes: NoteStore) -> dict:
 
 
 def clean_done(notes: NoteStore, items: list[str]) -> dict:
-    """Delete done and committed items the user confirmed; anything else given is refused.
+    """Archive and delete done and committed items the user confirmed; anything else given is refused.
+
+    What they held stays in the archive, tied to their commits (shown with the git history).
 
     Args:
         notes: The store.
@@ -174,6 +176,7 @@ def clean_done(notes: NoteStore, items: list[str]) -> dict:
             refused.append(item)
             continue
         try:
+            notes.archive_item(item)
             notes.delete_item(item)
             deleted.append(item)
         except ValueError:

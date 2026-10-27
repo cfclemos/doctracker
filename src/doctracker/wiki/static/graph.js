@@ -350,8 +350,8 @@ function plannerBox(node) {
   const level = node.level !== "task" ? `<i class="level-icon level-${node.level}" title="${escapeHtml(node.level)}"></i>` : "";
   if (node.empty) {
     return `<div class="uml-box planner-task planner-empty state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
-      <div class="uml-head">${level}<strong>${escapeHtml(node.label)}</strong>${plannerRef(node)}<span class="planner-state">${STATE_LABELS[node.state]}</span></div>
-      <div class="planner-facts"><span>no ${node.level === "plan" ? "features" : "tasks"} yet</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}</div>${waits}
+      <div class="uml-head">${level}<strong>${escapeHtml(node.label)}</strong><span class="planner-state">${STATE_LABELS[node.state]}</span></div>
+      <div class="planner-facts">${plannerRef(node)}<span>no ${node.level === "plan" ? "features" : "tasks"} yet</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}</div>${waits}
     </div>`;
   }
   return `<div class="uml-box planner-task state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
@@ -365,10 +365,10 @@ function plannerBox(node) {
         <input type="hidden" name="selected" value="${escapeHtml(node.open)}">
         <input type="checkbox" name="done" value="1" aria-label="Done"${node.status === "done" ? " checked" : ""}>
       </form>
-      ${level}<strong>${escapeHtml(node.label)}</strong>${plannerRef(node)}
+      ${level}<strong>${escapeHtml(node.label)}</strong>
       <span class="planner-state">${STATE_LABELS[node.state]}</span>
     </div>
-    <div class="planner-facts">${facts}</div>${waits}
+    <div class="planner-facts">${plannerRef(node)}${facts}</div>${waits}
   </div>`;
 }
 

@@ -122,13 +122,17 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE TABLE IF NOT EXISTS commits (
   hash TEXT PRIMARY KEY, tasks TEXT NOT NULL DEFAULT '[]', closed INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS archive (
+  id INTEGER PRIMARY KEY, item TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, plan TEXT NOT NULL,
+  feature TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, commits TEXT NOT NULL DEFAULT '[]', archived TEXT NOT NULL);
 """
 """Tables. Task criteria are `[{"text", "done"}]`. `dependencies` says that `item` waits for
 `depends_on` (both `kind:id`). `links` holds the relations of notes, made by the methods here:
 `note:<id>` → entity path (`about`), `note:<new>` → `note:<old>` (`supersedes`). A note's `moments`
 is a JSON list (guidelines only); a plan with `fixed` 1 is the Reviews plan. `commits` holds the
 commits made by the commit flow, with the tasks of each (`closed` once the post-commit recorded
-them); `meta` holds the sync marker (`last_commit`, `last_check`)."""
+them); `meta` holds the sync marker (`last_commit`, `last_check`). `archive` keeps the planner items
+the post-commit deleted, with what they held (JSON `content`) and the full hashes of their `commits`."""
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 """A due date, `YYYY-MM-DD`."""
@@ -1096,6 +1100,69 @@ class NoteStore:
         with self._connect() as connection, connection:
             connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
+    def archive_item(self, item: str) -> None:
+        """Keep a plan, feature or task, with everything inside it, in the archive before it is deleted.
+
+        Each task keeps its criteria, annotations, evidence and the commits recorded with it; a
+        feature or plan keeps its own fields.
+
+        Args:
+            item: `plan:<id>`, `feature:<id>` or `task:<id>`.
+        """
+        kind, _ = parse_item(item)
+        found = self.get_item(item)
+        if kind == "plan":
+            plan, features = found, found["features"]
+        elif kind == "feature":
+            plan, features = self.get_plan(found["plan_id"]), [found]
+        else:
+            feature = self.get_feature(found["feature_id"])
+            plan, features = self.get_plan(feature["plan_id"]), [{**feature, "tasks": [found]}]
+        rows = []
+        if kind == "plan":
+            rows.append((plan["item"], "plan", plan["title"], plan["title"], "",
+                         {"goal": plan["goal"], "requirements": plan["requirements"], "decisions": plan["decisions"]}, []))
+        for feature in features:
+            if kind != "task":
+                rows.append((feature["item"], "feature", feature["title"], plan["title"], "",
+                             {"description": feature["description"]}, []))
+            for task in feature["tasks"]:
+                rows.append((task["item"], "task", task["title"], plan["title"], feature["title"],
+                             {"criteria": task["criteria"], "annotations": [a["text"] for a in task["annotations"]],
+                              "evidence": [e["detail"] for e in task["evidence"]]}, self._commits_of(task["item"])))
+        now = _now()
+        with self._connect(write=True) as connection:
+            connection.executemany(
+                "INSERT INTO archive (item, kind, title, plan, feature, content, commits, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(ref, row_kind, title, plan_title, feature_title, json.dumps(content), json.dumps(commits), now)
+                 for ref, row_kind, title, plan_title, feature_title, content, commits in rows])
+
+    def _commits_of(self, task: str) -> list[str]:
+        """Full hashes of the flow's commits that carried out a task."""
+        with self._connect() as connection:
+            return [row["hash"] for row in connection.execute(
+                "SELECT hash FROM commits WHERE EXISTS (SELECT 1 FROM json_each(tasks) WHERE value = ?) ORDER BY created",
+                (task,))]
+
+    def archived(self, commit_hash: str = "") -> list[dict]:
+        """Archived planner items, oldest first.
+
+        Args:
+            commit_hash: Only the tasks carried out by this commit (full or abbreviated hash); empty for all.
+
+        Returns:
+            `id`, `item`, `kind`, `title`, `plan`, `feature`, `archived`, `commits` and what they held
+            (`criteria`, `annotations`, `evidence` for a task; the own fields of a plan or feature).
+        """
+        query, values = "SELECT * FROM archive", []
+        if commit_hash:
+            query += " WHERE EXISTS (SELECT 1 FROM json_each(commits) WHERE value LIKE ? || '%')"
+            values.append(commit_hash.strip().lower())
+        with self._connect() as connection:
+            return [{**{key: row[key] for key in row.keys() if key not in ("content", "commits")},
+                     "commits": json.loads(row["commits"]), **json.loads(row["content"])}
+                    for row in connection.execute(query + " ORDER BY id", values)]
+
     def add_review(self, title: str, detail: str) -> dict:
         """Add a task to the Reviews plan, with its evidence (a commit made outside the flow).
 
@@ -1125,10 +1192,11 @@ class NoteStore:
     # --- Search
 
     def searchable(self) -> dict[str, dict]:
-        """Every planner item and active note as a search document.
+        """Every planner item, active note and archived item as a search document.
 
         Returns:
-            By reference (`plan:<id>`, `note:<id>`...): `group` (`planning`, `guidelines` or `memory`),
+            By reference (`plan:<id>`, `note:<id>`, `archive:<id>`...): `group` (`planning`, `guidelines`,
+            `memory` or `history`, the archived work),
             `kind` (plan, feature, task or the note type), `title`, `state` and `plan` (the plan's id;
             planner items only) and `text`, the words the search compares.
         """
@@ -1146,6 +1214,11 @@ class NoteStore:
         for note in self.list_notes():
             documents[f"note:{note['id']}"] = _document(note["group"], note["type"], note["statement"], "", {},
                                                         note["why"], *note["entities"])
+        for entry in self.archived():
+            documents[f"archive:{entry['id']}"] = _document(
+                "history", entry["kind"], entry["title"], "", {"commits": entry["commits"], "plan": entry["plan"]},
+                *(c["text"] for c in entry.get("criteria", [])), *entry.get("annotations", []), *entry.get("evidence", []),
+                entry.get("goal", ""), entry.get("description", ""))
         return documents
 
     # --- Helpers

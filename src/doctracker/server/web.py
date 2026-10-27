@@ -416,7 +416,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         files = await commit_diff(project_root, commit_hash)
         if files is None:
             return HTMLResponse('<p class="empty">Commit not found.</p>', status_code=404)
-        html =templates.get_template("git_commit.html").render(files=files, hash=commit_hash)
+        html = templates.get_template("git_commit.html").render(files=files, hash=commit_hash,
+                                                                planned=notes.archived(commit_hash))
         return HTMLResponse(html)
 
     async def view_data(request: Request) -> Response:
@@ -462,6 +463,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 continue
             if group == "code":
                 rows = pages.ranked_results(state, [(row["ref"], row["score"]) for row in found[group]], query)
+            elif group == "history":
+                rows = [{**row, "url": f"/git?commit={row['commits'][0]}" if row.get("commits") else "/git"}
+                        for row in found[group]]
             else:
                 rows = [{**row, "url": (f"/notes?tab=planner&plans={row['plan']}&selected={row['ref']}"
                                         if group == "planning" else f"/notes?tab={group}&selected={row['ref']}")}

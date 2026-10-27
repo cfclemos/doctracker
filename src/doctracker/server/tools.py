@@ -118,7 +118,8 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             hash: Full or abbreviated commit hash (from `git_history`).
 
         Returns:
-            `files`: path, status, additions, deletions and `diff` (unified diff lines of the file),
+            `files`: path, status, additions, deletions and `diff` (unified diff lines of the file), and
+            `planned_work`: the archived tasks the commit carried out (criteria, annotations, evidence);
             or `error` when the commit is not found.
         """
         files = await commit_diff(project_root, hash.strip())
@@ -138,7 +139,8 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
                     "diff": "\n".join(signs[line.kind] + line.text for line in file.lines),
                 }
                 for file in files
-            ]
+            ],
+            "planned_work": search.notes.archived(hash),
         }
 
     @mcp.tool()
