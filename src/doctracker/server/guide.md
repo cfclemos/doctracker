@@ -1,9 +1,27 @@
-# How to document code for doctracker
+# How to write and document code for doctracker
 
 doctracker builds the technical reference of this project by reading the code
 statically (it never imports or runs it). Everything shown in the wiki comes from
 the code itself: names, signatures, type hints, decorators and docstrings. Follow
-these rules so every entity gets a complete page.
+these rules so the code stays small and clear and every entity gets a complete page.
+
+## How to write code
+
+1. **Think before coding.** Say what you are assuming. When a request can be read
+   in more than one way, show the readings instead of picking one quietly. If a
+   simpler path exists, suggest it. When something is unclear, ask before writing.
+2. **Simplicity first.** Write only what was asked for: no features nobody
+   requested, no abstraction used in a single place, no options nobody will set,
+   no handling for cases that cannot happen. If a reviewer would call it
+   overbuilt, cut it down.
+3. **Surgical changes.** Touch only what the task needs and follow the style of the
+   code around it. Leave unrelated code, comments and formatting as they are; if
+   you notice dead code that is not yours, point it out instead of deleting it.
+   Remove only the imports, names and functions your own change left unused.
+4. **Work toward a goal you can check.** Turn the task into a result that can be
+   verified, such as a test that shows the bug before the fix. For work in several
+   steps, state the steps and how each one will be checked. Ask before running
+   tests or other checks unless the project's guidelines say otherwise.
 
 ## Settings of this project
 

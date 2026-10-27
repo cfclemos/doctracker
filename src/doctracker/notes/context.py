@@ -18,7 +18,8 @@ CONTEXT_KINDS = ("session", "planning", "file", "commit")
 RULE = (
     "This project keeps its plans, guidelines and memory in doctracker (MCP server \"doctracker\"). "
     "Record notes, decisions and progress there (create_note, annotate_task, update_task), not in files "
-    "or local memory. Before planning, changing code or writing a note, call recall(query)."
+    "or local memory. Before planning, changing code or writing a note, call recall(query). "
+    "Before writing or changing code or docstrings, call documentation_guide and follow it."
 )
 """The first lines of every session: where everything is kept and how to find it."""
 
