@@ -3,6 +3,7 @@
 // the values below; changes made here are lost when it is written again.
 
 import { execFile } from "node:child_process";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BASE_URL = __BASE_URL__;
@@ -16,6 +17,7 @@ const TIMEOUT_MS = 2000; // a hook never waits longer than this for the server
 const WATCH_MS = 2000; // how often the plugin checks whether the server restarted
 const SERVER_HEADER = "x-doctracker-server"; // carries the server's id in the MCP config, see `ensure`
 const FILE_TOOLS = ["read", "edit", "write"]; // tools that read or change one file
+const EDIT_TOOLS = ["edit", "write", "apply_patch"]; // tools that change files: they need a task in progress
 const PATCH_FILE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm; // the files of an `apply_patch`
 
 // The context of a moment from the server (`/hooks/context/<kind>`); null when it does not answer.
@@ -86,6 +88,12 @@ function ensure(ctx, { loading = false, start = true } = {}) {
     }
   })();
   return ensuring;
+}
+
+// Whether editing a file needs a task in progress: a file of the project, outside `doc/`.
+function gated(path) {
+  const inside = relative(PROJECT_ROOT, resolve(PROJECT_ROOT, path));
+  return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) && inside.split(sep)[0] !== "doc";
 }
 
 // The files a tool call read or changed (paths as the tool got them; the server resolves relative ones).
@@ -161,6 +169,15 @@ export default {
     // the server may have restarted since the model was called.
     await ctx.tool.hook("execute.before", async (event) => {
       if (`${event.tool} ${JSON.stringify(event.input ?? {})}`.includes("doctracker")) await ensure(ctx);
+    });
+
+    // Outside the `plan` agent, editing the project needs a task in progress: the edit is refused with the
+    // reason the server gives (the `edit` context, empty while a task is doing; none when it does not answer).
+    await ctx.tool.hook("execute.before", async (event) => {
+      if (!EDIT_TOOLS.includes(event.tool) || session(event.sessionID).agent === "plan") return;
+      if (!toolFiles(event.tool, event.input ?? {}).some(gated)) return;
+      const reason = await ask("edit", {});
+      if (reason) throw new Error(reason);
     });
 
     // The notes of a file read or edited, once per file per session, added to the tool's result.

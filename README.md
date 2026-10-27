@@ -115,9 +115,10 @@ tool.
 
 | Moment | Context |
 | --- | --- |
-| Session start, after a summary, subagent | where notes and plans live, the guidelines given always, the open planning, the review tasks |
+| Session start, after a summary, subagent | where notes and plans live, the guidelines given always, the open planning, the review tasks, and to judge whether a change needs plan mode before starting it |
 | Planning (plan mode, OpenCode's `plan` agent) | the planning guidelines, the requirements of the open plans, and a reminder to record the approved plan in the Planner |
 | A file is read or edited | the notes about its code, once per file and session, and a reminder when no task is in progress |
+| A file of the project is about to be edited, outside plan mode | with no task in progress, the edit is refused: plan first, or set the task to doing (`doc/` and files outside the project are not gated) |
 | Committing | the default commit rules (no AI attribution, doctracker's local files stay out, subject and why) and the commit guidelines, with the pre-commit material |
 | Server not running | the session hook starts it and waits up to a minute; if it still does not answer, the guidelines and planning read straight from `notes.db`, with a warning |
 

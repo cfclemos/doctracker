@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx2
 
-from doctracker.config import NOTES_DATABASE_PATH
+from doctracker.config import DOC_DIR, NOTES_DATABASE_PATH
 from doctracker.integrations import NOT_STARTED, RECORD_THE_PLAN, SERVER_DOWN, doctracker_command, exclude_from_git
 from doctracker.integrations.autostart import START_TIMEOUT, ensure_server
 from doctracker.notes import NoteStore
@@ -33,7 +33,7 @@ HOOKS = {
     "SessionStart": "",
     "SubagentStart": "",
     "UserPromptSubmit": "",
-    "PreToolUse": "EnterPlanMode|ExitPlanMode",
+    "PreToolUse": "EnterPlanMode|ExitPlanMode|Edit|Write|MultiEdit",
     "PostToolUse": "Read|Edit|Write|MultiEdit",
 }
 """The events doctracker answers, with the tools they are limited to (empty: every one)."""
@@ -52,6 +52,9 @@ SERVER_TIMEOUT = 5.0
 
 FILE_TOOLS = ("Read", "Edit", "Write", "MultiEdit")
 """Tools that read or change one file; its notes are given once per session."""
+
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit")
+"""Tools that change a file; outside plan mode, editing the project needs a task in progress."""
 
 
 def answer(event: dict, base_url: str, project_root: Path) -> dict | None:
@@ -79,6 +82,15 @@ def answer(event: dict, base_url: str, project_root: Path) -> dict | None:
         text = _ask(base_url, "planning", session=session, once=True)
     elif name == "PreToolUse" and tool == "ExitPlanMode":
         text = RECORD_THE_PLAN
+    elif name == "PreToolUse" and tool in EDIT_TOOLS:
+        path = (event.get("tool_input") or {}).get("file_path", "")
+        if event.get("permission_mode") == "plan" or not _gated(project_root, path):
+            return None
+        reason = _ask(base_url, "edit", session=session, once=False)
+        if not reason:
+            return None
+        return {"hookSpecificOutput": {"hookEventName": name, "permissionDecision": "deny",
+                                       "permissionDecisionReason": reason}}
     elif name == "PostToolUse" and tool in FILE_TOOLS and (event.get("tool_input") or {}).get("file_path"):
         text = _ask(base_url, "file", session=session, once=True, path=event["tool_input"]["file_path"])
     else:
@@ -86,6 +98,17 @@ def answer(event: dict, base_url: str, project_root: Path) -> dict | None:
     if not text:
         return None
     return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": text}}
+
+
+def _gated(project_root: Path, path: str) -> bool:
+    """Whether editing a file needs a task in progress: a file of the project, outside `doc/`."""
+    if not path:
+        return False
+    try:
+        relative = (project_root / path).resolve().relative_to(project_root.resolve())
+    except ValueError:
+        return False
+    return relative.parts[:1] != (DOC_DIR,)
 
 
 def _ask(base_url: str, kind: str, session: str, once: bool, path: str = "") -> str | None:

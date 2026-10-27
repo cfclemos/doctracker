@@ -217,7 +217,8 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
 The same texts the hooks give by themselves: `session` (where everything is kept, the guidelines
 given always, the open planning, the reviews waiting), `planning` (how to plan here, the planning
 guidelines, the open requirements), `file` (the notes about the code of a file), `commit` (the
-guidelines given when committing).
+guidelines given when committing), `edit` (why editing the project is refused while no task is in
+progress; empty when one is).
 
 Args:
     kind: One of {", ".join(CONTEXT_KINDS)}.
