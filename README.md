@@ -1,16 +1,15 @@
 # DOCUMENTATION TRACKER (DOCTRACKER)
 
-**One place for the documentation of a Python project developed with LLM agents.**
+**One place for the documentation, notes and plans of a Python project developed with LLM agents.**
 
 When agents work on a codebase, documentation ends up scattered: notes in many
 Markdown files, memories, code comments and commit messages, all drifting out of
 sync. Documentation Tracker (doctracker) centralizes it. It runs an [MCP](https://modelcontextprotocol.io)
-server that any agent (Claude Code, OpenCode, …) can connect to, and serves a live
-wiki of the project in your browser.
+server that agents (Claude Code, OpenCode, …) connect to, gives them the right
+context at the right moments, and serves a live wiki of the project in your browser.
 
-> **Status: alpha (0.2).** doctracker builds the technical reference of the code
-> and searches it by words and by meaning. Notes, commit history and LLM summaries
-> come in the next versions (see [Roadmap](#roadmap)).
+> **Status: alpha (0.3).** The technical reference, search, code graphs, git
+> history, agent notes, the planner and the commit flow work. See [Roadmap](#roadmap).
 
 ## Features
 
@@ -19,17 +18,32 @@ wiki of the project in your browser.
   docstrings (Google, NumPy or Sphinx style).
 - **Static analysis only** — the code is read with [griffe](https://mkdocstrings.github.io/griffe/),
   never imported or executed.
-- **Live wiki** — edit a file and the open page updates by itself.
-- **Four kinds of search**, the same for agents and in the wiki:
-  plain text, **BM25** (words in any order), **semantic** (meaning, in any
-  language) and **hybrid** (both combined), with paging.
+- **Live wiki** — edit a file or commit and the open page updates by itself.
+- **Code graphs** — architecture (modules and imports, cycles marked), class
+  diagram and call graph of any function.
+- **Git history** — branch graph, commits with their diffs, and the commits that
+  changed a file or an entity.
+- **Agent notes** — guidelines (how to work) and memory (what is known), optionally
+  tied to entities of the code. A new note is compared with the existing ones
+  first, so the same knowledge is not written twice.
+- **Planner** — plans, features and tasks with criteria, states, dependencies,
+  due dates, annotations and evidence. Done work is archived, tied to its commits.
+- **Commit flow** — the agent plans the commits with you, commits only what you
+  approved, records them on their tasks and merges the branch into main when its
+  planned work is done. Commits made outside the flow become review tasks.
+- **Context for agents, by itself** — Claude Code hooks and an OpenCode plugin,
+  written by doctracker, give the agent the guidelines and the open planning at
+  the start of a session, when planning, when a file is read or edited and when
+  committing.
+- **Search** — plain text, **BM25** (words in any order), **semantic** (meaning,
+  in any language) and **hybrid** (both), the same for agents and in the wiki;
+  `recall` searches the open planning first, then the guidelines, memory, code
+  and the archive.
 - **Local embeddings** — semantic search runs on your machine with
   [llama.cpp](https://github.com/ggml-org/llama.cpp) (downloaded and managed by
   doctracker, on the GPU when there is one) or on your own [vLLM](https://github.com/vllm-project/vllm) server.
-- **MCP server** — agents can list, read and search the documentation, and get a
-  guide on how to document the code so the wiki stays complete.
-- **Everything in one folder** — doctracker keeps its files in `doc/` inside your
-  project and never touches anything else.
+- **Everything in one folder** — doctracker keeps its data in `doc/` inside your
+  project; the agents' settings it writes stay local and out of git.
 - **Cross-platform** — Windows and Linux, Python 3.11+.
 
 ## Installation
@@ -58,9 +72,11 @@ doctracker start    # starts the server
 With uv, prefix the commands with `uv run` (e.g. `uv run doctracker start`).
 `start` runs `init` on its own if the project has no configuration yet.
 
-The server prints its two addresses:
+The server prints where it wrote the agents' settings and its two addresses:
 
 ```text
+Claude Code hooks: .claude/settings.local.json
+OpenCode plugin: .opencode/plugins/doctracker.js
 Wiki: http://127.0.0.1:8765/
 MCP:  http://127.0.0.1:8765/mcp
 ```
@@ -71,7 +87,7 @@ stop it with `Ctrl+C`.
 ## Connecting an agent
 
 The MCP server uses the Streamable HTTP transport at `http://127.0.0.1:8765/mcp`.
-The server must be running before the agent connects.
+Start the server before the agent.
 
 **Claude Code** — add a `.mcp.json` file at the root of your project:
 
@@ -89,38 +105,77 @@ or register it from the terminal:
 claude mcp add --transport http doctracker http://127.0.0.1:8765/mcp
 ```
 
-**OpenCode** — in `opencode.json`:
+`init` and `start` also write doctracker's hooks into `.claude/settings.local.json`
+(your other settings are kept) and switch Claude Code's own auto memory off for
+the project, so notes are kept only in doctracker.
 
-```json
-{
-  "mcp": {
-    "doctracker": { "type": "remote", "url": "http://127.0.0.1:8765/mcp" }
-  }
-}
-```
+**OpenCode** (version 2) — nothing to configure. When OpenCode is installed (or the
+project has an `.opencode/` folder), `init` and `start` write the plugin
+`.opencode/plugins/doctracker.js`, which registers the MCP server and gives the
+context. The plugin is kept out of git through `.git/info/exclude`.
 
 **Other agents** — any MCP client that supports Streamable HTTP can connect to the
-same URL.
+same URL. Without hooks, the agent gets the same contexts from the `agent_context`
+tool.
+
+### When the agent gets what
+
+| Moment | Context |
+| --- | --- |
+| Session start, after a summary, subagent | where notes and plans live, the guidelines given always, the open planning, the review tasks |
+| Planning (plan mode, OpenCode's `plan` agent) | the planning guidelines, the requirements of the open plans, and a reminder to record the approved plan in the Planner |
+| A file is read or edited | the notes about its code, once per file and session, and a reminder when no task is in progress |
+| Committing | the commit guidelines, with the pre-commit material |
+| Server not running | a request to ask you whether to start it |
 
 ### What the agent gets
 
-| Name | Kind | What it does |
-| --- | --- | --- |
-| `list_entities` | tool | Lists documented entities, filtered by path prefix and kind. |
-| `get_entity` | tool | Full technical reference of one entity. |
-| `status` | tool | Whether the documentation is built, and loading errors. |
-| `bm25_search` | tool | Finds entities by the words they share with the query. |
-| `semantic_search` | tool | Finds entities by meaning, in any language. |
-| `hybrid_search` | tool | BM25 and semantic search combined; usually the best choice. |
-| `embedding_status` | tool | State of the embedding backend: model, device, download progress, index size. |
-| `set_embedding_model` | tool | Changes the embedding model and saves it in `config.json`. |
-| `set_models_dir` | tool | Changes the folder of models and llama.cpp binaries. |
-| `documentation_guide` | tool | How to document this project's code (adapted to its settings). |
-| `doctracker://guide` | resource | The same guide, as a Markdown resource. |
+| Group | Tools |
+| --- | --- |
+| Code | `list_entities`, `get_entity`, `status`, `documentation_guide` (also the `doctracker://guide` resource) |
+| Search | `recall`, `hybrid_search`, `bm25_search`, `semantic_search` |
+| Graphs | `architecture_view`, `class_diagram_view`, `call_graph_view` |
+| Git | `git_history`, `git_branches`, `git_commit` |
+| Notes | `create_note`, `update_note`, `supersede_note`, `delete_note`, `list_notes` |
+| Planner | `work_context`, `create_plan`, `update_plan`, `add_feature`, `update_feature`, `add_task`, `update_task`, `check_criterion`, `annotate_task`, `add_task_evidence`, `add_dependency`, `remove_dependency`, `delete_item`, and the tools to change or delete annotations and evidence |
+| Commit flow | `prepare_commit`, `commit`, `after_commit`, `clean_done`, `merge_branch` |
+| Context | `agent_context` |
+| Embeddings | `embedding_status`, `set_embedding_model`, `set_models_dir` |
 
-The search tools take `limit` and `offset` (paging) and return `total`. The
-server's instructions tell the agent to read the guide before writing or
-changing docstrings.
+## Notes and planning
+
+**Notes** are short facts, in two groups:
+
+| Group | Types | Given to the agent |
+| --- | --- | --- |
+| Guidelines (how to work) | `preference`, `rule` | by itself, at their moments: `always`, `planning`, `commit`; and when the code of their entities is read or edited |
+| Memory (what is known) | `decision`, `context`, `pitfall`, `reference` | found with `recall` when needed |
+
+A note that stops being true is superseded by a new one, not rewritten. Before a
+note is added it is compared with the active notes of its group; when similar ones
+exist it is refused and they are listed, so the agent updates one of them instead.
+
+**The Planner** holds plans made of features, and features made of tasks. Tasks
+have criteria, a state (`todo`, `doing`, `done`), annotations of what was done or
+found, and evidence. Any item can depend on another; blocked and late items are
+marked. Only you approve a task as done. The fixed **Reviews** plan collects the
+commits made outside the commit flow, and is shown only when it has tasks.
+
+## The commit flow
+
+1. **Pre-commit** — `prepare_commit` gives the changed files, the open tasks and
+   the commit guidelines. The agent proposes the commits (files, message and tasks)
+   and goes through them with you; the server checks that every file is in one
+   commit only and lists what is missing.
+2. **Commit** — `commit` runs `git add` and `git commit` for each approved group,
+   and stops at the first error, leaving that group's changes unstaged.
+3. **Post-commit** — `after_commit` records the commits on their tasks, lists what
+   is pending and what can be cleaned, and merges the branch into main (`--no-ff`)
+   once its planned work is done and committed. `clean_done` archives the done
+   items you confirm and deletes them; the archive keeps them tied to their commits.
+
+Commits made from the terminal or an IDE are found by the git watcher (also those
+made while the server was off) and become tasks of the Reviews plan.
 
 ## Search
 
@@ -131,9 +186,13 @@ changing docstrings.
 | Semantic | entities close in meaning, in any language ("what happens when the city does not exist?") | yes |
 | Hybrid | BM25 and semantic combined (reciprocal rank fusion) | yes |
 
+`recall` (also the "All" mode in the wiki) groups its results: open planning first,
+then guidelines, memory, code and the archive. It uses hybrid search when the
+embedding model is ready and BM25 meanwhile.
+
 Semantic and hybrid searches return at most 100 results. The indexes live in
 `doc/sqlite/doctracker.db` and are updated incrementally, when a search needs
-them: only entities whose text changed are processed again.
+them: only entities and notes whose text changed are processed again.
 
 ### The embedding model
 
@@ -143,7 +202,7 @@ Nothing is downloaded until the first semantic or hybrid search. Then doctracker
 2. downloads the llama.cpp build for your machine (`device: "auto"` tries CUDA,
    then any other GPU through Vulkan, then the CPU; NVIDIA libraries are never
    downloaded, the installed CUDA runtime is used);
-3. starts `llama-server` and embeds every entity.
+3. starts `llama-server` and embeds every entity and note.
 
 On a recent GPU this takes about 25 seconds the first time, about 1 second when
 the files are already there, and each search then takes a few milliseconds. The
@@ -154,15 +213,22 @@ To use your own **vLLM** server instead, set `embeddings.vllm_url` (and
 
 ## The wiki
 
-- **Tree** — packages, folders and modules (with [Tabler](https://tabler.io/icons) icons), classes (**C**), functions (**f**) and
-  methods (**m**). Branches collapse; the tree can be resized or hidden (☰).
+- **Tree** — AGENT NOTES, the views (architecture, classes, calls, git), and the
+  packages, folders and modules (with [Tabler](https://tabler.io/icons) icons),
+  classes (**C**), functions (**f**) and methods (**m**). Branches collapse; the
+  tree can be resized or hidden (☰).
 - **Module pages** — description, public API (`__all__`) and members grouped by kind.
 - **Entity pages** — description, signature, parameters table, returns, raises,
   examples, notes, members (for classes) and the source code with syntax
   highlighting. Every section can be collapsed from its badge.
+- **Graphs** — architecture, class diagram and call graph, with a focus on any entity.
+- **Git** — the branch graph, the history (also of one file) and each commit with
+  its message, files and diffs.
+- **AGENT NOTES** — the Planner as cards and a dependency drawing, and the notes;
+  everything can be created and edited here as well as by the agent.
 - **Code theme** — choose among the Pygments themes in the Source section; the
   choice is saved in `config.json`.
-- **Search** — pick a mode (Default, BM25, Semantic, Hybrid), press `/` anywhere,
+- **Search** — pick a mode (Default, BM25, Semantic, Hybrid, All), press `/` anywhere,
   type, use ↑/↓ and Enter; pages are at the bottom of the results.
 
 ## Configuration
@@ -204,7 +270,8 @@ doc/
 ├── config/
 │   └── config.json     # commit this file
 ├── sqlite/
-│   └── doctracker.db   # search indexes (created on first search)
+│   ├── doctracker.db   # search indexes
+│   └── notes.db        # notes, planner, commit records and archive
 └── models/             # embedding model and llama.cpp (created on first semantic search)
 ```
 
@@ -244,18 +311,13 @@ Agents get the complete guide from the `documentation_guide` tool.
 
 - By default the server listens only on `127.0.0.1`, and the MCP endpoint
   validates the `Host` and `Origin` headers (protection against DNS rebinding).
-- The wiki only accepts changes (such as the code theme) from its own pages.
-- Exposing the server on a network is not supported yet: there is no
-  authentication in this version.
+- The wiki only accepts changes (notes, planner, code theme) from its own pages.
+- doctracker is a local development tool: there is no authentication, so do not
+  expose the server on a network.
 
 ## Roadmap
 
-- Notes recorded by the agent through the MCP server, turned into atomic commits.
-- Commit history linked to each function and class, with LLM summaries
-  (llama.cpp or vLLM).
-- Knowledge graph of the code: callers, callees, dead code.
-- Documentation coverage report (undocumented entities and parameters).
-- Editing the documentation from the wiki.
+- Dead code analysis in the wiki.
 
 ## License
 
