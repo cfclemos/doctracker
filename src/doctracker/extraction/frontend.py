@@ -43,7 +43,7 @@ def extract_frontend(root: Path, entities: dict[str, dict]) -> dict[str, dict]:
 
     Returns:
         The front-end entities, by path, with the same keys as the Python ones plus `language` and
-        `search_text`.
+        `search_text`; each file is also added to the `members` of its package.
     """
     root = root.resolve()
     packages = {(root / entity["filepath"]).resolve().parent.relative_to(root).as_posix(): path
@@ -77,6 +77,8 @@ def extract_frontend(root: Path, entities: dict[str, dict]) -> dict[str, dict]:
                 found[path] = _entity(path, name, member_kind, file_path, relative, lineno, endlineno, comment, text)
             found[file_path] = _entity(file_path, file.name, kind, parent, relative, 1, source.count("\n") + 1,
                                        _file_comment(kind, source), source, children)
+            if parent in entities:
+                entities[parent]["members"].append(file_path)
     return found
 
 

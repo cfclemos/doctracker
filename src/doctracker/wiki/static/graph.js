@@ -15,6 +15,8 @@ const ROLE_COLORS = {
   package: "--accent", subpackage: "--accent", module: "--accent",
   class: "--class", function: "--function", method: "--method",
   attribute: "--attribute", "type alias": "--attribute",
+  script: "--function", "js-function": "--function", stylesheet: "--attribute", "css-class": "--attribute",
+  "css-rule": "--attribute", template: "--class", macro: "--class",
 };
 
 function cssVar(name) {

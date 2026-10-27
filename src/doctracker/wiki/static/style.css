@@ -390,6 +390,13 @@ details.block:not([open]) {
 .badge-module, .badge-subpackage, .badge-description,
 .block-module, .block-subpackage, .block-description { --tint: var(--accent); }
 .badge-exports, .block-exports { --tint: var(--exports); }
+/* Front-end entities: scripts like functions, stylesheets like attributes, templates like classes. */
+.icon-script, .icon-js-function, .badge-script, .badge-js-function, .block-script, .block-js-function { --tint: var(--function); }
+.icon-stylesheet, .icon-css-class, .icon-css-rule, .badge-stylesheet, .badge-css-class, .badge-css-rule,
+.block-stylesheet, .block-css-class, .block-css-rule { --tint: var(--attribute); }
+.icon-template, .icon-macro, .badge-template, .badge-macro, .block-template, .block-macro { --tint: var(--class); }
+.relations .summary code { font-size: 0.78rem; }
+.relation-path { color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.78rem; }
 .badge-returns, .badge-yields, .badge-receives,
 .block-returns, .block-yields, .block-receives { --tint: var(--returns); }
 .badge-raises, .badge-deprecated, .block-raises, .block-deprecated { --tint: var(--raises); }

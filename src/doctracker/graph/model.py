@@ -344,12 +344,13 @@ def call_graph(state: DocState, focus: str, depth: int = 1, direction: str = "bo
 
     Returns:
         `nodes` (with `distance` from the focus and `side`: `focus`, `callee` or `caller`)
-        and `edges` (`calls`); both empty when `focus` is unknown.
+        and `edges` (`calls`, and `refers` and `uses`: a callback, a route, a template, a CSS class);
+        both empty when `focus` is unknown.
     """
     if focus not in state.entities:
         return {"nodes": [], "edges": []}
     depth = max(1, min(depth, MAX_CALL_DEPTH))
-    calls = _edges_of(state, "calls")
+    calls = [edge for kind in ("calls", "refers", "uses") for edge in _edges_of(state, kind)]
     callees: dict[str, list[str]] = {}
     callers: dict[str, list[str]] = {}
     for edge in calls:
@@ -370,7 +371,7 @@ def call_graph(state: DocState, focus: str, depth: int = 1, direction: str = "bo
             frontier = reached
     nodes = [_node(state, path, distance=distance, side=side) for path, (distance, side) in found.items()]
     edges = [
-        {"id": f"calls:{e['source']}->{e['target']}", **e}
+        {"id": f"{e['kind']}:{e['source']}->{e['target']}", **e}
         for e in calls
         if e["source"] in found and e["target"] in found
     ]
