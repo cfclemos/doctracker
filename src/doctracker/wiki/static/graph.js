@@ -321,6 +321,11 @@ function plannerDetail(item) {
   return `/notes/form?item=${encodeURIComponent(item)}&panel=1&tab=planner&plans=${encodeURIComponent(plannerParams().get("plans") || "")}`;
 }
 
+// The reference agents use for an item (plan:3, task:12): a box standing for several levels shows each.
+function plannerRef(node) {
+  const refs = [node.id, node.open].filter((ref, index, all) => ref && all.indexOf(ref) === index);
+  return `<code class="planner-ref" title="Reference used by the agents">${refs.map(escapeHtml).join(" · ")}</code>`;
+}
 function plannerBox(node) {
   if (node.kind === "external") {
     const plans = new Set((plannerParams().get("plans") || "").split(",").filter((part) => /^\d+$/.test(part)));
@@ -345,7 +350,7 @@ function plannerBox(node) {
   const level = node.level !== "task" ? `<i class="level-icon level-${node.level}" title="${escapeHtml(node.level)}"></i>` : "";
   if (node.empty) {
     return `<div class="uml-box planner-task planner-empty state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
-      <div class="uml-head">${level}<strong>${escapeHtml(node.label)}</strong><span class="planner-state">${STATE_LABELS[node.state]}</span></div>
+      <div class="uml-head">${level}<strong>${escapeHtml(node.label)}</strong>${plannerRef(node)}<span class="planner-state">${STATE_LABELS[node.state]}</span></div>
       <div class="planner-facts"><span>no ${node.level === "plan" ? "features" : "tasks"} yet</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}</div>${waits}
     </div>`;
   }
@@ -360,7 +365,7 @@ function plannerBox(node) {
         <input type="hidden" name="selected" value="${escapeHtml(node.open)}">
         <input type="checkbox" name="done" value="1" aria-label="Done"${node.status === "done" ? " checked" : ""}>
       </form>
-      ${level}<strong>${escapeHtml(node.label)}</strong>
+      ${level}<strong>${escapeHtml(node.label)}</strong>${plannerRef(node)}
       <span class="planner-state">${STATE_LABELS[node.state]}</span>
     </div>
     <div class="planner-facts">${facts}</div>${waits}
@@ -441,7 +446,7 @@ function plannerFrame(node) {
   return `<div class="arch-frame planner-frame planner-${kind} state-${node.state}${node.parent ? " inner" : ""}"
       data-frame="${escapeHtml(node.id)}" data-open="${plannerDetail(node.id)}">
     <div class="arch-frame-head"><i class="level-icon level-${kind}" title="${kind}"></i><strong>${escapeHtml(node.label)}</strong>
-      <span class="planner-state">${STATE_LABELS[node.state]}</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}
+      ${plannerRef(node)}<span class="planner-state">${STATE_LABELS[node.state]}</span>${node.due ? `<span title="Due date">⏱ ${escapeHtml(node.due)}</span>` : ""}
       ${add}</div></div>`;
 }
 

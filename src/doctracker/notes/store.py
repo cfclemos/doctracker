@@ -37,6 +37,34 @@ NOTE_TYPES = {
 NOTE_GROUPS = {"guidelines": ("preference", "rule"), "memory": ("decision", "context", "pitfall", "reference")}
 """Guidelines say how to work; memory keeps what is known about the project."""
 
+NOTE_GROUP_TEXTS = {
+    "guidelines": ("How the work must be done.", "Agents get these by themselves: always, when planning, when "
+                   "committing (its moments), and when the code of its entities is read or edited."),
+    "memory": ("What is known about the project.", "Not given by itself: agents find it with recall when they "
+               "need it, and the notes about some code come when that code is read or edited."),
+}
+"""What each group is for and how agents get it: `(title, text)`."""
+
+NOTE_TYPE_USES = {
+    "preference": ("Write it when the user corrects or confirms a way of working.",
+                   "Show the commit text before committing."),
+    "rule": ("It holds whoever works on the project; it is not a matter of taste.",
+             "Dependencies only under permissive licenses (MIT, BSD, Apache-2.0, ISC)."),
+    "decision": ("A choice taken with the user, with why, so nobody undoes it by mistake.",
+                 "Commits made outside the flow are found by the git watcher, not by git hooks, which would "
+                 "clash with the project's own."),
+    "context": ("When the code alone does not say how a part works or why it is so.",
+                "doctracker documents itself: the server runs on port 8765."),
+    "pitfall": ("Something not obvious that breaks, and how it shows up.",
+                "Changes to Python files need a server restart; templates do not."),
+    "reference": ("Where to find something outside the project.",
+                  "The second test project is ~/Documentos/Projects/Teste3."),
+}
+"""When to write each note type, `(when, example)`: shown in the wiki and in the create_note tool."""
+
+NOT_A_NOTE = "Not a note: the progress of a task (annotate the task) or what the code and git already say."
+"""What does not go into notes."""
+
 TASK_STATUSES = ("todo", "doing", "done")
 """Where a task stands, set by hand."""
 
@@ -52,6 +80,17 @@ SOURCES = ("agent", "wiki")
 
 KINDS = {"plan": "plans", "feature": "features", "task": "tasks"}
 """Kinds of planner items, with their table."""
+
+MOMENTS = ("always", "planning", "commit")
+"""When a guideline is given to the agent: in every session, when planning, when committing.
+A note about code entities is also given when that code is read or edited."""
+
+REVIEWS = {"title": "Reviews", "goal": "Commits made outside the flow, to be checked against the planning and the memory.",
+           "feature": "Commits outside the flow"}
+"""The fixed plan of the reviews: created with the store, never deleted, its own fields never change."""
+
+ADDED_COLUMNS = (("notes", "moments", "TEXT NOT NULL DEFAULT '[]'"), ("plans", "fixed", "INTEGER NOT NULL DEFAULT 0"))
+"""Columns added after the first version of the tables: `ALTER TABLE` adds them to an older database."""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS plans (
@@ -80,10 +119,16 @@ CREATE TABLE IF NOT EXISTS notes (
   status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS links (
   source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (source, target, kind));
+CREATE TABLE IF NOT EXISTS commits (
+  hash TEXT PRIMARY KEY, tasks TEXT NOT NULL DEFAULT '[]', closed INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 """Tables. Task criteria are `[{"text", "done"}]`. `dependencies` says that `item` waits for
 `depends_on` (both `kind:id`). `links` holds the relations of notes, made by the methods here:
-`note:<id>` → entity path (`about`), `note:<new>` → `note:<old>` (`supersedes`)."""
+`note:<id>` → entity path (`about`), `note:<new>` → `note:<old>` (`supersedes`). A note's `moments`
+is a JSON list (guidelines only); a plan with `fixed` 1 is the Reviews plan. `commits` holds the
+commits made by the commit flow, with the tasks of each (`closed` once the post-commit recorded
+them); `meta` holds the sync marker (`last_commit`, `last_check`)."""
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 """A due date, `YYYY-MM-DD`."""
@@ -164,12 +209,15 @@ class NoteStore:
 
     Attributes:
         path: Database file.
+        committing: True while the commit flow runs, so its commits are not taken for outside ones.
     """
 
     def __init__(self, path: Path, entity_exists: Callable[[str], bool], on_change: Callable[[], None]) -> None:
         self.path = path
         self._entity_exists = entity_exists
         self._on_change = on_change
+        self.committing = False
+        self._ensure_reviews()
 
     @contextmanager
     def _connect(self, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -180,6 +228,7 @@ class NoteStore:
         try:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.executescript(SCHEMA)
+            _add_columns(connection)
             if write:
                 with connection:
                     yield connection
@@ -189,6 +238,30 @@ class NoteStore:
             connection.close()
         if write:
             self._on_change()
+
+    def _ensure_reviews(self) -> None:
+        """Create the fixed Reviews plan, with its feature, when the database has none."""
+        with self._connect() as connection, connection:
+            if connection.execute("SELECT 1 FROM plans WHERE fixed = 1").fetchone():
+                return
+            now = _now()
+            plan_id = connection.execute(
+                "INSERT INTO plans (title, goal, fixed, source, created, updated) VALUES (?, ?, 1, 'agent', ?, ?)",
+                (REVIEWS["title"], REVIEWS["goal"], now, now)).lastrowid
+            connection.execute(
+                "INSERT INTO features (plan_id, title, position, source, created, updated) VALUES (?, ?, 0, 'agent', ?, ?)",
+                (plan_id, REVIEWS["feature"], now, now))
+
+    def _refuse_fixed(self, plan_id: int) -> None:
+        """Refuse to change or delete the Reviews plan itself.
+
+        Raises:
+            ValueError: When `plan_id` is the Reviews plan.
+        """
+        with self._connect() as connection:
+            if connection.execute("SELECT 1 FROM plans WHERE id = ? AND fixed = 1", (plan_id,)).fetchone():
+                raise ValueError("The Reviews plan is fixed: it is never deleted and its own fields do not change. "
+                                 "Change its features and tasks instead.")
 
     # --- Planner: creating
 
@@ -310,7 +383,11 @@ class NoteStore:
 
         Returns:
             The plan (see `get_plan`).
+
+        Raises:
+            ValueError: For the Reviews plan, whose fields never change.
         """
+        self._refuse_fixed(plan_id)
         changes = {}
         if title is not None:
             changes["title"] = _title(title, "plan")
@@ -557,9 +634,11 @@ class NoteStore:
         """Delete a plan, feature or task made by mistake, with everything inside it and its dependencies.
 
         Args:
-            item: `plan:<id>`, `feature:<id>` or `task:<id>`.
+            item: `plan:<id>`, `feature:<id>` or `task:<id>`; the Reviews plan is refused.
         """
         kind, item_id = parse_item(item)
+        if kind == "plan":
+            self._refuse_fixed(item_id)
         inside = self._descendants(kind, item_id)
         with self._connect(write=True) as connection:
             if connection.execute(f"DELETE FROM {KINDS[kind]} WHERE id = ?", (item_id,)).rowcount == 0:
@@ -661,11 +740,12 @@ class NoteStore:
 
     # --- Planner: reading
 
-    def planner(self, include_done: bool = True) -> dict:
+    def planner(self, include_done: bool = True, include_empty_reviews: bool = False) -> dict:
         """Everything in the planner, with the worked-out state of every item.
 
         Args:
             include_done: Also the plans that are done.
+            include_empty_reviews: Also the Reviews plan while it has no task (it is left out then).
 
         Returns:
             `plans` (newest first, see `get_plan`) and `dependencies` (`item`, `depends_on`, `reason`).
@@ -678,6 +758,8 @@ class NoteStore:
             dependencies = [dict(row) for row in connection.execute(
                 "SELECT item, depends_on, reason, source, created FROM dependencies ORDER BY created")]
         _work_out_states(plans, features, tasks, dependencies, today)
+        if not include_empty_reviews:
+            plans = [plan for plan in plans if not plan["fixed"] or any(f["tasks"] for f in plan["features"])]
         if not include_done:
             plans = [plan for plan in plans if plan["state"] != "done"]
         kept = {item for plan in plans for item in _items_of(plan)}
@@ -810,12 +892,13 @@ class NoteStore:
             ValueError: When there is no such plan.
         """
         self._exists("plan", plan_id)
-        return next(plan for plan in self.planner()["plans"] if plan["id"] == plan_id)
+        return next(plan for plan in self.planner(include_empty_reviews=True)["plans"] if plan["id"] == plan_id)
 
     def get_feature(self, feature_id: int) -> dict:
         """Read a feature with its tasks (see `get_plan`); it also has `plan_id` and `description`."""
         self._exists("feature", feature_id)
-        return next(feature for plan in self.planner()["plans"] for feature in plan["features"] if feature["id"] == feature_id)
+        return next(feature for plan in self.planner(include_empty_reviews=True)["plans"] for feature in plan["features"]
+                    if feature["id"] == feature_id)
 
     def get_task(self, task_id: int) -> dict:
         """Read a task.
@@ -826,7 +909,7 @@ class NoteStore:
             `source`, `created` and `updated`.
         """
         self._exists("task", task_id)
-        return next(task for plan in self.planner()["plans"] for feature in plan["features"]
+        return next(task for plan in self.planner(include_empty_reviews=True)["plans"] for feature in plan["features"]
                     for task in feature["tasks"] if task["id"] == task_id)
 
     def get_item(self, item: str) -> dict:
@@ -837,7 +920,7 @@ class NoteStore:
     # --- Notes
 
     def create_note(self, type: str, statement: str, why: str = "", entities: list[str] | None = None,
-                    source: str = "agent") -> dict:
+                    source: str = "agent", moments: list[str] | None = None) -> dict:
         """Write down a piece of lasting knowledge.
 
         Args:
@@ -846,6 +929,7 @@ class NoteStore:
             why: Why it holds (the reason behind a rule or decision, how a pitfall shows up).
             entities: Paths of the code entities it is about (classes, functions, modules...).
             source: `agent` or `wiki`.
+            moments: Guidelines only: when it is given to the agent (`MOMENTS`); `always` by default.
 
         Returns:
             The note (see `get_note`).
@@ -855,23 +939,27 @@ class NoteStore:
         if not statement or not statement.strip():
             raise ValueError("A note needs a statement.")
         paths = self._entities(entities)
+        stored_moments = _moments(type, moments)
         now = _now()
         with self._connect(write=True) as connection:
             note_id = connection.execute(
-                "INSERT INTO notes (type, statement, why, source, created, updated) VALUES (?, ?, ?, ?, ?, ?)",
-                (type, statement.strip(), (why or "").strip(), source, now, now),
+                "INSERT INTO notes (type, statement, why, moments, source, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (type, statement.strip(), (why or "").strip(), stored_moments, source, now, now),
             ).lastrowid
             self._link_entities(connection, note_id, paths)
         return self.get_note(note_id)
 
     def update_note(self, note_id: int, statement: str | None = None, why: str | None = None,
-                    entities: list[str] | None = None) -> dict:
-        """Fix a note (a typo, a missing entity). To record that it no longer holds, use `supersede_note`.
+                    entities: list[str] | None = None, moments: list[str] | None = None) -> dict:
+        """Fix a note (a typo, a missing entity, when a guideline is given). To record that it no
+        longer holds, use `supersede_note`.
 
         Returns:
             The note (see `get_note`).
         """
         changes = {}
+        if moments is not None:
+            changes["moments"] = _moments(self.get_note(note_id)["type"], moments)
         if statement is not None:
             if not statement.strip():
                 raise ValueError("A note needs a statement.")
@@ -887,8 +975,10 @@ class NoteStore:
         return self.get_note(note_id)
 
     def supersede_note(self, note_id: int, statement: str, why: str = "", entities: list[str] | None = None,
-                       type: str | None = None, source: str = "agent") -> dict:
+                       type: str | None = None, source: str = "agent", moments: list[str] | None = None) -> dict:
         """Replace a note that no longer holds by a new one; the old one is kept, marked as superseded.
+
+        The new note keeps the old one's entities, and its moments when both are guidelines, unless given.
 
         Returns:
             The new note (see `get_note`).
@@ -896,7 +986,11 @@ class NoteStore:
         old = self.get_note(note_id)
         if old["status"] == "superseded":
             raise ValueError(f"Note {note_id} is already superseded by note {old['superseded_by']}.")
-        new = self.create_note(type or old["type"], statement, why, old["entities"] if entities is None else entities, source)
+        new_type = type or old["type"]
+        if moments is None and note_group(new_type) == old["group"] == "guidelines":
+            moments = old["moments"]
+        new = self.create_note(new_type, statement, why, old["entities"] if entities is None else entities, source,
+                               moments)
         with self._connect(write=True) as connection:
             connection.execute("UPDATE notes SET status = 'superseded', updated = ? WHERE id = ?", (_now(), note_id))
             connection.execute("INSERT INTO links (source, target, kind) VALUES (?, ?, 'supersedes')",
@@ -914,8 +1008,9 @@ class NoteStore:
         """Read a note.
 
         Returns:
-            `id`, `type`, `group` (`guidelines` or `memory`), `statement`, `why`, `status` (`active` or
-            `superseded`), `source`, `created`, `updated`, `entities`, `supersedes` and `superseded_by`.
+            `id`, `type`, `group` (`guidelines` or `memory`), `statement`, `why`, `moments` (guidelines),
+            `status` (`active` or `superseded`), `source`, `created`, `updated`, `entities`, `supersedes`
+            and `superseded_by`.
 
         Raises:
             ValueError: When there is no such note.
@@ -926,7 +1021,8 @@ class NoteStore:
                 raise ValueError(f"There is no note {note_id}.")
             return self._note(connection, row)
 
-    def list_notes(self, group: str = "", type: str = "", status: str = "active", entity: str = "") -> list[dict]:
+    def list_notes(self, group: str = "", type: str = "", status: str = "active", entity: str = "",
+                   moment: str = "") -> list[dict]:
         """List notes, newest first.
 
         Args:
@@ -935,6 +1031,7 @@ class NoteStore:
             type: Only this type; empty for every type of the group.
             status: `active`, `superseded`, or empty for both.
             entity: Only notes about this entity path; empty for every note.
+            moment: Only the guidelines given at this moment (`MOMENTS`); empty for every note.
 
         Returns:
             The notes (see `get_note`).
@@ -951,9 +1048,105 @@ class NoteStore:
         if entity:
             conditions.append("'note:' || id IN (SELECT source FROM links WHERE kind = 'about' AND target = ?)")
             values.append(entity)
+        if moment:
+            _check(moment, MOMENTS, "moment")
+            conditions.append("EXISTS (SELECT 1 FROM json_each(moments) WHERE value = ?)")
+            values.append(moment)
         query = f"SELECT * FROM notes WHERE {' AND '.join(conditions)} ORDER BY id DESC"
         with self._connect() as connection:
             return [self._note(connection, row) for row in connection.execute(query, values)]
+
+    # --- Commits
+
+    def record_commit(self, commit_hash: str, tasks: list[str]) -> None:
+        """Remember a commit made by the commit flow, with the tasks it carries out.
+
+        Args:
+            commit_hash: Full hash.
+            tasks: References of its tasks (`task:<id>`).
+        """
+        with self._connect(write=True) as connection:
+            connection.execute("INSERT OR REPLACE INTO commits (hash, tasks, created) VALUES (?, ?, ?)",
+                               (commit_hash, json.dumps(tasks), _now()))
+
+    def made_by_flow(self, commit_hash: str) -> bool:
+        """Whether a commit was made by the commit flow (and so needs no review)."""
+        with self._connect() as connection:
+            return connection.execute("SELECT 1 FROM commits WHERE hash = ?", (commit_hash,)).fetchone() is not None
+
+    def open_commits(self) -> list[dict]:
+        """The commits of the flow the post-commit has not closed yet: `hash` and `tasks`, oldest first."""
+        with self._connect() as connection:
+            return [{"hash": row["hash"], "tasks": json.loads(row["tasks"])} for row in connection.execute(
+                "SELECT hash, tasks FROM commits WHERE closed = 0 ORDER BY created")]
+
+    def close_commit(self, commit_hash: str) -> None:
+        """Mark a commit of the flow as handled by the post-commit."""
+        with self._connect(write=True) as connection:
+            connection.execute("UPDATE commits SET closed = 1 WHERE hash = ?", (commit_hash,))
+
+    def get_meta(self, key: str) -> str:
+        """A value of the sync marker (`last_commit`, `last_check`); empty when not set."""
+        with self._connect() as connection:
+            row = connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else ""
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Set a value of the sync marker."""
+        with self._connect() as connection, connection:
+            connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+    def add_review(self, title: str, detail: str) -> dict:
+        """Add a task to the Reviews plan, with its evidence (a commit made outside the flow).
+
+        The task goes to the Reviews feature; it is made again if it was deleted.
+
+        Args:
+            title: The task, e.g. `Review commit abc1234: Fix the parser`.
+            detail: What the commit says and touches, kept as evidence (source `diff`).
+
+        Returns:
+            The task.
+        """
+        with self._connect() as connection, connection:
+            plan_id = connection.execute("SELECT id FROM plans WHERE fixed = 1").fetchone()["id"]
+            feature = connection.execute("SELECT id FROM features WHERE plan_id = ? AND title = ?",
+                                         (plan_id, REVIEWS["feature"])).fetchone()
+            if feature is None:
+                now = _now()
+                feature_id = connection.execute(
+                    "INSERT INTO features (plan_id, title, position, source, created, updated) "
+                    "VALUES (?, ?, 0, 'agent', ?, ?)", (plan_id, REVIEWS["feature"], now, now)).lastrowid
+            else:
+                feature_id = feature["id"]
+        task = self.add_task(feature_id, title, ["Planning and memory checked against the commit"])
+        return self.add_evidence(task["id"], "diff", detail)
+
+    # --- Search
+
+    def searchable(self) -> dict[str, dict]:
+        """Every planner item and active note as a search document.
+
+        Returns:
+            By reference (`plan:<id>`, `note:<id>`...): `group` (`planning`, `guidelines` or `memory`),
+            `kind` (plan, feature, task or the note type), `title`, `state` and `plan` (the plan's id;
+            planner items only) and `text`, the words the search compares.
+        """
+        documents = {}
+        for plan in self.planner()["plans"]:
+            in_plan = {"plan": plan["id"]}
+            documents[plan["item"]] = _document("planning", "plan", plan["title"], plan["state"], in_plan,
+                                                plan["goal"], *plan["requirements"], *plan["decisions"])
+            for feature in plan["features"]:
+                documents[feature["item"]] = _document("planning", "feature", feature["title"], feature["state"],
+                                                       in_plan, feature["description"])
+                for task in feature["tasks"]:
+                    documents[task["item"]] = _document("planning", "task", task["title"], task["state"], in_plan,
+                                                        *(criterion["text"] for criterion in task["criteria"]))
+        for note in self.list_notes():
+            documents[f"note:{note['id']}"] = _document(note["group"], note["type"], note["statement"], "", {},
+                                                        note["why"], *note["entities"])
+        return documents
 
     # --- Helpers
 
@@ -998,6 +1191,7 @@ class NoteStore:
         plan = dict(row)
         for name in ("requirements", "decisions", "branches"):
             plan[name] = json.loads(plan[name])
+        plan["fixed"] = bool(plan["fixed"])
         return plan
 
     @staticmethod
@@ -1015,7 +1209,8 @@ class NoteStore:
     def _note(connection: sqlite3.Connection, row: sqlite3.Row) -> dict:
         """A note row as a dict, with its group, entities and what it supersedes or is superseded by."""
         note = dict(row)
-        note["group"] = next(group for group, types in NOTE_GROUPS.items() if note["type"] in types)
+        note["group"] = note_group(note["type"])
+        note["moments"] = json.loads(note["moments"])
         key = f"note:{note['id']}"
         note["entities"] = [target for (target,) in connection.execute(
             "SELECT target FROM links WHERE source = ? AND kind = 'about' ORDER BY target", (key,))]
@@ -1024,6 +1219,58 @@ class NoteStore:
         note["supersedes"] = int(supersedes[0].removeprefix("note:")) if supersedes else None
         note["superseded_by"] = int(superseded_by[0].removeprefix("note:")) if superseded_by else None
         return note
+
+
+def _add_columns(connection: sqlite3.Connection) -> None:
+    """Bring an older database up to date: add the `ADDED_COLUMNS` it lacks.
+
+    Guidelines written before `moments` existed are given `always`.
+    """
+    for table, column, definition in ADDED_COLUMNS:
+        if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
+            with connection:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                if column == "moments":
+                    guidelines = NOTE_GROUPS["guidelines"]
+                    connection.execute(f"UPDATE notes SET moments = '[\"always\"]' WHERE type IN "
+                                       f"({', '.join('?' * len(guidelines))})", guidelines)
+
+
+def _moments(type: str, moments: list[str] | None) -> str:
+    """Check when a note is given and store it as JSON: guidelines get `always` by default, memory none.
+
+    Raises:
+        ValueError: For an unknown moment, or moments given to a memory note.
+    """
+    if note_group(type) == "memory":
+        if moments:
+            raise ValueError("Only guidelines (preferences and rules) have moments; memory notes are found by search.")
+        return "[]"
+    chosen = ["always"] if moments is None else list(dict.fromkeys(moment.strip() for moment in moments if moment.strip()))
+    for moment in chosen:
+        _check(moment, MOMENTS, "moment")
+    return json.dumps(chosen)
+
+
+def document_text(kind: str, title: str, *details: str) -> str:
+    """The words the search compares for a planner item or a note: its kind, title and details."""
+    return "\n".join([f"{kind} {title}", *(detail for detail in details if detail)])
+
+
+def note_group(type: str) -> str:
+    """The group of a note type: `guidelines` or `memory`.
+
+    Raises:
+        ValueError: When `type` is not one of `NOTE_TYPES`.
+    """
+    _check(type, NOTE_TYPES, "note type")
+    return next(group for group, types in NOTE_GROUPS.items() if type in types)
+
+
+def _document(group: str, kind: str, title: str, state: str, extra: dict, *details: str) -> dict:
+    """A search document of `NoteStore.searchable`."""
+    return {"group": group, "kind": kind, "title": title, "state": state, **extra,
+            "text": document_text(kind, title, *details)}
 
 
 def _items_of(plan: dict) -> list[str]:

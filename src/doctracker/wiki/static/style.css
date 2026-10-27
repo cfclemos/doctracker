@@ -207,6 +207,8 @@ main { grid-area: main; }
 .search-snippet mark { background: color-mix(in srgb, var(--accent) 20%, var(--bg)); color: inherit; border-radius: 2px; padding: 0 1px; }
 .search-kind { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .search-empty { padding: 0.6rem 1rem; color: var(--muted); }
+.search-group { padding: 0.5rem 1rem 0.2rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.search-group:not(:first-child) { margin-top: 0.3rem; border-top: 1px solid var(--border); }
 
 /* Search pagination (MUI Pagination style): round page buttons, the current one filled.
    It stays fixed at the bottom of the results box while the list scrolls above it. */
@@ -975,7 +977,21 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .notes-tab.current { border-color: var(--border); background: var(--bg); color: var(--fg); }
 .notes-error { padding: 0.5rem 0.8rem; border: 1px solid var(--raises); border-radius: 6px;
   background: color-mix(in srgb, var(--raises) 8%, var(--bg)); color: var(--raises); }
-.notes-help { margin: 0.3rem 0 0.6rem; color: var(--muted); font-size: 0.85rem; }
+.notes-help { display: flex; align-items: center; gap: 0.45rem; margin: 0.3rem 0 0.8rem; color: var(--muted); font-size: 0.85rem; }
+.notes-help > strong { color: var(--fg); }
+/* The ? of a tab: on hover (or focus) a box says when to write each type, with an example. */
+.help-hover { position: relative; display: inline-flex; flex: none; cursor: help; }
+.help-icon { width: 1rem; height: 1rem; background: var(--accent);
+  -webkit-mask: url("icons/help-circle.svg") center / contain no-repeat; mask: url("icons/help-circle.svg") center / contain no-repeat; }
+.help-box { display: none; position: absolute; z-index: 20; top: calc(100% + 0.35rem); left: -0.4rem;
+  width: min(34rem, 85vw); padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 6px 20px rgb(0 0 0 / 18%); font-size: 0.85rem; cursor: default; }
+.help-hover:hover .help-box, .help-hover:focus-within .help-box { display: block; }
+.help-box dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.45rem 0.8rem; margin: 0 0 0.6rem; }
+.help-box dt { font-weight: 700; }
+.help-box dd { margin: 0; }
+.help-box em { display: block; margin-top: 0.15rem; color: var(--muted); }
+.help-box-foot { display: block; padding-top: 0.5rem; border-top: 1px solid var(--border); color: var(--muted); }
 .notes-meta { color: var(--muted); font-size: 0.78rem; }
 .notes-pill { display: inline-block; padding: 0 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
   line-height: 1.5; color: #ffffff; background: var(--tint, var(--neutral)); vertical-align: middle; }
@@ -1019,6 +1035,8 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .planner-task { min-width: 12rem; max-width: 18rem; border-color: var(--border); }
 .planner-task .uml-head { gap: 0.45rem; background: var(--tint); color: var(--on-tint); }
 .planner-task .uml-head strong { flex: 1; }
+.planner-ref { flex: none; font-size: 0.68rem; font-weight: 400; color: var(--muted); opacity: 0.85; white-space: nowrap; }
+.planner-task .uml-head .planner-ref { color: inherit; opacity: 0.7; }
 .planner-state { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
 .planner-check { display: flex; }
 .planner-check input { width: 0.95rem; height: 0.95rem; margin: 0; cursor: pointer; }
@@ -1053,10 +1071,26 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .dialog-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
 .dialog-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
 .notes-dialog .dialog-close { padding: 0 0.5rem; border: 0; background: none; font-size: 1.3rem; line-height: 1; }
+/* Head of a creation modal: the same colored band as the confirmation modal, edge to edge. */
+.notes-dialog .dialog-head:not(.panel-head) { --mark: #0288d1; --head-bg: #e5f6fd; --head-fg: #014361;
+  margin: -1rem -1.2rem 0.9rem; padding: 0.75rem 0.8rem 0.75rem 1.1rem; border-left: 4px solid var(--mark);
+  background: var(--head-bg); color: var(--head-fg); }
+.notes-dialog .dialog-head:not(.panel-head) .dialog-close { color: var(--head-fg); }
+/* Foot of a creation modal: Cancel and the button on the right, as in the confirmation modal. */
+.dialog-foot { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+.notes-dialog .dialog-foot .dialog-cancel { padding: 0.3rem 0.8rem; border: 1px solid var(--border); background: var(--panel);
+  font-size: 0.82rem; line-height: normal; }
+@media (prefers-color-scheme: dark) {
+  .notes-dialog .dialog-head:not(.panel-head) { --mark: #29b6f6; --head-bg: #071318; --head-fg: #b8e7fb; }
+}
 .notes-form { display: grid; gap: 0.5rem; margin: 0.4rem 0 0.8rem; }
 .notes-form label { display: grid; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
 .notes-form small { font-weight: 400; }
 .notes-form button { justify-self: start; }
+.moment-field { display: grid; gap: 0.3rem; font-size: 0.82rem; color: var(--muted); }
+.moment-options { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
+.notes-form .moment-options label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--fg); font-size: 0.9rem; cursor: pointer; }
+.moment-options input[type="checkbox"] { padding: 0; margin: 0; accent-color: var(--accent); }
 .dialog-section { margin: 0.8rem 0; padding-top: 0.6rem; border-top: 1px solid var(--border); }
 .dialog-section h3 { display: inline; margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .dialog-section > summary { cursor: pointer; }
