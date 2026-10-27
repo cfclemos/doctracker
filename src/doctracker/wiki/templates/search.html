@@ -20,6 +20,10 @@
 {% endmacro %}
 {% if query.strip() %}
 <ul class="search-options" role="listbox">
+  {% for entry in renamed or [] %}
+  {# An old name in the query was also searched with its current name (rename registry). #}
+  <li class="search-renamed"><code>{{ entry.old }}</code> is now <code>{{ entry.new }}</code>: searched too</li>
+  {% endfor %}
   {% if preparing %}
   {# Semantic or hybrid search is getting ready (download, start or indexing): show the progress. #}
   <li class="search-empty">
