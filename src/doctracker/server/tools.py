@@ -274,19 +274,19 @@ Returns:
 
     @mcp.tool()
     def documentation_guide() -> str:
-        """Explain how to document this project's code so doctracker builds complete pages.
+        """Explain how to write and document this project's code so doctracker builds complete pages.
 
-        Read it before writing or changing docstrings, module docstrings, type hints or `__all__`.
+        Read it before writing or changing code, docstrings, module docstrings, type hints or `__all__`.
 
         Returns:
             The guide in Markdown, adapted to this project's settings (docstring style, private members).
         """
         return build_guide(config)
 
-    @mcp.resource(GUIDE_URI, name="documentation-guide", title="How to document code for doctracker",
+    @mcp.resource(GUIDE_URI, name="documentation-guide", title="How to write and document code for doctracker",
                   mime_type="text/markdown")
     def guide_resource() -> str:
-        """How to document this project's code so doctracker builds complete pages."""
+        """How to write and document this project's code so doctracker builds complete pages."""
         return build_guide(config)
 
     @mcp.tool()

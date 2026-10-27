@@ -305,7 +305,9 @@ def get_weather(city: str, units: str = "metric") -> Forecast:
     """
 ```
 
-Agents get the complete guide from the `documentation_guide` tool.
+Agents get the complete guide from the `documentation_guide` tool. It also gives
+them default rules on how to write code: think before coding, keep it simple,
+change only what the task needs, and work toward a result that can be checked.
 
 ## Security
 

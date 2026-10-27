@@ -63,7 +63,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
             "Technical documentation of this project, built from its code. "
             "Use list_entities to explore and get_entity for details. To find entities, use "
             "hybrid_search (words and meaning), bm25_search (words) or semantic_search (meaning). "
-            "Before writing or changing docstrings, call documentation_guide (also available as the "
+            "Before writing or changing code or docstrings, call documentation_guide (also available as the "
             "doctracker://guide resource) and follow it."
         ),
     )
