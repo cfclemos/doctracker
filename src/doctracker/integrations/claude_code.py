@@ -1,9 +1,9 @@
 """Claude Code integration: the hooks that give doctracker's context to the agent, and their settings.
 
 `doctracker init` and `doctracker start` write the hooks into the project's
-`.claude/settings.local.json` (local, never committed). Each hook runs `doctracker hook <event>`,
-which reads the event Claude Code sends, asks the running server for the context of that moment
-(`/hooks/context/...`) and answers it as `additionalContext`.
+`.claude/settings.local.json` (local, never committed). Each hook runs `doctracker hook <event>`
+with the server's address, which reads the event Claude Code sends, asks the running server for the
+context of that moment (`/hooks/context/...`) and answers it as `additionalContext`.
 """
 
 import json
@@ -79,28 +79,30 @@ def _ask(base_url: str, kind: str, session: str, once: bool, path: str = "") -> 
         return None
 
 
-def hook_command(event: str) -> str:
-    """The command a hook runs: this environment's doctracker, by its absolute path.
+def hook_command(event: str, base_url: str) -> str:
+    """The command a hook runs: this environment's doctracker, by its absolute path, with the server's address.
 
     Args:
         event: The Claude Code event.
+        base_url: The doctracker server, e.g. `http://127.0.0.1:8765`.
 
     Returns:
         The command line, with the program quoted (paths may have spaces).
     """
     program = shutil.which("doctracker", path=str(Path(sys.executable).parent))
     command = f'"{Path(program).as_posix()}"' if program else f'"{Path(sys.executable).as_posix()}" -m doctracker'
-    return f"{command} hook {event}"
+    return f'{command} hook {event} --url "{base_url}"'
 
 
-def write_settings(project_root: Path) -> Path:
+def write_settings(project_root: Path, base_url: str) -> Path:
     """Write doctracker's hooks into `.claude/settings.local.json` and switch Claude Code's own memory off.
 
     The file's other settings and hooks are kept; doctracker's own hooks (those running
-    `doctracker hook`) are replaced, so writing again only refreshes them.
+    `doctracker hook`) are replaced, so writing again only refreshes them (e.g. after a port change).
 
     Args:
         project_root: Root of the project.
+        base_url: The doctracker server the hooks ask, e.g. `http://127.0.0.1:8765`.
 
     Returns:
         The settings file.
@@ -110,7 +112,7 @@ def write_settings(project_root: Path) -> Path:
     hooks = settings.setdefault("hooks", {})
     for event, matcher in HOOKS.items():
         groups = [group for group in hooks.get(event, []) if not _is_ours(group)]
-        ours = {"hooks": [{"type": "command", "command": hook_command(event), "timeout": HOOK_TIMEOUT}]}
+        ours = {"hooks": [{"type": "command", "command": hook_command(event, base_url), "timeout": HOOK_TIMEOUT}]}
         groups.append({"matcher": matcher, **ours} if matcher else ours)
         hooks[event] = groups
     settings["autoMemoryEnabled"] = False
