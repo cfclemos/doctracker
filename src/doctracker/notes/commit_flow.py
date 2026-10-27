@@ -7,7 +7,9 @@ review of commits made outside it.
 2. `commit` only runs `git add` and `git commit`, group by group. It stops at the first error and
    says where; calling it again with the groups left goes on.
 3. `after_commit` records the commits on their tasks and lists what is pending and what can be
-   cleaned up; `clean_done` deletes, once the user confirms.
+   cleaned up; `clean_done` deletes, once the user confirms. When the work planned for the current
+   branch is all done and committed, `merge_ready` says so and `merge` merges it into main, once the
+   user confirms.
 4. `review_outside_commits` turns each commit not made by the flow into a task of the Reviews plan.
 """
 
@@ -154,6 +156,69 @@ def after_commit(notes: NoteStore) -> dict:
         if plan_clean and plan["features"]:
             can_clean.append({"ref": plan["item"], "title": plan["title"]})
     return {"recorded": recorded, "pending": pending, "can_clean": can_clean}
+
+
+async def merge_ready(notes: NoteStore, project_root: Path) -> dict | None:
+    """Whether the work planned for the checked-out branch is complete, so it can be merged.
+
+    The work of a branch is the plans, features and tasks naming it; it is complete when each of
+    their tasks is done and committed.
+
+    Args:
+        notes: The store.
+        project_root: Root of the project.
+
+    Returns:
+        `branch` and `into` (main) when it is complete; None otherwise, or when no plan names the
+        branch, or on the main branch.
+    """
+    top = await working.top_level(project_root)
+    if top is None:
+        return None
+    branch, into = await working.current_branch(top), await working.main_branch(top)
+    if not branch or not into or branch == into:
+        return None
+    tasks = []
+    for plan in notes.planner()["plans"]:
+        for feature in plan["features"]:
+            for task in feature["tasks"]:
+                if branch in (*plan["branches"], feature["branch"], task["branch"]):
+                    tasks.append(task)
+    complete = all(task["state"] == "done" and any(e["detail"].startswith(COMMITTED) for e in task["evidence"])
+                   for task in tasks)
+    return {"branch": branch, "into": into} if tasks and complete else None
+
+
+async def merge(notes: NoteStore, project_root: Path) -> dict:
+    """Merge the checked-out branch into main, with a merge commit, once the user confirmed.
+
+    The merge commit is recorded as made by the flow, so it is not taken for an outside commit.
+    On a conflict the merge is aborted and the branch stays checked out.
+
+    Args:
+        notes: The store.
+        project_root: Root of the project.
+
+    Returns:
+        `merged` (branch, into, hash), or `error`.
+    """
+    top = await working.top_level(project_root)
+    if top is None:
+        return {"error": "The project is not in a git repository."}
+    branch, into = await working.current_branch(top), await working.main_branch(top)
+    if not branch or not into or branch == into:
+        return {"error": f"Nothing to merge: the checked-out branch is {branch or 'none'}."}
+    notes.committing = True
+    try:
+        merge_hash, error = await working.merge_branch(top, branch, into)
+        if merge_hash:
+            notes.record_commit(merge_hash, [])
+            notes.close_commit(merge_hash)
+    finally:
+        notes.committing = False
+    if merge_hash is None:
+        return {"error": error}
+    return {"merged": {"branch": branch, "into": into, "hash": merge_hash}}
 
 
 def clean_done(notes: NoteStore, items: list[str]) -> dict:
