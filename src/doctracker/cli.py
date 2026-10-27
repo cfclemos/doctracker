@@ -71,7 +71,8 @@ def start(host: str | None, port: int | None) -> None:
 
 @main.command(hidden=True)
 @click.argument("event")
-def hook(event: str) -> None:
+@click.option("--url", help="Address of the server, as `start` wrote it; by default the one in the configuration.")
+def hook(event: str, url: str | None) -> None:
     """Answer a Claude Code hook: read its event on stdin, print the context of that moment.
 
     \f
@@ -79,6 +80,7 @@ def hook(event: str) -> None:
 
     Args:
         event: The Claude Code event the hook was set for (the event's own name is read from stdin).
+        url: The server, e.g. `http://127.0.0.1:8765`; None reads it from the configuration.
     """
     try:
         received = json.loads(sys.stdin.read() or "{}")
@@ -86,7 +88,7 @@ def hook(event: str) -> None:
         project_root = Path(received.get("cwd") or Path.cwd())
         if not (project_root / CONFIG_PATH).exists():
             return
-        reply = claude_code.answer(received, _base_url(load_config(project_root)))
+        reply = claude_code.answer(received, url or _base_url(load_config(project_root)))
     except (OSError, ValueError):
         return
     if reply:
@@ -119,7 +121,7 @@ def _write_integrations(project_root: Path, config: Config) -> None:
         project_root: Root of the project.
         config: The configuration, for the server's address.
     """
-    settings = claude_code.write_settings(project_root)
+    settings = claude_code.write_settings(project_root, _base_url(config))
     click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
     if opencode.uses_opencode(project_root):
         plugin = opencode.write_plugin(project_root, _base_url(config))
