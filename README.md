@@ -125,7 +125,7 @@ tool.
 | Session start, after a summary, subagent | where notes and plans live, the guidelines given always, the open planning, the review tasks |
 | Planning (plan mode, OpenCode's `plan` agent) | the planning guidelines, the requirements of the open plans, and a reminder to record the approved plan in the Planner |
 | A file is read or edited | the notes about its code, once per file and session, and a reminder when no task is in progress |
-| Committing | the commit guidelines, with the pre-commit material |
+| Committing | the default commit rules (no AI attribution, doctracker's local files stay out, subject and why) and the commit guidelines, with the pre-commit material |
 | Server not running | a request to ask you whether to start it |
 
 ### What the agent gets
