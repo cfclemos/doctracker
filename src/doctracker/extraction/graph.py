@@ -1,20 +1,22 @@
-"""Relations between entities, for the code graph: contains, imports, inherits and calls.
+"""Relations between entities, for the code graph: contains, imports, inherits, has, calls and refers.
 
 Everything is static: each source file is parsed once with `ast` and every name is
 resolved with what the extraction already knows — the imports of each module, `self`
 and `cls`, the type hints of parameters and attributes, the value of attributes
 (`self.index = SearchIndex(...)`) and simple local assignments (`client = Client()`).
 Calls that cannot be resolved this way (dynamic attributes, values returned by
-other calls, callbacks) are left out.
+other calls) are left out. A function or class named without being called (a callback passed as an
+argument, a handler put in a route, a value assigned, returned or listed) is a `refers` relation.
 """
 
 import ast
 import re
 from pathlib import Path
 
-EDGE_KINDS = ("contains", "imports", "inherits", "has", "calls")
+EDGE_KINDS = ("contains", "imports", "inherits", "has", "calls", "refers")
 """Kinds of relations: parent → member, module → imported module, class → base class,
-class → class held in one of its attributes (composition), function → function or class it calls."""
+class → class held in one of its attributes (composition), function → function or class it calls,
+function or module → function or class it names without calling (callbacks, handlers, values)."""
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][\w.]*")
 """A dotted name inside a type hint, e.g. `SearchIndex` in `SearchIndex | None`."""
@@ -118,7 +120,7 @@ def _import_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[t
 
 
 def _call_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tuple[str, str, str]]:
-    """Find the calls made by the functions and methods of one module.
+    """Find the calls made by the functions and methods of one module, and what they name without calling.
 
     Args:
         module: Path of the module.
@@ -126,15 +128,19 @@ def _call_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tup
         resolver: Name resolution for the whole project.
 
     Returns:
-        `(caller, callee, "calls")` relations; nested functions count as their enclosing function.
+        `(caller, callee, "calls")` and `(user, used, "refers")` relations; nested functions count as
+        their enclosing function, and the statements outside functions and classes as the module.
     """
     edges = set()
     for function, path, owner in _functions(tree, module, None):
         if path not in resolver.entities:
             continue
-        for callee in _Scope(resolver, module, owner, path).calls(function):
-            if callee != path:
-                edges.add((path, callee, "calls"))
+        scope = _Scope(resolver, module, owner, path)
+        edges |= {(path, callee, "calls") for callee in scope.calls(function) if callee != path}
+        edges |= {(path, used, "refers") for used in scope.refers(function) if used != path}
+    loose = ast.Module(body=[node for node in tree.body if not isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))], type_ignores=[])
+    edges |= {(module, used, "refers") for used in _Scope(resolver, module, None, module).refers(loose)}
     return edges
 
 
@@ -377,6 +383,49 @@ class _Scope:
                 callee = self._resolve(parts) if parts else None
                 if callee and self.resolver.entities[callee]["kind"] in ("function", "class"):
                     found.add(callee)
+        return found
+
+    def refers(self, body: ast.AST) -> set[str]:
+        """Resolve the functions and classes named in a body without being called.
+
+        A name passed as an argument, assigned, returned, listed or used as a decorator counts; the
+        name of a call (that is `calls`) and the names in type annotations do not. Of a dotted name
+        only the whole of it counts (`self.on_change`, not `self`).
+
+        Args:
+            body: Function or module node.
+
+        Returns:
+            Paths of the functions and classes named.
+        """
+        nodes = list(ast.walk(body))
+        for node in nodes:
+            self._learn(node)
+        skipped: set[int] = set()
+        for node in nodes:
+            parts = []
+            if isinstance(node, ast.Call):
+                parts = [node.func]
+            elif isinstance(node, ast.Attribute):
+                parts = [node.value]
+            elif isinstance(node, ast.arg):
+                parts = [node.annotation]
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parts = [node.returns]
+            elif isinstance(node, ast.AnnAssign):
+                parts = [node.annotation]
+            skipped |= {id(inner) for part in parts if part is not None for inner in ast.walk(part)}
+        found = set()
+        for node in nodes:
+            if id(node) in skipped or not isinstance(node, (ast.Name, ast.Attribute)) \
+                    or not isinstance(node.ctx, ast.Load):
+                continue
+            parts = _dotted(node)
+            if not parts or (len(parts) == 1 and (parts[0] in self.instances or parts[0] in ("self", "cls"))):
+                continue  # a variable holding an instance names the object, not its class
+            used = self._resolve(parts)
+            if used and self.resolver.entities[used]["kind"] in ("function", "class"):
+                found.add(used)
         return found
 
     def _learn(self, node: ast.AST) -> None:
