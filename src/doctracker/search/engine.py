@@ -147,6 +147,7 @@ class SearchEngine:
         Returns:
             The page and the total, or the backend progress when it is not ready yet.
         """
+        typed = query
         query, renamed = self.with_current_names(query)
         if mode == "bm25":
             ranked = self.bm25(query)
@@ -155,7 +156,12 @@ class SearchEngine:
             if ranked is None:
                 return SearchOutcome(ready=False, status=self.embeddings.status())
         else:
-            ranked = self.text(query)
+            # The text is found as typed: each current name is looked for on its own.
+            best: dict[str, float] = {}
+            for text in [typed, *(entry["new"] for entry in renamed)]:
+                for path, score in self.text(text):
+                    best[path] = max(score, best.get(path, score))
+            ranked = sorted(best.items(), key=lambda item: -item[1])
         ranked = [(path, score) for path, score in ranked if path in self.state.entities]
         offset = max(0, offset)
         return SearchOutcome(ranked[offset : offset + limit], total=len(ranked), offset=offset, renamed=renamed)

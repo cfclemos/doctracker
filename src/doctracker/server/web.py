@@ -495,10 +495,12 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         page = int(request.query_params.get("page", "1")) if request.query_params.get("page", "1").isdigit() else 1
         context = {"query": query, "mode": mode, "show_score": mode != "default", "results": [], "preparing": None}
         if query.strip() and mode == "all":
-            context["groups"] = recall_groups(await search.recall(query, WIKI_WAIT_SECONDS), query)
+            found = await search.recall(query, WIKI_WAIT_SECONDS)
+            context["groups"], context["renamed"] = recall_groups(found, query), found.get("renamed", [])
         elif query.strip():
             offset = DEFAULT_LIMIT * (max(1, page) - 1)
             outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset)
+            context["renamed"] = outcome.renamed
             if outcome.ready:
                 context["results"] = pages.ranked_results(state, outcome.results, query)
                 context["pagination"] = pages.pagination(outcome.total, outcome.offset, DEFAULT_LIMIT)
