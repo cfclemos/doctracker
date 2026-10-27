@@ -397,9 +397,10 @@ def parameter_rows(entity: dict) -> list[dict]:
         if parameter["name"] in ("self", "cls"):
             continue
         doc = described.get(parameter["name"], {})
+        stars = {"variadic positional": "*", "variadic keyword": "**"}.get(parameter["kind"], "")
         rows.append(
             {
-                "name": parameter["name"],
+                "name": stars + parameter["name"],
                 "annotation": parameter["annotation"] or doc.get("annotation", ""),
                 "default": parameter["default"],
                 "description": doc.get("description", ""),
