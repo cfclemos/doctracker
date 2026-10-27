@@ -67,10 +67,12 @@ From the root of your project:
 ```bash
 doctracker init     # creates doc/config/config.json (packages are detected automatically)
 doctracker start    # starts the server
+doctracker restart  # stops it and starts it again in the background (output in doc/logs/server.log)
 ```
 
 With uv, prefix the commands with `uv run` (e.g. `uv run doctracker start`).
-`start` runs `init` on its own if the project has no configuration yet.
+`start` runs `init` on its own if the project has no configuration yet. After that,
+opening a Claude Code session starts the server by itself when it is not running.
 
 The server prints where it wrote the agents' settings and its two addresses:
 
@@ -126,7 +128,7 @@ tool.
 | Planning (plan mode, OpenCode's `plan` agent) | the planning guidelines, the requirements of the open plans, and a reminder to record the approved plan in the Planner |
 | A file is read or edited | the notes about its code, once per file and session, and a reminder when no task is in progress |
 | Committing | the default commit rules (no AI attribution, doctracker's local files stay out, subject and why) and the commit guidelines, with the pre-commit material |
-| Server not running | a request to ask you whether to start it |
+| Server not running | the session hook starts it and waits up to a minute; if it still does not answer, the guidelines and planning read straight from `notes.db`, with a warning |
 
 ### What the agent gets
 
@@ -272,11 +274,14 @@ doc/
 ├── sqlite/
 │   ├── doctracker.db   # search indexes
 │   └── notes.db        # notes, planner, commit records and archive
-└── models/             # embedding model and llama.cpp (created on first semantic search)
+├── models/             # embedding model and llama.cpp (created on first semantic search)
+└── logs/
+    ├── server.log      # output of a server started by a session hook or `restart`
+    └── server.json     # the running server's process and address, for `restart`
 ```
 
-`sqlite/` and `models/` are created only when a feature needs them, and are
-ignored by `doc/.gitignore`.
+`sqlite/`, `models/` and `logs/` are created only when a feature needs them, and are
+kept out of git (`doc/.gitignore`; `logs/` has a `.gitignore` of its own).
 
 ## Documenting your code
 

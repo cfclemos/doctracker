@@ -5,6 +5,11 @@ SERVER_DOWN = ("doctracker is not running at {url}, so its plans, guidelines and
                "memory in this session.")
 """Given at the start of a session when the server does not answer: the user decides."""
 
+NOT_STARTED = ("doctracker is not running at {url} and could not be started (its output is in doc/logs/server.log), "
+               "so its MCP tools and wiki are not available. The guidelines and planning below were read straight "
+               "from its notes. Tell the user, who can start it with `doctracker start` in the project.")
+"""Given at the start of a session when the hook could not start the server, before the context read from notes.db."""
+
 RECORD_THE_PLAN = ("Plans are kept in doctracker's Planner: once the user approves this plan, record it there "
                    "(create_plan, or add_feature / add_task to an open plan) with its requirements, the decisions "
                    "taken with the user and the criteria of each task.")
