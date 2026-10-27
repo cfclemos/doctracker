@@ -13,6 +13,8 @@ from pathlib import Path
 
 import httpx2
 
+from doctracker.integrations import RECORD_THE_PLAN, SERVER_DOWN
+
 SETTINGS_PATH = Path(".claude") / "settings.local.json"
 """Claude Code settings of the project that stay on this machine."""
 
@@ -33,16 +35,6 @@ SERVER_TIMEOUT = 5.0
 
 FILE_TOOLS = ("Read", "Edit", "Write", "MultiEdit")
 """Tools that read or change one file; its notes are given once per session."""
-
-SERVER_DOWN = ("doctracker is not running at {url}, so its plans, guidelines and memory are not available. "
-               "Ask the user whether to start it (`doctracker start` in the project) or to work with local "
-               "memory in this session.")
-"""Given at the start of a session when the server does not answer: the user decides."""
-
-RECORD_THE_PLAN = ("Plans are kept in doctracker's Planner: once the user approves this plan, record it there "
-                   "(create_plan, or add_feature / add_task to an open plan) with its requirements, the decisions "
-                   "taken with the user and the criteria of each task.")
-"""Given when plan mode ends."""
 
 
 def answer(event: dict, base_url: str) -> dict | None:
