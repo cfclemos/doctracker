@@ -130,6 +130,9 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS archive (
   id INTEGER PRIMARY KEY, item TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, plan TEXT NOT NULL,
   feature TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, commits TEXT NOT NULL DEFAULT '[]', archived TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS renames (
+  old TEXT NOT NULL, new TEXT NOT NULL, how TEXT NOT NULL, "commit" TEXT NOT NULL, created TEXT NOT NULL,
+  PRIMARY KEY (old, "commit"));
 """
 """Tables. Task criteria are `[{"text", "done"}]`. `dependencies` says that `item` waits for
 `depends_on` (both `kind:id`). `links` holds the relations of notes, made by the methods here:
@@ -137,7 +140,9 @@ CREATE TABLE IF NOT EXISTS archive (
 is a JSON list (guidelines only); a plan with `fixed` 1 is the Reviews plan. `commits` holds the
 commits made by the commit flow, with the tasks of each (`closed` once the post-commit recorded
 them); `meta` holds the sync marker (`last_commit`, `last_check`). `archive` keeps the planner items
-the post-commit deleted, with what they held (JSON `content`) and the full hashes of their `commits`."""
+the post-commit deleted, with what they held (JSON `content`) and the full hashes of their `commits`.
+`renames` is the rename registry: a class or function at `old` is at `new` since `commit` (`how`:
+renamed or moved), recorded by the post-commit and the review of commits made outside the flow."""
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 """A due date, `YYYY-MM-DD`."""
@@ -1089,6 +1094,26 @@ class NoteStore:
         with self._connect() as connection:
             return [{"hash": row["hash"], "tasks": json.loads(row["tasks"])} for row in connection.execute(
                 "SELECT hash, tasks FROM commits WHERE closed = 0 ORDER BY created")]
+
+    def add_renames(self, commit_hash: str, renames: list[dict]) -> None:
+        """Record the renames and moves a commit made in the rename registry (again: no change).
+
+        Args:
+            commit_hash: Full hash of the commit.
+            renames: `[{"old", "new", "how"}]`, as `history.renames.detect_renames` gives them.
+        """
+        if not renames:
+            return
+        with self._connect(write=True) as connection:
+            connection.executemany(
+                'INSERT OR IGNORE INTO renames (old, new, how, "commit", created) VALUES (?, ?, ?, ?, ?)',
+                [(entry["old"], entry["new"], entry["how"], commit_hash, _now()) for entry in renames])
+
+    def renames(self) -> list[dict]:
+        """The rename registry: `old`, `new`, `how`, `commit` and `created`, oldest first."""
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(
+                'SELECT old, new, how, "commit", created FROM renames ORDER BY created, rowid')]
 
     def close_commit(self, commit_hash: str) -> None:
         """Mark a commit of the flow as handled by the post-commit."""

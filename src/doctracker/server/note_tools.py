@@ -349,9 +349,10 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
         r"""Pre-commit: plan the commits with the user before committing anything.
 
         First call it without arguments: it gives the changed files (with lines added and removed), the
-        tasks a commit may carry out (with criteria, annotations and evidence) and the guidelines for
-        committing. Ask for the diffs of the files you need to look at with `diffs`. Read them with what
-        was done in the session and propose to the user the commits: which files go together (a file
+        tasks a commit may carry out (with criteria, annotations and evidence), the guidelines for
+        committing, and the classes and functions renamed or moved since the last commit (`renames`):
+        name each one in the message of the commit that holds it. Ask for the diffs of the files you need
+        to look at with `diffs`. Read them with what was done in the session and propose to the user the commits: which files go together (a file
         goes in one commit, whole), the message of each (what changed and why), and the tasks each one
         carries out. Then call it with those groups: it lists what is missing (a task not approved,
         criteria not met, a file twice or without changes). Bring every problem to the user, who
@@ -363,9 +364,9 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
 
         Returns:
             With groups: `ready`, `problems`, `left_out`. With diffs: `diffs`. Otherwise: `files`, `tasks`,
-            `guidelines`.
+            `renames`, `guidelines`.
         """
-        return await commit_flow.prepare_commit(notes, project_root, groups, diffs)
+        return await commit_flow.prepare_commit(notes, project_root, groups, diffs, search.state.entities)
 
     @mcp.tool()
     @refusals_reported
@@ -396,11 +397,14 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
         show it to the user. On a conflict nothing is merged and git's message comes back.
 
         Returns:
-            `recorded`, `pending` (ref, title, state), `can_clean` (ref, title) and `merge` (`merged`
-            with branch, into and hash, or `error`), or null when the branch is not ready.
+            `recorded`, `renames` (the renames and moves recorded in the rename registry: old, new, how,
+            commit), `pending` (ref, title, state), `can_clean` (ref, title) and `merge` (`merged` with
+            branch, into and hash, or `error`), or null when the branch is not ready.
         """
         report = commit_flow.after_commit(notes)
-        return {**report, "merge": await commit_flow.merge_if_ready(notes, project_root)}
+        hashes = [made["hash"] for made in report["recorded"]]
+        renames = await commit_flow.record_renames(notes, project_root, search.state.entities, hashes)
+        return {**report, "renames": renames, "merge": await commit_flow.merge_if_ready(notes, project_root)}
 
     @mcp.tool()
     @refusals_reported
