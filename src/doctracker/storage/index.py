@@ -43,7 +43,7 @@ _CAMEL = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
 
 def entity_text(entity: dict) -> str:
-    """Build the text that represents an entity: kind, path, signature and full description.
+    """Build the text that represents an entity: kind, path, signature, full description (and code, for the front-end).
 
     Args:
         entity: Extracted entity.
@@ -52,6 +52,8 @@ def entity_text(entity: dict) -> str:
         The text, cut at `MAX_TEXT_CHARS` characters.
     """
     text = f"{entity['kind']} {entity['path']}\n{signature(entity)}\n{description_text(entity)}"
+    if entity.get("search_text"):  # front-end entities: their code (JS body, CSS rules, template)
+        text += f"\n{entity['search_text']}"
     return text[:MAX_TEXT_CHARS]
 
 
