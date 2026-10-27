@@ -9,6 +9,7 @@ from pathlib import Path
 
 import griffe
 
+from doctracker.extraction.frontend import extract_frontend
 from doctracker.extraction.graph import extract_edges
 
 MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
@@ -58,6 +59,7 @@ def extract_project(
             continue
         roots.append(module.path)
         _collect(module, root, docstring_style, show_private, entities)
+    entities.update(extract_frontend(root, entities))
     edges = extract_edges(entities, root)
     return {"roots": roots, "entities": entities, "edges": edges, "errors": errors}
 

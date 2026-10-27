@@ -93,6 +93,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         members_by_group=pages.members_by_group,
         parameter_rows=pages.parameter_rows,
         other_sections=pages.other_sections,
+        relations=pages.relations,
     )
 
     def render_page(request: Request, content: str, url: str, context: dict, status: int = 200) -> HTMLResponse:
@@ -125,7 +126,12 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         elif entity is None:
             content, status = "not_found.html", 404
         else:
-            content, status = ("module.html" if entity["kind"] == "module" else "entity.html"), 200
+            if "language" in entity:  # a front-end file, function, CSS class or rule, template or macro
+                content = "frontend.html"
+                context["relations"] = pages.relations(state, path)
+            else:
+                content = "module.html" if entity["kind"] == "module" else "entity.html"
+            status = 200
             context["breadcrumbs"] = pages.breadcrumbs(state, path)
             context["previous_names"] = await earlier_names(path)
         return render_page(request, content, f"/wiki/{path}", context, status)
@@ -465,7 +471,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if entity is None:
             return HTMLResponse("", status_code=404)
         code = pages.source_code(project_root, entity)
-        return HTMLResponse(templates.get_template("source.html").render(code=code))
+        language = entity.get("language", "python")
+        return HTMLResponse(templates.get_template("source.html").render(code=code, language=language))
 
     def recall_groups(found: dict, query: str) -> list[dict]:
         """Rows of the search box for the `all` mode: each `recall` group with results, in its order.

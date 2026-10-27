@@ -16,6 +16,7 @@ from pathlib import Path
 
 from doctracker.config import DOC_DIR, Config
 from doctracker.extraction import extract_project
+from doctracker.extraction.frontend import FRONTEND_KINDS
 from doctracker.history import git_dir
 from doctracker.notes import NoteStore
 from doctracker.notes.commit_flow import review_outside_commits
@@ -28,8 +29,12 @@ GIT_FILES = ("HEAD", "packed-refs", "logs/HEAD")
 """Files of the git folder that change on commit, checkout, reset or branch creation (with `refs/`)."""
 
 
+WATCHED_SUFFIXES = (".py", *FRONTEND_KINDS)
+"""Files whose change rebuilds the documentation: Python and the front-end files read with it."""
+
+
 def snapshot(project_root: Path, search_paths: list[str]) -> dict[str, int]:
-    """Map every watched `.py` file to its modification time.
+    """Map every watched file (Python and front-end) to its modification time.
 
     Runs in a worker process.
 
@@ -75,7 +80,7 @@ def git_snapshot(folder: Path | None) -> dict[str, int]:
 
 
 def _scan(folder: Path, files: dict[str, int]) -> None:
-    """Add the `.py` files of `folder` and its subfolders to `files`, skipping `SKIPPED_DIRS`.
+    """Add the `WATCHED_SUFFIXES` files of `folder` and its subfolders to `files`, skipping `SKIPPED_DIRS`.
 
     Args:
         folder: Folder to scan; unreadable folders are skipped.
@@ -89,7 +94,7 @@ def _scan(folder: Path, files: dict[str, int]) -> None:
         if entry.is_dir():
             if entry.name not in SKIPPED_DIRS and not entry.name.startswith("."):
                 _scan(entry, files)
-        elif entry.suffix == ".py":
+        elif entry.suffix in WATCHED_SUFFIXES:
             try:
                 files[str(entry)] = entry.stat().st_mtime_ns
             except OSError:
@@ -99,7 +104,7 @@ def _scan(folder: Path, files: dict[str, int]) -> None:
 async def watch(project_root: Path, config: Config, state: DocState, notes: NoteStore) -> None:
     """Build the documentation once, then keep the wiki in line with the code and the git state.
 
-    A changed Python file rebuilds the documentation; a changed git state (commit, checkout,
+    A changed Python or front-end file rebuilds the documentation; a changed git state (commit, checkout,
     branch) only notifies the open pages. Runs until cancelled; scanning and extraction
     happen in a worker process.
 

@@ -1,20 +1,25 @@
-"""Relations between entities, for the code graph: contains, imports, inherits and calls.
+"""Relations between entities, for the code graph: contains, imports, inherits, has, calls and refers.
 
 Everything is static: each source file is parsed once with `ast` and every name is
 resolved with what the extraction already knows — the imports of each module, `self`
 and `cls`, the type hints of parameters and attributes, the value of attributes
 (`self.index = SearchIndex(...)`) and simple local assignments (`client = Client()`).
 Calls that cannot be resolved this way (dynamic attributes, values returned by
-other calls, callbacks) are left out.
+other calls) are left out. A function or class named without being called (a callback passed as an
+argument, a handler put in a route, a value assigned, returned or listed) is a `refers` relation.
 """
 
 import ast
 import re
 from pathlib import Path
 
-EDGE_KINDS = ("contains", "imports", "inherits", "has", "calls")
+from doctracker.extraction.frontend import frontend_edges
+
+EDGE_KINDS = ("contains", "imports", "inherits", "has", "calls", "refers", "uses")
 """Kinds of relations: parent → member, module → imported module, class → base class,
-class → class held in one of its attributes (composition), function → function or class it calls."""
+class → class held in one of its attributes (composition), function → function or class it calls,
+function or module → function or class it names without calling (callbacks, handlers, values), and
+for the front-end (see `frontend_edges`): template or script → template, macro or CSS class it uses."""
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][\w.]*")
 """A dotted name inside a type hint, e.g. `SearchIndex` in `SearchIndex | None`."""
@@ -36,11 +41,18 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
     Returns:
         One `{"source", "target", "kind"}` per relation, without duplicates; both ends
         are entity paths and `kind` is one of `EDGE_KINDS`. `has` relations also carry
-        `via`: the attribute that holds the other class (one relation per attribute).
+        `via`: the attribute that holds the other class (one relation per attribute); a URL
+        reaching a route carries `via`: the route and its handler.
     """
     resolver = _Resolver(entities)
     edges: set[tuple[str, str, str]] = set()
     held_by: set[tuple[str, str, str]] = set()  # (class, held class, attribute)
+    templates: dict[str, list[str]] = {}  # template file name → its entities
+    for path, entity in entities.items():
+        if entity["kind"] == "template":
+            templates.setdefault(entity["name"], []).append(path)
+    registered: dict[str, str] = {}  # name a template uses → the Python function or class registered under it
+    routes: list[tuple[str, str, str]] = []  # (URL pattern, entity declaring the route, handler)
     for path, entity in entities.items():
         if entity["parent"] in entities:
             edges.add((entity["parent"], path, "contains"))
@@ -53,6 +65,7 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
                 tree = _parse(root / entity["filepath"])
                 if tree is not None:
                     edges |= _call_edges(path, tree, resolver) | _import_edges(path, tree, resolver)
+                    edges |= _python_frontend(path, tree, resolver, templates, registered, routes)
         if entity["kind"] == "class":
             module = resolver.module_of(path)
             for base in entity["bases"]:
@@ -65,7 +78,67 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
                     if held and held != path:
                         held_by.add((path, held, member))
     return ([{"source": source, "target": target, "kind": kind} for source, target, kind in sorted(edges)]
-            + [{"source": source, "target": target, "kind": "has", "via": via} for source, target, via in sorted(held_by)])
+            + [{"source": source, "target": target, "kind": "has", "via": via}
+               for source, target, via in sorted(held_by)]
+            + frontend_edges(entities, root, registered, routes))
+
+
+def _python_frontend(module: str, tree: ast.Module, resolver: "_Resolver", templates: dict[str, list[str]],
+                     registered: dict[str, str], routes: list[tuple[str, str, str]]) -> set[tuple[str, str, str]]:
+    """Read what one module's Python code tells about the front-end.
+
+    Collects (in place) the functions and classes registered for the templates (`env.filters["x"] = f`,
+    `env.globals["x"] = f`, `env.globals.update(x=f)`) and the routes (`Route("/path", handler)`), and
+    finds the templates the code names (`"page.html"`).
+
+    Args:
+        module: Path of the module.
+        tree: Its syntax tree.
+        resolver: Name resolution for the whole project.
+        templates: Template entities by file name.
+        registered: Names the templates use → Python entity; filled in place.
+        routes: `(URL pattern, entity declaring it, handler)`; filled in place.
+
+    Returns:
+        `(function or module, template, "refers")` relations; a name shared by several templates is left out.
+    """
+    bodies = [(path, owner, function) for function, path, owner in _functions(tree, module, None)
+              if path in resolver.entities]
+    bodies.append((module, None, ast.Module(body=[node for node in tree.body if not isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))], type_ignores=[])))
+    edges = set()
+    for path, owner, body in bodies:
+        scope = _Scope(resolver, module, owner, path)
+        nodes = list(ast.walk(body))
+        for node in nodes:
+            scope._learn(node)
+
+        def named(value: ast.AST) -> str | None:
+            parts = _dotted(value)
+            used = scope._resolve(parts) if parts else None
+            return used if used and resolver.entities[used]["kind"] in ("function", "class") else None
+
+        for node in nodes:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Subscript):
+                target = node.targets[0]
+                key = target.slice
+                if (isinstance(target.value, ast.Attribute) and target.value.attr in ("filters", "globals", "tests")
+                        and isinstance(key, ast.Constant) and isinstance(key.value, str)
+                        and (used := named(node.value))):
+                    registered[key.value] = used
+            elif isinstance(node, ast.Call):
+                parts = _dotted(node.func) or []
+                if parts[-2:] == ["globals", "update"]:
+                    registered.update({keyword.arg: used for keyword in node.keywords
+                                       if keyword.arg and (used := named(keyword.value))})
+                elif parts and parts[-1] == "Route" and node.args and isinstance(node.args[0], ast.Constant) \
+                        and isinstance(node.args[0].value, str):
+                    handler = _dotted(node.args[1]) if len(node.args) > 1 else None
+                    routes.append((node.args[0].value, path, ".".join(handler) if handler else ""))
+            elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                  and len(templates.get(node.value, [])) == 1):
+                edges.add((path, templates[node.value][0], "refers"))
+    return edges
 
 
 def _parse(file: Path) -> ast.Module | None:
@@ -118,7 +191,7 @@ def _import_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[t
 
 
 def _call_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tuple[str, str, str]]:
-    """Find the calls made by the functions and methods of one module.
+    """Find the calls made by the functions and methods of one module, and what they name without calling.
 
     Args:
         module: Path of the module.
@@ -126,15 +199,19 @@ def _call_edges(module: str, tree: ast.Module, resolver: "_Resolver") -> set[tup
         resolver: Name resolution for the whole project.
 
     Returns:
-        `(caller, callee, "calls")` relations; nested functions count as their enclosing function.
+        `(caller, callee, "calls")` and `(user, used, "refers")` relations; nested functions count as
+        their enclosing function, and the statements outside functions and classes as the module.
     """
     edges = set()
     for function, path, owner in _functions(tree, module, None):
         if path not in resolver.entities:
             continue
-        for callee in _Scope(resolver, module, owner, path).calls(function):
-            if callee != path:
-                edges.add((path, callee, "calls"))
+        scope = _Scope(resolver, module, owner, path)
+        edges |= {(path, callee, "calls") for callee in scope.calls(function) if callee != path}
+        edges |= {(path, used, "refers") for used in scope.refers(function) if used != path}
+    loose = ast.Module(body=[node for node in tree.body if not isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))], type_ignores=[])
+    edges |= {(module, used, "refers") for used in _Scope(resolver, module, None, module).refers(loose)}
     return edges
 
 
@@ -377,6 +454,49 @@ class _Scope:
                 callee = self._resolve(parts) if parts else None
                 if callee and self.resolver.entities[callee]["kind"] in ("function", "class"):
                     found.add(callee)
+        return found
+
+    def refers(self, body: ast.AST) -> set[str]:
+        """Resolve the functions and classes named in a body without being called.
+
+        A name passed as an argument, assigned, returned, listed or used as a decorator counts; the
+        name of a call (that is `calls`) and the names in type annotations do not. Of a dotted name
+        only the whole of it counts (`self.on_change`, not `self`).
+
+        Args:
+            body: Function or module node.
+
+        Returns:
+            Paths of the functions and classes named.
+        """
+        nodes = list(ast.walk(body))
+        for node in nodes:
+            self._learn(node)
+        skipped: set[int] = set()
+        for node in nodes:
+            parts = []
+            if isinstance(node, ast.Call):
+                parts = [node.func]
+            elif isinstance(node, ast.Attribute):
+                parts = [node.value]
+            elif isinstance(node, ast.arg):
+                parts = [node.annotation]
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parts = [node.returns]
+            elif isinstance(node, ast.AnnAssign):
+                parts = [node.annotation]
+            skipped |= {id(inner) for part in parts if part is not None for inner in ast.walk(part)}
+        found = set()
+        for node in nodes:
+            if id(node) in skipped or not isinstance(node, (ast.Name, ast.Attribute)) \
+                    or not isinstance(node.ctx, ast.Load):
+                continue
+            parts = _dotted(node)
+            if not parts or (len(parts) == 1 and (parts[0] in self.instances or parts[0] in ("self", "cls"))):
+                continue  # a variable holding an instance names the object, not its class
+            used = self._resolve(parts)
+            if used and self.resolver.entities[used]["kind"] in ("function", "class"):
+                found.add(used)
         return found
 
     def _learn(self, node: ast.AST) -> None:

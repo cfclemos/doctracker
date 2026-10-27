@@ -8,7 +8,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 from pygments import highlight as pygments_highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import PythonConsoleLexer, PythonLexer
+from pygments.lexers import CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonConsoleLexer, PythonLexer
 from pygments.styles import get_all_styles, get_style_by_name
 from pygments.token import Token
 
@@ -29,14 +29,27 @@ _python = PythonLexer()
 _console = PythonConsoleLexer()
 """Lexer for interactive sessions (`>>>` examples)."""
 
+_frontend_lexers = {"js": JavascriptLexer(), "css": CssLexer(), "jinja": HtmlDjangoLexer()}
+"""Lexers for the front-end code, by the `language` of its entities (Jinja templates read as Django ones)."""
+
 GROUPS = (
     ("module", "Modules"),
     ("class", "Classes"),
     ("function", "Functions"),
     ("attribute", "Attributes"),
     ("type alias", "Type aliases"),
+    ("script", "Scripts"),
+    ("stylesheet", "Stylesheets"),
+    ("template", "Templates"),
+    ("js function", "Functions"),
+    ("macro", "Macros"),
+    ("css class", "CSS classes"),
+    ("css rule", "CSS rules"),
 )
-"""Order and labels of the member groups on module and class pages, as `(kind, label)`."""
+"""Order and labels of the member groups on module, class and front-end file pages, as `(kind, label)`."""
+
+TREE_KINDS = ("module", "class", "function", "script", "stylesheet", "template", "js function", "macro")
+"""Kinds shown in the navigation tree (CSS classes and rules only on their stylesheet's page: there are many)."""
 
 
 def render_markdown(text: str) -> str:
@@ -122,16 +135,17 @@ def _is_dark(color: str) -> bool:
     return red * 0.299 + green * 0.587 + blue * 0.114 < 128
 
 
-def highlight(code: str) -> Markup:
-    """Turn Python code into HTML with syntax highlighting.
+def highlight(code: str, language: str = "python") -> Markup:
+    """Turn code into HTML with syntax highlighting.
 
     Args:
         code: Python source, or an interactive session starting with `>>>` (console lexer).
+        language: `python`, or the `language` of a front-end entity (`js`, `css`, `jinja`).
 
     Returns:
         Token spans with Pygments classes, safe to insert in a template.
     """
-    lexer = _console if code.lstrip().startswith(">>>") else _python
+    lexer = _frontend_lexers.get(language) or (_console if code.lstrip().startswith(">>>") else _python)
     return Markup(pygments_highlight(code, lexer, _formatter).rstrip("\n"))
 
 
@@ -233,7 +247,9 @@ def _section_items(entity: dict, kinds: tuple[str, ...]) -> list[dict]:
     return [item for section in entity["sections"] if section["kind"] in kinds for item in section["items"]]
 
 
-SYMBOLS = {"class": "C", "function": "f", "method": "m", "attribute": "a", "type alias": "t"}
+SYMBOLS = {"class": "C", "function": "f", "method": "m", "attribute": "a", "type alias": "t",
+           "script": "JS", "stylesheet": "CSS", "template": "T", "js-function": "f", "macro": "M",
+           "css-class": ".", "css-rule": "#"}
 """Symbol shown before each item in the tree and on pages, by role (packages and modules use folder/file icons)."""
 
 
@@ -266,7 +282,7 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
     children = []
     for member_path in entity["members"]:
         member = state.entities.get(member_path)
-        if member and member["kind"] in ("module", "class", "function"):
+        if member and member["kind"] in TREE_KINDS:
             children.append(_tree_node(state, member_path, current, _role(entity, member)))
     return {
         "path": path,
@@ -292,7 +308,7 @@ def _role(parent: dict, member: dict) -> str:
         return "subpackage"
     if member["kind"] == "function" and parent["kind"] == "class":
         return "method"
-    return member["kind"]
+    return member["kind"].replace(" ", "-")  # `js function` → `js-function`: a role names CSS classes
 
 
 def members_by_group(state: DocState, entity: dict) -> list[dict]:
@@ -372,7 +388,7 @@ def page_role(state: DocState, entity: dict) -> str:
     if entity["path"] in state.roots:
         return "package"
     parent = state.entities.get(entity["parent"] or "")
-    return _role(parent, entity) if parent else entity["kind"]
+    return _role(parent, entity) if parent else entity["kind"].replace(" ", "-")
 
 
 def parameter_rows(entity: dict) -> list[dict]:
@@ -657,3 +673,34 @@ def source_code(project_root: Path, entity: dict) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
     end = entity["endlineno"] or entity["lineno"]
     return "\n".join(lines[entity["lineno"] - 1 : end])
+
+
+RELATION_LABELS = {"calls": "calls", "refers": "refers to", "uses": "uses", "imports": "imports",
+                   "inherits": "inherits from", "has": "holds"}
+"""How each kind of relation reads, from the entity using to the one used."""
+
+
+def relations(state: DocState, path: str) -> dict[str, list[dict]]:
+    """What uses an entity and what it uses, from every relation but containment.
+
+    Args:
+        state: Extracted entities and relations.
+        path: The entity.
+
+    Returns:
+        `used_by` and `uses`: rows with the other entity's `path`, `name`, `role` and `symbol`,
+        the relation `kind` (as `RELATION_LABELS` words it) and `via` (a route, an attribute), sorted by path.
+    """
+    found: dict[str, dict[tuple, dict]] = {"used_by": {}, "uses": {}}
+    for edge in state.edges:
+        if edge["kind"] == "contains":
+            continue
+        for side, here, other in (("used_by", "target", "source"), ("uses", "source", "target")):
+            if edge[here] != path or edge[other] not in state.entities:
+                continue
+            entity = state.entities[edge[other]]
+            role = page_role(state, entity)
+            row = {"path": entity["path"], "name": entity["name"], "role": role, "symbol": SYMBOLS.get(role, ""),
+                   "kind": RELATION_LABELS.get(edge["kind"], edge["kind"]), "via": edge.get("via", "")}
+            found[side].setdefault((row["path"], row["kind"], row["via"]), row)
+    return {side: [rows[key] for key in sorted(rows)] for side, rows in found.items()}

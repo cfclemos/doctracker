@@ -24,7 +24,7 @@
     {% set views = [("architecture", "Architecture", "/architecture?focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
   {% elif entity.kind == "class" %}
     {% set views = [("classes", "Classes", "/classes?package=" ~ entity.parent ~ "&focus=" ~ entity.path), ("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
-  {% elif entity.kind == "function" %}
+  {% elif entity.kind == "function" or entity.language %}
     {% set views = [("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
   {% endif %}
   {% if views %}
