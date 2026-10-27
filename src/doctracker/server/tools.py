@@ -273,6 +273,25 @@ Returns:
         return embeddings.status()
 
     @mcp.tool()
+    async def set_vllm_url(url: str = "") -> dict:
+        """Set, change or remove the vLLM server used for embeddings, and save it in config.json.
+
+        Args:
+            url: Base URL of a running vLLM server (e.g. `http://127.0.0.1:8000`). Empty removes it,
+                going back to the llama.cpp server managed by doctracker. The model it serves is set
+                with set_embedding_model.
+
+        Returns:
+            The new embedding status. The index is rebuilt with the new backend on next use.
+        """
+        url = url.strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise ToolError("Use the server's base URL, e.g. 'http://127.0.0.1:8000'")
+        set_config_value(project_root, config, "vllm_url", url.rstrip("/") or None, section="embeddings")
+        await embeddings.reset()
+        return embeddings.status()
+
+    @mcp.tool()
     def documentation_guide() -> str:
         """Explain how to write and document this project's code so doctracker builds complete pages.
 

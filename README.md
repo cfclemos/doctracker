@@ -140,7 +140,7 @@ tool.
 | Planner | `work_context`, `create_plan`, `update_plan`, `add_feature`, `update_feature`, `add_task`, `update_task`, `check_criterion`, `annotate_task`, `add_task_evidence`, `add_dependency`, `remove_dependency`, `delete_item`, and the tools to change or delete annotations and evidence |
 | Commit flow | `prepare_commit`, `commit`, `after_commit`, `clean_done`, `merge_branch` |
 | Context | `agent_context` |
-| Embeddings | `embedding_status`, `set_embedding_model`, `set_models_dir` |
+| Embeddings | `embedding_status`, `set_embedding_model`, `set_models_dir`, `set_vllm_url` |
 
 ## Notes and planning
 
@@ -209,7 +209,9 @@ the files are already there, and each search then takes a few milliseconds. The
 server stops after `idle_timeout` seconds without use and starts again when needed.
 
 To use your own **vLLM** server instead, set `embeddings.vllm_url` (and
-`vllm_model`); it takes precedence and nothing is downloaded.
+`vllm_model`), or ask the agent (`set_vllm_url`, then `set_embedding_model`);
+it takes precedence and nothing is downloaded. An empty `set_vllm_url` goes back
+to llama.cpp.
 
 ## The wiki
 
