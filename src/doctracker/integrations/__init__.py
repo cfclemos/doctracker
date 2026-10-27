@@ -1,5 +1,7 @@
 """Integrations with the agents that use doctracker (Claude Code, OpenCode), and what they share."""
 
+import shutil
+import sys
 from pathlib import Path
 
 SERVER_DOWN = ("doctracker is not running at {url}, so its plans, guidelines and memory are not available. "
@@ -34,3 +36,13 @@ def exclude_from_git(project_root: Path, path: str) -> None:
         return
     exclude.parent.mkdir(parents=True, exist_ok=True)
     exclude.write_text("\n".join([*lines, f"/{path}"]) + "\n", encoding="utf-8")
+
+
+def doctracker_command() -> list[str]:
+    """The command that runs this environment's doctracker, by absolute paths.
+
+    Returns:
+        `[program]`, or `[python, "-m", "doctracker"]` when there is no `doctracker` script.
+    """
+    program = shutil.which("doctracker", path=str(Path(sys.executable).parent))
+    return [Path(program).as_posix()] if program else [Path(sys.executable).as_posix(), "-m", "doctracker"]

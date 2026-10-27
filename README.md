@@ -101,7 +101,11 @@ is not running, the session hook starts it.
 **OpenCode** (version 2) — nothing to configure. When OpenCode is installed (or the
 project has an `.opencode/` folder), `init` and `start` write the plugin
 `.opencode/plugins/doctracker.js`, which registers the MCP server and gives the
-context. The plugin is kept out of git through `.git/info/exclude`.
+context. The plugin is kept out of git through `.git/info/exclude`. When a session
+needs the server and it is not running, the plugin starts it, as the Claude Code
+hook does; when the server restarts, the plugin reconnects OpenCode's MCP
+connection (OpenCode runs as a long-lived service, whose connection would not
+survive the restart).
 
 **Other agents** — any MCP client that supports Streamable HTTP can connect to the
 same URL. Without hooks, the agent gets the same contexts from the `agent_context`

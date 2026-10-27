@@ -3,20 +3,19 @@
 `doctracker init` and `doctracker start` write the hooks into the project's
 `.claude/settings.local.json` and the MCP server into `.mcp.json` (both local, never committed).
 Each hook runs `doctracker hook <event>` with the server's address, which reads the event Claude
-Code sends, asks the running server for the context of that moment (`/hooks/context/...`) and answers it as `additionalContext`. When a session
-opens and the server does not answer, the hook starts it and waits (`doctracker.integrations.autostart`).
+Code sends, asks the running server for the context of that moment (`/hooks/context/...`) and
+answers it as `additionalContext`. When a session opens and the server does not answer, the hook
+starts it and waits (`doctracker.integrations.autostart`).
 """
 
 import json
-import shutil
 import sqlite3
-import sys
 from pathlib import Path
 
 import httpx2
 
 from doctracker.config import NOTES_DATABASE_PATH
-from doctracker.integrations import NOT_STARTED, RECORD_THE_PLAN, SERVER_DOWN, exclude_from_git
+from doctracker.integrations import NOT_STARTED, RECORD_THE_PLAN, SERVER_DOWN, doctracker_command, exclude_from_git
 from doctracker.integrations.autostart import START_TIMEOUT, ensure_server
 from doctracker.notes import NoteStore
 from doctracker.notes.context import session_context
@@ -122,9 +121,8 @@ def hook_command(event: str, base_url: str) -> str:
     Returns:
         The command line, with the program quoted (paths may have spaces).
     """
-    program = shutil.which("doctracker", path=str(Path(sys.executable).parent))
-    command = f'"{Path(program).as_posix()}"' if program else f'"{Path(sys.executable).as_posix()}" -m doctracker'
-    return f'{command} hook {event} --url "{base_url}"'
+    program, *options = doctracker_command()
+    return " ".join([f'"{program}"', *options, "hook", event, "--url", f'"{base_url}"'])
 
 
 def write_settings(project_root: Path, base_url: str) -> Path:
