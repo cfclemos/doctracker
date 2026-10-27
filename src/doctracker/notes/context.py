@@ -13,19 +13,26 @@ from doctracker.notes.store import NoteStore
 CONTEXT_LIMIT = 8000
 """Longest context text, in characters: Claude Code saves longer hook texts to a file (10,000)."""
 
-CONTEXT_KINDS = ("session", "planning", "file", "commit")
+CONTEXT_KINDS = ("session", "planning", "file", "commit", "edit")
 """The moments a context is made for."""
 
 RULE = (
     "This project keeps its plans, guidelines and memory in doctracker (MCP server \"doctracker\"). "
     "Record notes, decisions and progress there (create_note, annotate_task, update_task), not in files "
     "or local memory. Before planning, changing code or writing a note, call recall(query). "
-    "Before writing or changing code or docstrings, call documentation_guide and follow it."
+    "Before writing or changing code or docstrings, call documentation_guide and follow it. "
+    "Before changing code, or analysing a change, judge whether it needs planning (new behaviour, several "
+    "files, a design choice, or an open plan it touches); if it does, enter plan mode (EnterPlanMode) first."
 )
 """The first lines of every session: where everything is kept and how to find it."""
 
 NO_TASK_IN_PROGRESS = "No task is in progress: set one to doing (update_task) before changing planned code."
 """Said with the notes of a file while no task is being worked on."""
+
+EDIT_GATE = ("Edit refused: no task is in progress. If the change needs planning, enter plan mode "
+             "(EnterPlanMode); otherwise set its task to doing (update_task), adding a small task on the spot "
+             "(add_task) when there is none, then edit again.")
+"""Why an edit of the project is refused while no task is being worked on (the `edit` context)."""
 
 MORE = "(more in work_context)"
 """Ends the open planning when it was cut to fit `CONTEXT_LIMIT`."""
@@ -53,6 +60,8 @@ def context_for(kind: str, notes: NoteStore, entities: dict[str, dict], project_
         return planning_context(notes)
     if kind == "commit":
         return commit_context(notes)
+    if kind == "edit":
+        return edit_context(notes)
     if kind == "file":
         if not path:
             raise ValueError("The file context needs the path of the file.")
@@ -158,11 +167,27 @@ def file_context(notes: NoteStore, entities: dict[str, dict], path: str) -> str:
     for note in found.values():
         about = ", ".join(entity for entity in note["entities"] if entity in in_file)
         lines.append(f"- note:{note['id']} ({note['type']}) {note['statement']} [{about}]")
-    doing = [task for plan in notes.planner(include_done=False)["plans"] for feature in plan["features"]
-             for task in feature["tasks"] if task["status"] == "doing"]
-    if not doing:
+    if not _tasks_in_progress(notes):
         lines.append(NO_TASK_IN_PROGRESS)
     return _fit(lines, [], [])
+
+
+def edit_context(notes: NoteStore) -> str:
+    """The context before an edit of the project outside plan mode: why it is refused, if it is.
+
+    Args:
+        notes: The store.
+
+    Returns:
+        Empty when a task is in progress; otherwise `EDIT_GATE`, the reason the edit is refused.
+    """
+    return "" if _tasks_in_progress(notes) else EDIT_GATE
+
+
+def _tasks_in_progress(notes: NoteStore) -> list[dict]:
+    """The tasks being worked on (status `doing`), in every open plan."""
+    return [task for plan in notes.planner(include_done=False)["plans"] for feature in plan["features"]
+            for task in feature["tasks"] if task["status"] == "doing"]
 
 
 def commit_context(notes: NoteStore) -> str:
