@@ -123,7 +123,8 @@ def after_commit(notes: NoteStore) -> dict:
         `recorded` (the commits just recorded on their tasks), `pending` (open tasks: ref, title,
         state), `can_clean` (done and committed items that can be deleted: tasks, and features and
         plans with everything inside done and committed; approved reviews too, but never the
-        Reviews plan or its feature).
+        Reviews plan or its feature). A done task with no branch on it, its feature or its plan
+        did no code work (a study, a planning) and is cleanable without a commit.
     """
     recorded = []
     for made in notes.open_commits():
@@ -142,8 +143,11 @@ def after_commit(notes: NoteStore) -> dict:
         for feature in plan["features"]:
             feature_clean = not plan["fixed"]
             for task in feature["tasks"]:
-                # A review is done once approved; any other task also has to be committed.
-                committed = plan["fixed"] or any(e["detail"].startswith(COMMITTED) for e in task["evidence"])
+                # A review is done once approved; work without a branch has no commit to wait for;
+                # any other task also has to be committed.
+                no_code = not (plan["branches"] or feature["branch"] or task["branch"])
+                committed = (plan["fixed"] or no_code
+                             or any(e["detail"].startswith(COMMITTED) for e in task["evidence"]))
                 if task["state"] == "done" and committed:
                     can_clean.append({"ref": task["item"], "title": task["title"]})
                 else:
