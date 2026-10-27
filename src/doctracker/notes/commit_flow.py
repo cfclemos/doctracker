@@ -7,9 +7,9 @@ review of commits made outside it.
 2. `commit` only runs `git add` and `git commit`, group by group. It stops at the first error and
    says where; calling it again with the groups left goes on.
 3. `after_commit` records the commits on their tasks and lists what is pending and what can be
-   cleaned up; `clean_done` deletes, once the user confirms. When the work planned for the current
-   branch is all done and committed, `merge_ready` says so and `merge` merges it into main, once the
-   user confirms.
+   cleaned up; `clean_done` deletes, once the user confirms. After the commits are recorded,
+   `merge_if_ready` merges the branch into main when the work planned for it is all done and
+   committed (`merge_ready`).
 4. `review_outside_commits` turns each commit not made by the flow into a task of the Reviews plan.
 """
 
@@ -189,8 +189,23 @@ async def merge_ready(notes: NoteStore, project_root: Path) -> dict | None:
     return {"branch": branch, "into": into} if tasks and complete else None
 
 
+async def merge_if_ready(notes: NoteStore, project_root: Path) -> dict | None:
+    """The last step of the post-commit: merge the branch into main when its planned work is complete.
+
+    Args:
+        notes: The store.
+        project_root: Root of the project.
+
+    Returns:
+        What `merge` returned (`merged` or `error`); None when the branch is not ready (see `merge_ready`).
+    """
+    if await merge_ready(notes, project_root) is None:
+        return None
+    return await merge(notes, project_root)
+
+
 async def merge(notes: NoteStore, project_root: Path) -> dict:
-    """Merge the checked-out branch into main, with a merge commit, once the user confirmed.
+    """Merge the checked-out branch into main, with a merge commit.
 
     The merge commit is recorded as made by the flow, so it is not taken for an outside commit.
     On a conflict the merge is aborted and the branch stays checked out.
