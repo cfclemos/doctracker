@@ -391,22 +391,25 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
         """Post-commit: record the commits on their tasks, then show what is pending and what can be cleaned.
 
         Show the user the pending tasks (the next steps) and the done items that can be deleted; delete
-        only what the user confirms, with clean_done. When `merge` is given, the work planned for this
-        branch is complete: ask the user whether to merge it into main (merge_branch).
+        only what the user confirms, with clean_done. Last, when the work planned for this branch is
+        all done and committed, the branch is merged into main (--no-ff) and `merge` says how it went:
+        show it to the user. On a conflict nothing is merged and git's message comes back.
 
         Returns:
-            `recorded`, `pending` (ref, title, state), `can_clean` (ref, title) and `merge` (branch, into)
-            or null.
+            `recorded`, `pending` (ref, title, state), `can_clean` (ref, title) and `merge` (`merged`
+            with branch, into and hash, or `error`), or null when the branch is not ready.
         """
-        return {**commit_flow.after_commit(notes), "merge": await commit_flow.merge_ready(notes, project_root)}
+        report = commit_flow.after_commit(notes)
+        return {**report, "merge": await commit_flow.merge_if_ready(notes, project_root)}
 
     @mcp.tool()
     @refusals_reported
     async def merge_branch() -> dict:
-        """Merge the checked-out branch into main (--no-ff), after the user confirmed it in the post-commit.
+        """Merge the checked-out branch into main (--no-ff) by hand; the post-commit merges by itself.
 
-        On a conflict nothing is merged: the merge is aborted, the branch stays checked out, and git's
-        message comes back to show the user.
+        Use it when the user asks for a merge the post-commit did not make. On a conflict nothing is
+        merged: the merge is aborted, the branch stays checked out, and git's message comes back to
+        show the user.
 
         Returns:
             `merged` (branch, into, hash), or `error`.
