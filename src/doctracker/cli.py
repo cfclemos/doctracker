@@ -8,7 +8,7 @@ import click
 
 from doctracker import __version__
 from doctracker.config import CONFIG_PATH, Config, detect_packages, load_config, write_config
-from doctracker.integrations import claude_code
+from doctracker.integrations import claude_code, opencode
 
 
 @click.group()
@@ -63,7 +63,7 @@ def start(host: str | None, port: int | None) -> None:
         config.port = port
     if not config.packages:
         raise click.ClickException(f"No packages to document. Add them to {CONFIG_PATH.as_posix()}.")
-    click.echo(f"Hooks: {claude_code.write_settings(project_root).relative_to(project_root).as_posix()}")
+    _write_integrations(project_root, config)
     click.echo(f"Wiki: {_base_url(config)}/")
     click.echo(f"MCP:  {_base_url(config)}/mcp")
     run(project_root, config)
@@ -99,7 +99,7 @@ def _base_url(config: Config) -> str:
 
 
 def _initialize(project_root: Path) -> None:
-    """Write a default configuration with the packages found in the project, and the Claude Code hooks.
+    """Write a default configuration with the packages found in the project, and the agents' integrations.
 
     Args:
         project_root: Root of the project to configure.
@@ -109,5 +109,18 @@ def _initialize(project_root: Path) -> None:
     write_config(project_root, config)
     found = ", ".join(config.packages) or "none (edit the file to add them)"
     click.echo(f"Created {CONFIG_PATH.as_posix()}. Packages: {found}")
+    _write_integrations(project_root, config)
+
+
+def _write_integrations(project_root: Path, config: Config) -> None:
+    """Write the Claude Code hooks and, when OpenCode is used, its plugin; print where they went.
+
+    Args:
+        project_root: Root of the project.
+        config: The configuration, for the server's address.
+    """
     settings = claude_code.write_settings(project_root)
-    click.echo(f"Wrote the Claude Code hooks to {settings.relative_to(project_root).as_posix()}.")
+    click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
+    if opencode.uses_opencode(project_root):
+        plugin = opencode.write_plugin(project_root, _base_url(config))
+        click.echo(f"OpenCode plugin: {plugin.relative_to(project_root).as_posix()}")
