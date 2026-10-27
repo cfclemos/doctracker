@@ -9,6 +9,7 @@ from pathlib import Path
 
 import griffe
 
+from doctracker.analysis.dead_code import scan
 from doctracker.extraction.frontend import extract_frontend
 from doctracker.extraction.graph import extract_edges
 
@@ -37,8 +38,8 @@ def extract_project(
 
     Returns:
         `roots` (paths of the loaded packages), `entities` (every entity by path),
-        `edges` (relations between entities, see `extract_edges`) and `errors`
-        (packages that could not be loaded, with the reason).
+        `edges` (relations between entities, see `extract_edges`), `errors`
+        (packages that could not be loaded, with the reason) and `dead_code` (see `analysis.scan`).
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
@@ -61,7 +62,8 @@ def extract_project(
         _collect(module, root, docstring_style, show_private, entities)
     entities.update(extract_frontend(root, entities))
     edges = extract_edges(entities, root)
-    return {"roots": roots, "entities": entities, "edges": edges, "errors": errors}
+    return {"roots": roots, "entities": entities, "edges": edges, "errors": errors,
+            "dead_code": scan(root, entities, edges)}
 
 
 def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, entities: dict) -> None:

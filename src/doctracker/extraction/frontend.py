@@ -22,9 +22,6 @@ from tree_sitter import Language, Node, Parser
 FRONTEND_KINDS = {".js": "script", ".css": "stylesheet", ".html": "template"}
 """The front-end files read, by suffix, with the kind of their entity."""
 
-FRONTEND_MEMBER_KINDS = ("js function", "css class", "css rule", "macro")
-"""The kinds of what the files define: JS functions; CSS classes, and CSS rules naming no class; macros."""
-
 MAX_SEARCH_CHARS = 4000
 """Longest text kept for the search of one front-end entity."""
 
@@ -306,7 +303,7 @@ def frontend_edges(entities: dict[str, dict], root: Path, registered: dict[str, 
         except (OSError, UnicodeDecodeError):
             continue
         if entity["kind"] == "template":
-            uses = _template_uses(source, registered, index)
+            uses = _template_uses(path, source, registered, index)
         else:
             uses = _script_uses(source, index)
         for line, target, kind, via in uses:
@@ -387,7 +384,8 @@ def _line(source: str, offset: int) -> int:
     return source.count("\n", 0, offset) + 1
 
 
-def _template_uses(source: str, registered: dict[str, str], index: _Index) -> list[tuple[int, str, str, str]]:
+def _template_uses(template: str, source: str, registered: dict[str, str],
+                   index: _Index) -> list[tuple[int, str, str, str]]:
     """What a template uses: `(line, target, kind, via)` for each use."""
     uses = []
     try:
@@ -414,8 +412,8 @@ def _template_uses(source: str, registered: dict[str, str], index: _Index) -> li
             if (isinstance(called, nodes.Getattr) and isinstance(called.node, nodes.Name)
                     and called.node.name in aliases):
                 target = f"{aliases[called.node.name]}:{called.attr}"
-            elif isinstance(called, nodes.Name):
-                target = imported.get(called.name)
+            elif isinstance(called, nodes.Name):  # a macro of this template, or one imported by name
+                target = f"{template}:{called.name}" if called.name in local else imported.get(called.name)
             if target and target in index.entities:
                 uses.append((node.lineno, target, "calls", ""))
         for node in tree.find_all((nodes.Name, nodes.Filter, nodes.Test)):

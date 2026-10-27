@@ -13,6 +13,7 @@ class DocState:
         entities: Every extracted entity, by qualified path.
         edges: Relations between entities (contains, imports, inherits, calls), for the graph.
         errors: Packages that could not be loaded, with the reason.
+        dead_code: Findings of the dead code analysis (see `doctracker.analysis.scan`).
         ready: Whether the first extraction has finished.
         listeners: One queue per open wiki page, notified when the data changes.
     """
@@ -21,6 +22,7 @@ class DocState:
     entities: dict[str, dict] = field(default_factory=dict)
     edges: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    dead_code: list[dict] = field(default_factory=list)
     ready: bool = False
     listeners: set[asyncio.Queue] = field(default_factory=set)
 
@@ -28,12 +30,13 @@ class DocState:
         """Replace the data with a new extraction result and notify the frontend.
 
         Args:
-            result: Output of `extract_project`: `roots`, `entities`, `edges` and `errors`.
+            result: Output of `extract_project`: `roots`, `entities`, `edges`, `errors` and `dead_code`.
         """
         self.roots = result["roots"]
         self.entities = result["entities"]
         self.edges = result["edges"]
         self.errors = result["errors"]
+        self.dead_code = result.get("dead_code", [])
         self.ready = True
         self.notify()
 
