@@ -7,7 +7,8 @@ from pathlib import Path
 import click
 
 from doctracker import __version__
-from doctracker.config import CONFIG_PATH, Config, detect_packages, load_config, write_config
+from doctracker.config import (CONFIG_PATH, NO_SOURCES, SOURCE_FOLDER_KINDS, Config, detect_packages, load_config,
+                               source_folders, write_config)
 from doctracker.integrations import autostart, claude_code, opencode
 
 
@@ -48,8 +49,8 @@ def start(host: str | None, port: int | None) -> None:
         host: Address to listen on instead of the configured one.
         port: Port to listen on instead of the configured one.
 
-    Raises:
-        click.ClickException: When the configuration lists no packages.
+    The code is found in the source folders (`src/`, `packages/*/src/`, `package/*/src/`); without
+    any, the server still starts and says there is nothing to document.
     """
     from doctracker.server.app import run
 
@@ -61,8 +62,7 @@ def start(host: str | None, port: int | None) -> None:
         config.host = host
     if port:
         config.port = port
-    if not config.packages:
-        raise click.ClickException(f"No packages to document. Add them to {CONFIG_PATH.as_posix()}.")
+    _echo_sources(project_root)
     _write_integrations(project_root, config)
     click.echo(f"Wiki: {_base_url(config)}/")
     click.echo(f"MCP:  {_base_url(config)}/mcp")
@@ -126,17 +126,31 @@ def _base_url(config: Config) -> str:
 
 
 def _initialize(project_root: Path) -> None:
-    """Write a default configuration with the packages found in the project, and the agents' integrations.
+    """Write a default configuration and the agents' integrations, and tell what code will be read.
 
     Args:
         project_root: Root of the project to configure.
     """
     config = Config()
-    config.packages = detect_packages(project_root, config.search_paths)
     write_config(project_root, config)
-    found = ", ".join(config.packages) or "none (edit the file to add them)"
-    click.echo(f"Created {CONFIG_PATH.as_posix()}. Packages: {found}")
+    click.echo(f"Created {CONFIG_PATH.as_posix()}.")
+    _echo_sources(project_root)
     _write_integrations(project_root, config)
+
+
+def _echo_sources(project_root: Path) -> None:
+    """Print the source folders and the packages found in them, or `NO_SOURCES` when there are none."""
+    packages = detect_packages(project_root)
+    if not packages:
+        before, title, after, advice = NO_SOURCES
+        click.echo(f"Nothing to document. {before}\n{title}")
+        for folder, meaning in SOURCE_FOLDER_KINDS:
+            click.echo(f"  - {folder}: {meaning}")
+        click.echo(after)
+        click.echo(click.style(advice, bold=True))
+        return
+    click.echo(f"Source folders: {', '.join(source_folders(project_root))}")
+    click.echo(f"Packages: {', '.join(packages)}")
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:

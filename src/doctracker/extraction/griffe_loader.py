@@ -10,6 +10,7 @@ from pathlib import Path
 import griffe
 
 from doctracker.analysis.dead_code import scan
+from doctracker.config import detect_packages, source_folders
 from doctracker.extraction.frontend import extract_frontend
 from doctracker.extraction.graph import extract_edges
 
@@ -17,22 +18,15 @@ MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
 """Kinds of members kept from griffe; anything else (e.g. aliases created by imports) is skipped."""
 
 
-def extract_project(
-    project_root: str,
-    packages: list[str],
-    search_paths: list[str],
-    docstring_style: str,
-    show_private: bool,
-) -> dict:
-    """Load every package statically and turn it into plain data.
+def extract_project(project_root: str, docstring_style: str, show_private: bool) -> dict:
+    """Load every package of the source folders statically and turn it into plain data.
 
     Runs in a worker process, so it takes and returns only built-in types.
-    The project's code is read, never imported or executed.
+    The project's code is read, never imported or executed. The packages are found again on every
+    call (`detect_packages`), so a new one is documented without a restart.
 
     Args:
         project_root: Root of the documented project.
-        packages: Top-level packages to load.
-        search_paths: Folders where the packages are found, relative to `project_root`.
         docstring_style: `google`, `numpy` or `sphinx`.
         show_private: Keep `_private` members.
 
@@ -43,11 +37,11 @@ def extract_project(
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
-    paths = [str(root / path) for path in search_paths]
+    paths = [str(root / folder) for folder in source_folders(root)]
     entities: dict[str, dict] = {}
     roots = []
     errors = []
-    for package in packages:
+    for package in detect_packages(root):
         try:
             module = griffe.load(
                 package,
@@ -137,6 +131,8 @@ def _to_entity(obj: griffe.Object, root: Path, style: str) -> dict:
     if obj.is_module:
         entity["exports"] = [str(name) for name in obj.exports] if obj.exports else []
         entity["is_package"] = entity["filepath"].endswith("__init__.py") or isinstance(obj.filepath, list)
+        if isinstance(obj.filepath, list):  # a namespace package: every folder it is made of
+            entity["folders"] = [_relative(folder, root) for folder in obj.filepath]
     return entity
 
 

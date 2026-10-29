@@ -32,6 +32,25 @@ QWEN3_QUERY_INSTRUCTION = (
 )
 """Prefix added to search queries; Qwen3-Embedding is trained to use an instruction like this."""
 
+MEMBER_FOLDERS = ("packages", "package")
+"""Folders holding the members of a monorepo, each with its own `src/` (e.g. `packages/billing/src`)."""
+
+SOURCE_FOLDER_KINDS = (
+    ("src/", "a single project, e.g. src/myapp/__init__.py"),
+    ("packages/*/src/", "each member of a monorepo, e.g. packages/billing/src/acme/billing/__init__.py"),
+    ("package/*/src/", "the same, with the members in package/"),
+)
+"""The kinds of source folders (`source_folders`), with what each is for; told when none is found."""
+
+NO_SOURCES = ("No Python code was found in the source folders.",
+              "doctracker reads the code only from these folders, relative to where it is started:",
+              "The code must come straight from these folders: src/ right at the project root, and each "
+              "member right inside packages/ or package/ (packages/billing/src/ is read, "
+              "packages/group/billing/src/ is not). Code anywhere else is not documented.",
+              "Start doctracker at the project root.")
+"""Told by `start` and the wiki when the project has no source folder or no code in them: the line
+before the list of `SOURCE_FOLDER_KINDS`, its title, the line after it and the advice, shown in bold."""
+
 
 @dataclass
 class EmbeddingsConfig:
@@ -67,9 +86,10 @@ class EmbeddingsConfig:
 class Config:
     """Settings read from `doc/config/config.json`.
 
+    The code documented is not set here: it is found in `src/` and in the `src/` of each monorepo
+    member (`source_folders`, `detect_packages`).
+
     Attributes:
-        packages: Top-level packages to document.
-        search_paths: Folders where the packages are found, relative to the project root.
         host: Address the server listens on.
         port: Port of the server (wiki and MCP endpoint).
         docstring_style: Docstring style of the project: `google`, `numpy` or `sphinx`.
@@ -81,8 +101,6 @@ class Config:
         embeddings: Settings of the embedding model used by semantic search.
     """
 
-    packages: list[str] = field(default_factory=list)
-    search_paths: list[str] = field(default_factory=lambda: ["src", "."])
     host: str = "127.0.0.1"
     port: int = 8765
     docstring_style: str = "google"
@@ -175,24 +193,46 @@ def models_dir(project_root: Path, config: Config) -> Path:
     return folder if folder.is_absolute() else project_root / folder
 
 
-def detect_packages(project_root: Path, search_paths: list[str]) -> list[str]:
-    """Find top-level Python packages (folders with `__init__.py`) in the search paths.
+def source_folders(project_root: Path) -> list[str]:
+    """Find the folders the project's code is read from: `src/` and the `src/` of each monorepo member.
+
+    Members are the folders of `packages/` or `package/` (e.g. `packages/billing/src`). Code anywhere
+    else is not documented.
 
     Args:
         project_root: Root of the project.
-        search_paths: Folders to look in, relative to `project_root` (e.g. `src`, `.`).
 
     Returns:
-        Package names, in the order found, without duplicates.
+        The folders that exist, relative to `project_root`, with forward slashes; `src` first.
+    """
+    folders = ["src"] if (project_root / "src").is_dir() else []
+    for members in MEMBER_FOLDERS:
+        base = project_root / members
+        if base.is_dir():
+            folders += [f"{members}/{member.name}/src" for member in sorted(base.iterdir())
+                        if not member.name.startswith(".") and (member / "src").is_dir()]
+    return folders
+
+
+def detect_packages(project_root: Path) -> list[str]:
+    """Find the top-level Python packages, namespace packages and modules in the source folders.
+
+    A folder with `__init__.py` is a package; a folder without one that holds `.py` files is a
+    namespace package (e.g. `acme` of `acme.billing`), found once even when several members share it;
+    a `.py` file directly in a source folder is a module.
+
+    Args:
+        project_root: Root of the project.
+
+    Returns:
+        Package and module names, in the order found, without duplicates.
     """
     packages = []
-    for search_path in search_paths:
-        base = project_root / search_path
-        if not base.is_dir():
-            continue
-        for child in sorted(base.iterdir()):
-            if child.name.startswith(".") or child.name == DOC_DIR:
+    for folder in source_folders(project_root):
+        for child in sorted((project_root / folder).iterdir()):
+            name = child.stem if child.is_file() else child.name
+            if child.name.startswith(".") or not name.isidentifier() or name in packages:
                 continue
-            if (child / "__init__.py").is_file() and child.name not in packages:
-                packages.append(child.name)
+            if child.is_file() and child.suffix == ".py" or child.is_dir() and any(child.rglob("*.py")):
+                packages.append(name)
     return packages

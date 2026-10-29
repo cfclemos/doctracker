@@ -17,7 +17,9 @@
   </h1>
   <p class="meta">
     <code class="path">{{ entity.path }}</code>
-    {% if entity.filepath %}
+    {% if entity.folders %}
+    <span class="location" title="A namespace package: a folder without __init__.py, in each of these places">{{ entity.folders | join(" · ") }}</span>
+    {% elif entity.filepath %}
     <span class="location">{{ entity.filepath }}{% if entity.lineno and entity.kind != "module" %}:{{ entity.lineno }}–{{ entity.endlineno }}{% endif %}</span>
     {% endif %}
   </p>

@@ -74,7 +74,7 @@ pip install doctracker
 From the root of your project:
 
 ```bash
-doctracker init     # creates doc/config/config.json (packages are detected automatically)
+doctracker init     # creates doc/config/config.json
 doctracker start    # starts the server
 doctracker restart  # stops it and starts it again in the background (output in doc/logs/server.log)
 ```
@@ -82,6 +82,31 @@ doctracker restart  # stops it and starts it again in the background (output in 
 With uv, prefix the commands with `uv run` (e.g. `uv run doctracker start`).
 `start` runs `init` on its own if the project has no configuration yet. After that,
 opening a Claude Code session starts the server by itself when it is not running.
+doctracker can be installed in the project's environment or in any other one: it reads
+the code without importing it, so it never needs the project's dependencies.
+
+### Where the code is read from
+
+Run doctracker at the root of the project. It reads the Python code in `src/` and, in a
+monorepo, in the `src/` of each member of `packages/` or `package/`. **Code anywhere else
+is not documented** (a package next to `pyproject.toml`, `tests/`, `scripts/`, ...).
+
+```text
+my-project/                     my-monorepo/
+├── pyproject.toml              ├── pyproject.toml        # e.g. [tool.uv.workspace]
+└── src/                        └── packages/
+    └── myapp/                      ├── billing/
+        └── __init__.py             │   ├── pyproject.toml
+                                    │   └── src/acme/billing/__init__.py
+                                    └── web/
+                                        ├── pyproject.toml
+                                        └── src/acme/web/__init__.py
+```
+
+Nothing is configured: every package, namespace package (a folder without `__init__.py`,
+like `acme` above, even when it is spread over several members) and module found there is
+documented, and a new one appears in the wiki while the server runs. `pyproject.toml` is
+not read, so the same layouts work with pip, uv or any build backend.
 
 The server prints where it wrote the agents' settings and its two addresses:
 
@@ -243,8 +268,6 @@ to llama.cpp.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `packages` | detected | Top-level packages to document. |
-| `search_paths` | `["src", "."]` | Folders where the packages are found, relative to the project root. |
 | `host` | `"127.0.0.1"` | Address the server listens on. |
 | `port` | `8765` | Port of the server (also `doctracker start --port`). |
 | `docstring_style` | `"google"` | `google`, `numpy` or `sphinx`. |
