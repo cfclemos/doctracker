@@ -14,7 +14,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from doctracker.config import DOC_DIR, Config
+from doctracker.config import DOC_DIR, Config, source_folders
 from doctracker.extraction import extract_project
 from doctracker.extraction.frontend import FRONTEND_KINDS
 from doctracker.history import git_dir
@@ -33,23 +33,21 @@ WATCHED_SUFFIXES = (".py", *FRONTEND_KINDS)
 """Files whose change rebuilds the documentation: Python and the front-end files read with it."""
 
 
-def snapshot(project_root: Path, search_paths: list[str]) -> dict[str, int]:
-    """Map every watched file (Python and front-end) to its modification time.
+def snapshot(project_root: Path) -> dict[str, int]:
+    """Map every watched file (Python and front-end) of the source folders to its modification time.
 
-    Runs in a worker process.
+    Runs in a worker process. The source folders are found on every call, so a new monorepo member
+    is watched without a restart.
 
     Args:
         project_root: Root of the documented project.
-        search_paths: Folders to scan, relative to `project_root`.
 
     Returns:
         Modification time in nanoseconds, by file path; two equal snapshots mean nothing changed.
     """
-    files = {}
-    for search_path in search_paths:
-        base = project_root / search_path
-        if base.is_dir():
-            _scan(base, files)
+    files: dict[str, int] = {}
+    for folder in source_folders(project_root):
+        _scan(project_root / folder, files)
     return files
 
 
@@ -110,7 +108,7 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
 
     Args:
         project_root: Root of the documented project.
-        config: Project settings (packages, search paths, docstring style, watch interval).
+        config: Project settings (docstring style, watch interval).
         state: Shared data, replaced after every extraction.
         notes: The store, where commits made outside the commit flow become reviews.
     """
@@ -120,15 +118,13 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
     with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as executor:
         previous_code = previous_git = None
         while True:
-            code = await loop.run_in_executor(executor, snapshot, project_root, config.search_paths)
+            code = await loop.run_in_executor(executor, snapshot, project_root)
             git = await loop.run_in_executor(executor, git_snapshot, repository)
             if code != previous_code:
                 result = await loop.run_in_executor(
                     executor,
                     extract_project,
                     str(project_root),
-                    config.packages,
-                    config.search_paths,
                     config.docstring_style,
                     config.show_private,
                 )

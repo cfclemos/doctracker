@@ -12,7 +12,7 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from doctracker.config import Config, set_config_value
+from doctracker.config import NO_SOURCES, SOURCE_FOLDER_KINDS, Config, set_config_value
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
@@ -83,6 +83,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
         static_url=_static_url,
+        no_sources=NO_SOURCES,
+        source_folder_kinds=SOURCE_FOLDER_KINDS,
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
         search_modes=MODES,

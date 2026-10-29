@@ -1,5 +1,14 @@
+{% if not state.roots and not state.errors %}
+<h1>Nothing to document</h1>
+<p>{{ no_sources[0] }}</p>
+<p>{{ no_sources[1] }}</p>
+<ul>{% for folder, meaning in source_folder_kinds %}<li><code>{{ folder }}</code>: {{ meaning }}</li>{% endfor %}</ul>
+<p>{{ no_sources[2] }}</p>
+<p><strong>{{ no_sources[3] }}</strong></p>
+{% else %}
 <h1>Not found</h1>
 <p>No documented entity is called <code>{{ path }}</code>.</p>
+{% endif %}
 {% if state.errors %}
 <h2>Loading errors</h2>
 <ul>{% for error in state.errors %}<li><code>{{ error }}</code></li>{% endfor %}</ul>

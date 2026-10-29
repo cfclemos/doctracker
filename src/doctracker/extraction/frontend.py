@@ -43,9 +43,12 @@ def extract_frontend(root: Path, entities: dict[str, dict]) -> dict[str, dict]:
         `search_text`; each file is also added to the `members` of its package.
     """
     root = root.resolve()
-    packages = {(root / entity["filepath"]).resolve().parent.relative_to(root).as_posix(): path
-                for path, entity in entities.items()
-                if entity["kind"] == "module" and entity.get("is_package") and isinstance(entity["filepath"], str)}
+    packages = {}
+    for path, entity in entities.items():
+        if entity["kind"] == "module" and entity.get("is_package"):
+            # a namespace package has no __init__.py: its folders are given, one per monorepo member
+            folders = entity.get("folders") or [(root / entity["filepath"]).resolve().parent.relative_to(root).as_posix()]
+            packages.update(dict.fromkeys(folders, path))
     found: dict[str, dict] = {}
     for folder, package in sorted(packages.items()):
         if Path(folder).parent.as_posix() in packages:
