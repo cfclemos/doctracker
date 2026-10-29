@@ -1,0 +1,55 @@
+{% import "macros.html" as ui %}
+{# The dead code findings (doctracker.analysis), filtered and grouped by file. The filters go in the
+   URL, so a filtered list can be kept or shared; the same filters as the dead_code MCP tool. #}
+<div class="dead-code-page">
+  {{ ui.view_header("dead-code", "DEAD CODE",
+     "What nothing in the project uses: the code graph and vulture together. Check before deleting: code used only from outside the project, or through data, is not seen.") }}
+  <form class="notes-filter dead-code-filter" hx-get="/dead-code" hx-target="#content" hx-push-url="true"
+        hx-trigger="change, keyup changed delay:400ms from:input[name=path]">
+    <label>Verdict
+      <select name="verdict">
+        <option value="">All</option>
+        {% for verdict in verdicts %}<option value="{{ verdict }}"{% if verdict == filters.verdict %} selected{% endif %}>{{ verdict }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Kind
+      <select name="kind">
+        <option value="">All</option>
+        {% for kind in kinds %}<option value="{{ kind }}"{% if kind == filters.kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Confidence
+      <select name="confidence">
+        {% for step in confidences %}<option value="{{ step }}"{% if step == filters.confidence %} selected{% endif %}>{% if step %}{{ step }}% or more{% else %}Any{% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Path
+      <input type="search" name="path" value="{{ filters.path }}" placeholder="e.g. doctracker.wiki" autocomplete="off">
+    </label>
+    <span class="dead-code-count">{{ shown }} of {{ total }}</span>
+  </form>
+
+  {% for group in groups %}
+  <section class="dead-code-file">
+    <h2><code>{{ group.file }}</code> <span class="count">{{ group.rows | length }}</span></h2>
+    <table class="dead-code-table">
+      <thead><tr><th>Name</th><th>Kind</th><th>Verdict</th><th>Confidence</th><th>Used by</th><th>Why</th></tr></thead>
+      <tbody>
+        {% for row in group.rows %}
+        <tr>
+          <td>{% if row.link %}<a {{ ui.nav(row.link) }}><code>{{ row.name }}</code></a>{% else %}<code>{{ row.name }}</code>{% endif %}
+              <span class="dead-code-line">line {{ row.line }}</span></td>
+          <td>{{ row.kind }}</td>
+          <td><span class="dead-badge verdict-{{ row.verdict | replace(',', '') | replace(' ', '-') }}">{{ row.verdict }}</span></td>
+          <td>{{ row.confidence }}%</td>
+          <td>{{ row.used_by }}</td>
+          <td class="dead-code-why">{{ row.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% else %}
+  <p class="empty">{% if total %}Nothing matches these filters.{% else %}No dead code found.{% endif %}</p>
+  {% endfor %}
+</div>

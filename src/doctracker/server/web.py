@@ -94,6 +94,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         parameter_rows=pages.parameter_rows,
         other_sections=pages.other_sections,
         relations=pages.relations,
+        dead_code_of=pages.dead_code_of,
     )
 
     def render_page(request: Request, content: str, url: str, context: dict, status: int = 200) -> HTMLResponse:
@@ -137,7 +138,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
-        """One of the views: architecture, classes, calls, git or notes."""
+        """One of the views: architecture, classes, calls, git, notes or dead code."""
         view = request.url.path.strip("/")
         params = dict(request.query_params)
         context = {
@@ -158,6 +159,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context["selected"] = params.get("commit") or (commits[0].hash if commits else "")
         if view == "notes":
             context.update(notes_context(params))
+        if view == "dead-code":
+            context.update(pages.dead_code_view(state, params))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
 
@@ -555,6 +558,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/classes", view_page),
         Route("/calls", view_page),
         Route("/git", view_page),
+        Route("/dead-code", view_page),
         Route("/notes", view_page),
         Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),

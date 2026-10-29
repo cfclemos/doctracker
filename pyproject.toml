@@ -41,6 +41,7 @@ dependencies = [
     "tree-sitter-css>=0.25",
     "tree-sitter-javascript>=0.25",
     "uvicorn>=0.54.0",
+    "vulture>=2.14",
 ]
 
 [project.urls]

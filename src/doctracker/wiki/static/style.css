@@ -273,7 +273,8 @@ main { grid-area: main; }
 /* Drawn icons (Tabler Icons, MIT, in static/icons/): the SVG is a mask painted with the
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
-.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before {
+.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before,
+.icon-dead-code::before {
   content: "";
   display: inline-block;
   width: 1.05rem;
@@ -291,6 +292,7 @@ main { grid-area: main; }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
 .icon-notes::before { -webkit-mask-image: url("icons/notebook.svg"); mask-image: url("icons/notebook.svg"); }
+.icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
 .icon-architecture { --tint: var(--method); }
@@ -298,6 +300,7 @@ main { grid-area: main; }
 .icon-calls { --tint: var(--function); }
 .icon-git { --tint: var(--raises); }
 .icon-notes { --tint: var(--exports); }
+.icon-dead-code { --tint: var(--accent); }
 .icon.icon-package { --tint: var(--attribute); }
 .icon.icon-subpackage { --tint: var(--folder); }
 
@@ -1045,6 +1048,28 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 }
 .notes-filter { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); }
 .notes-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+/* DEAD CODE page: the filters, then one table per file; the verdict badge is also on entity pages. */
+.dead-code-filter { flex-wrap: wrap; align-items: center; margin: 0.6rem 0 1rem; }
+.dead-code-filter input[type=search] { width: 16rem; max-width: 60vw; }
+.dead-code-count { margin-left: auto; }
+.dead-code-file h2 { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; }
+.dead-code-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.dead-code-table th, .dead-code-table td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border);
+  vertical-align: top; }
+.dead-code-table th { color: var(--muted); font-weight: 600; }
+.dead-code-line, .dead-code-why { color: var(--muted); font-size: 0.78rem; }
+.dead-code-line { margin-left: 0.4rem; }
+.dead-badge { display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+  white-space: nowrap; color: var(--on-tint, #fff); background: var(--badge, var(--muted)); text-decoration: none; }
+h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
+.verdict-unused, .verdict-front-end-unused { --badge: var(--raises); }
+.verdict-public-unused-inside { --badge: var(--exports); }
+.verdict-maybe-used-by-data, .verdict-vulture-only { --badge: var(--muted); }
+@media (max-width: 720px) {
+  .dead-code-table th:nth-child(5), .dead-code-table td:nth-child(5), .dead-code-table th:nth-child(6),
+  .dead-code-table td:nth-child(6) { display: none; }
+}
 
 /* Planner graph: tasks are boxes, plans and features frames, all in their state's color. */
 .planner-task { min-width: 12rem; max-width: 18rem; border-color: var(--border); }

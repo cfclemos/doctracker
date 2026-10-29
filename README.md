@@ -19,8 +19,17 @@ context at the right moments, and serves a live wiki of the project in your brow
 - **Static analysis only** — the code is read with [griffe](https://mkdocstrings.github.io/griffe/),
   never imported or executed.
 - **Live wiki** — edit a file or commit and the open page updates by itself.
+- **Front-end too** — the JS functions, CSS classes and rules, templates and macros
+  inside the packages are entities of their own, read with tree-sitter and Jinja2,
+  tied to the Python code (helpers, routes, rendered templates) and searchable.
 - **Code graphs** — architecture (modules and imports, cycles marked), class
-  diagram and call graph of any function.
+  diagram and call graph of any function, with callbacks, templates and CSS classes.
+- **Dead code** — what nothing uses, from the code graph and
+  [vulture](https://github.com/jendrikseipp/vulture) together (each errs where
+  the other does not), with filters, in the wiki's DEAD CODE section and the
+  `dead_code` tool.
+- **Renames followed** — renames and moves found at commit are kept, so notes,
+  searches and the entity page still find an entity by its earlier names.
 - **Git history** — branch graph, commits with their diffs, and the commits that
   changed a file or an entity.
 - **Agent notes** — guidelines (how to work) and memory (what is known), optionally
@@ -127,6 +136,7 @@ tool.
 | Group | Tools |
 | --- | --- |
 | Code | `list_entities`, `get_entity`, `status`, `documentation_guide` (also the `doctracker://guide` resource) |
+| Dead code | `dead_code` (the same findings and filters as the wiki's DEAD CODE section) |
 | Search | `recall`, `hybrid_search`, `bm25_search`, `semantic_search` |
 | Graphs | `architecture_view`, `class_diagram_view`, `call_graph_view` |
 | Git | `git_history`, `git_branches`, `git_commit` |
