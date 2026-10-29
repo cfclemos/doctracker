@@ -3,6 +3,7 @@
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from doctracker.analysis import DEAD_KINDS, VERDICTS, filter_rows
 from doctracker.config import Config, set_config_value
 from doctracker.graph import architecture, call_graph, class_diagram, entity_history
 from doctracker.history import commit_diff, read_branch_graph
@@ -345,6 +346,31 @@ Returns:
         if entity is None:
             raise ToolError(f"Unknown entity: {path}")
         return {**entity, "previous_names": search.notes.previous_names(entity["path"])}
+
+    @mcp.tool(description=f"""Find dead code: what nothing in the project uses, from the code graph and vulture.
+
+A Python function or class is `unused` when both agree, `public, unused inside` when its package offers
+it (`__all__`, re-exported); the front-end (JS functions, CSS classes, templates, macros) is judged by
+the graph, `maybe used by data` when the Python code writes its name as a string; `vulture only` covers
+variables, attributes, properties, imports and unreachable code. Check before deleting: code used only
+from outside the project, or through data, is not seen. The same list as the wiki's DEAD CODE section.
+
+Args:
+    prefix: Only paths (or files) starting with it, e.g. `mypkg.api` or `mypkg/static`.
+    verdict: One of {", ".join(VERDICTS)}; empty for all.
+    kind: One of {", ".join(DEAD_KINDS)}; empty for all.
+    min_confidence: Only findings at least this sure, 0 to 100.
+
+Returns:
+    `total` (every finding), `shown` and `rows`: `path` (the entity, or `file:line`), `name`, `kind`,
+    `verdict`, `confidence`, `used_by`, `file`, `line` and `message` (why).""")
+    def dead_code(prefix: str = "", verdict: str = "", kind: str = "", min_confidence: int = 0) -> dict:
+        if verdict and verdict not in VERDICTS:
+            raise ToolError(f"Unknown verdict {verdict!r}; use one of: {', '.join(VERDICTS)}")
+        if kind and kind not in DEAD_KINDS:
+            raise ToolError(f"Unknown kind {kind!r}; use one of: {', '.join(DEAD_KINDS)}")
+        rows = filter_rows(state.dead_code, prefix.strip(), verdict, kind, min_confidence)
+        return {"total": len(state.dead_code), "shown": len(rows), "rows": rows}
 
     @mcp.tool()
     def status() -> dict:
