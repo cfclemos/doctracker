@@ -78,3 +78,78 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endif %}
 {%- endmacro %}
 
+
+{# What uses an entity and what it uses (pages.relations), the same on every page of every language. #}
+{% macro relations(found, role) -%}
+{% for side, label, empty in (("used_by", "Used by", "Nothing in the project uses it."), ("uses", "Uses", "It uses nothing else of the project.")) %}
+{% call section(role, label, count=found[side] | length, name=side | replace("_", "-"), divider=true) %}
+  {% if found[side] %}
+  <ul class="members relations">
+    {% for row in found[side] %}
+    <li>
+      <a class="member" {{ nav(row.path) }}>
+        {{ icon(row.role, row.symbol) }}
+        <span class="member-body">
+          <code class="member-signature"><span class="name role-{{ row.role }}">{{ row.name }}</span></code>
+          <span class="summary">{{ row.kind }}{% if row.via %} · <code>{{ row.via }}</code>{% endif %} · <span class="relation-path">{{ row.path }}</span></span>
+        </span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">{{ empty }}</p>{% endif %}
+{% endcall %}
+{% endfor %}
+{%- endmacro %}
+
+{# The Source block of a page: open by default, its code fetched right after the page is shown, so the
+   page itself stays light. Changing the theme saves it to doc/config/config.json. #}
+{% macro source(entity, code_theme, code_themes) -%}
+{% set source_attrs = 'hx-get="/source/%s" hx-trigger="load" hx-target="find .code"' | format(entity.path | e) %}
+{% call section("source", "Source", divider=true, attrs=source_attrs) %}
+  <label class="theme-picker">Code theme
+    <select class="code-theme-select" name="code_theme"
+            hx-post="/settings/code-theme" hx-trigger="change" hx-swap="none">
+      {% for name in code_themes %}<option value="{{ name }}"{% if name == code_theme %} selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="code"><p class="empty">Loading…</p></div>
+{% endcall %}
+{%- endmacro %}
+
+{# The modal telling that grammars could not be fetched, so those languages were left out; the same
+   head, text and buttons as the confirmation modal. static/live.js opens it once for each list of
+   grammars (data-key), and again when the list changes; Try again reads the code again at once. #}
+{% macro missing_grammars(missing, folder) -%}
+{% if missing %}
+<dialog id="grammars-dialog" class="notes-dialog confirm-dialog failing" data-key="{{ missing | map(attribute='grammar') | join(',') }}">
+  <form method="dialog">
+    <header class="confirm-head"><i class="confirm-icon"></i><span class="confirm-title">Grammars not fetched</span></header>
+    <div class="confirm-text">
+      <p>doctracker could not fetch the grammar of these languages, so their files are not read yet:</p>
+      <ul class="grammar-list">
+        {% for item in missing %}<li><strong>{{ item.language }}</strong>: {{ item.files }} file{{ "s" if item.files != 1 }} left out</li>{% endfor %}
+      </ul>
+      <p>Grammars are fetched once, from the internet, into <code>{{ folder }}</code>. Check the connection and try again; the code is also read again each time it changes.</p>
+      <p class="grammar-error"><small>{{ missing[0].error }}</small></p>
+    </div>
+    <footer class="confirm-actions">
+      <button value="close" type="submit" class="grammars-close">Close</button>
+      <button value="retry" type="submit" class="primary" hx-post="/grammars/retry" hx-swap="none">Try again</button>
+    </footer>
+  </form>
+</dialog>
+{% endif %}
+{%- endmacro %}
+
+{# The warning in the topbar while grammars are missing: how many languages are left out; it opens
+   the modal again (static/live.js). Every page sends it out of band (`oob`), so it goes when they come. #}
+{% macro grammars_warning(missing, oob=false) -%}
+<span id="grammars-warning"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if missing %}
+  <button type="button" class="grammars-warning" title="Grammars not fetched: {{ missing | map(attribute='language') | join(', ') }}">
+    <i class="confirm-icon"></i>{{ missing | length }}
+  </button>
+  {% endif %}
+</span>
+{%- endmacro %}

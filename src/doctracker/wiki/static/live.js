@@ -268,8 +268,20 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (event.key === "Escape") {
       close();
       input.blur();
+      fold();
     }
   });
+
+  // On a small screen the search is one button: it opens the search as a panel under the bar, and folds
+  // again on ×, Esc, a result chosen, or a click outside it with nothing typed.
+  const search = document.getElementById("search");
+  const unfold = () => { search.classList.add("searching"); input.focus(); };
+  const fold = () => search.classList.remove("searching");
+  document.querySelector(".search-open").addEventListener("click", () => {
+    if (search.classList.contains("searching")) fold();
+    else unfold();
+  });
+  search.querySelector(".search-fold").addEventListener("click", () => { close(); fold(); });
 
   // Keep focus in the box while clicking an option, then close after navigating.
   results.addEventListener("mousedown", (event) => event.preventDefault());
@@ -277,9 +289,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (event.target.closest("a")) {
       close();
       input.blur();
+      fold();
     }
   });
-  input.addEventListener("blur", close);
+  input.addEventListener("blur", (event) => {
+    close();
+    // not when going to its filter, nor to the search button, whose click folds it itself
+    if (!input.value && !search.contains(event.relatedTarget) && !event.relatedTarget?.closest(".search-open")) fold();
+  });
+  document.addEventListener("click", (event) => {
+    if (!input.value && !search.contains(event.target) && !event.target.closest(".search-open")) fold();
+  });
 
   clear.addEventListener("click", () => {
     input.value = "";
@@ -293,7 +313,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
     if (event.key === "/" && !typing) {
       event.preventDefault();
-      input.focus();
+      unfold();
       input.select();
     }
   });
@@ -517,6 +537,35 @@ document.addEventListener("htmx:confirm", (event) => {
     if (box?.type === "checkbox") box.checked = !box.checked;
   }, { once: true });
   dialog.showModal();
+});
+
+// Grammars that could not be fetched: the modal opens once for each list of them (its data-key), so a
+// page reloading itself does not open it again; Close remembers the list, Try again does not.
+const GRAMMARS_KEY = "doctracker-grammars-closed";
+function showMissingGrammars(always = false) {
+  const dialog = document.getElementById("grammars-dialog");
+  if (!dialog || dialog.open || (!always && load(localStorage, GRAMMARS_KEY, "") === dialog.dataset.key)) return;
+  dialog.addEventListener("close", () => {
+    if (dialog.returnValue === "close") save(localStorage, GRAMMARS_KEY, dialog.dataset.key);
+  }, { once: true });
+  dialog.showModal();
+}
+document.addEventListener("DOMContentLoaded", () => showMissingGrammars());
+document.addEventListener("htmx:afterSettle", () => showMissingGrammars());
+// The warning in the topbar opens it again, even after Close.
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".grammars-warning")) showMissingGrammars(true);
+});
+
+// Search options on a narrow screen: the filter button opens the modes and the language filter as a
+// menu; picking a mode or clicking elsewhere closes it.
+document.addEventListener("click", (event) => {
+  const options = document.getElementById("search-filters");
+  if (!options) return;
+  const toggle = event.target.closest(".search-options-toggle");
+  const open = toggle ? !options.classList.contains("open") : options.contains(event.target) && !event.target.closest(".search-modes button");
+  options.classList.toggle("open", open);
+  options.querySelector(".search-options-toggle").setAttribute("aria-expanded", String(open));
 });
 
 // Planner panel sections fold and unfold; the folded ones stay folded from one item to the next.

@@ -95,7 +95,8 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
         while True:
             code = await loop.run_in_executor(executor, snapshot, project_root)
             git = await loop.run_in_executor(executor, git_snapshot, repository)
-            if code != previous_code:
+            if code != previous_code or state.retry:
+                state.retry = False
                 result = await loop.run_in_executor(
                     executor,
                     extract_project,

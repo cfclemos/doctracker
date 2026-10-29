@@ -12,7 +12,7 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from doctracker.config import Config, set_config_value
+from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
@@ -98,6 +98,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates.globals.update(
         static_url=_static_url,
         no_sources=NO_SOURCES,
+        grammars_dir=GRAMMARS_DIR.as_posix(),
         languages=LANGUAGES,
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
@@ -157,11 +158,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         elif entity is None:
             content, status = "not_found.html", 404
         else:
-            if entity["language"] != "python":  # a file, function, CSS class or rule, template or macro
-                content = "frontend.html"
-                context["relations"] = pages.relations(state, path)
-            else:
-                content = "module.html" if entity["kind"] == "module" else "entity.html"
+            content = "module.html" if entity["kind"] == "module" else "entity.html"  # for every language
+            context["relations"] = pages.relations(state, path)
             status = 200
             context["breadcrumbs"] = pages.breadcrumbs(state, path)
             context["previous_names"] = await earlier_names(path)
@@ -557,6 +555,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return Response("", status_code=404)
         return Response(pages.code_theme_css(name), media_type="text/css")
 
+    async def retry_grammars(request: Request) -> Response:
+        """Read the code again at once, trying the grammars that could not be fetched again."""
+        if not _same_origin(request):
+            return Response("", status_code=403)
+        state.retry = True
+        return Response("", status_code=204)
+
     async def set_code_theme(request: Request) -> Response:
         """Save the code theme chosen in the frontend into `config.json`."""
         if not _same_origin(request):
@@ -602,6 +607,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/search", search_box),
         Route("/code-theme/{name}.css", theme),
         Route("/settings/code-theme", set_code_theme, methods=["POST"]),
+        Route("/grammars/retry", retry_grammars, methods=["POST"]),
         Route("/events", events),
         Mount("/static", StaticFiles(packages=[("doctracker.wiki", "static")]), name="static"),
     ]

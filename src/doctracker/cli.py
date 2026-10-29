@@ -7,7 +7,7 @@ from pathlib import Path
 import click
 
 from doctracker import __version__
-from doctracker.config import CONFIG_PATH, Config, load_config, project_files, write_config
+from doctracker.config import CONFIG_PATH, Config, ensure_gitignore, load_config, project_files, write_config
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES, language_of
 from doctracker.integrations import autostart, claude_code, opencode
 
@@ -58,6 +58,7 @@ def start(host: str | None, port: int | None) -> None:
     if not (project_root / CONFIG_PATH).exists():
         _initialize(project_root)
     config = load_config(project_root)
+    ensure_gitignore(project_root)
     if host:
         config.host = host
     if port:
