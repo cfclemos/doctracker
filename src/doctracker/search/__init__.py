@@ -1,8 +1,9 @@
-"""Text, BM25, semantic and hybrid search, and recall over everything, shared by the MCP tools and the wiki."""
+"""BM25, semantic and hybrid search, and recall over everything, shared by the MCP tools and the wiki."""
 
 from doctracker.search.engine import (
     AGENT_WAIT_SECONDS,
     DEFAULT_LIMIT,
+    DEFAULT_MODE,
     MODES,
     RECALL_GROUPS,
     WIKI_WAIT_SECONDS,
@@ -11,6 +12,6 @@ from doctracker.search.engine import (
     SimilarNotesFound,
 )
 
-__all__ = ["AGENT_WAIT_SECONDS", "DEFAULT_LIMIT", "MODES", "RECALL_GROUPS", "WIKI_WAIT_SECONDS", "SearchEngine", "SearchOutcome",
+__all__ = ["AGENT_WAIT_SECONDS", "DEFAULT_LIMIT", "DEFAULT_MODE", "MODES", "RECALL_GROUPS", "WIKI_WAIT_SECONDS", "SearchEngine", "SearchOutcome",
            "SimilarNotesFound"]
 """Public API of the search package."""

@@ -22,14 +22,20 @@
       <div class="search-modes" role="radiogroup" aria-label="Search mode">
         {% for mode, texts in search_modes.items() %}
         <button type="button" role="radio" data-mode="{{ mode }}" data-placeholder="{{ texts.placeholder }}"
-                aria-checked="{{ 'true' if loop.first else 'false' }}" title="{{ texts.title }}">{{ texts.label }}</button>
+                aria-checked="{{ 'true' if mode == default_mode else 'false' }}" title="{{ texts.title }}">{{ texts.label }}</button>
         {% endfor %}
       </div>
-      {% set first_mode = search_modes | first %}
-      <input id="search-mode" type="hidden" name="mode" value="{{ first_mode }}">
+      {# The languages the whole wiki shows (tree, search, graphs, dead code), kept in a cookie by static/live.js. #}
+      <select id="language-filter" class="language-filter" title="Languages shown in the wiki" aria-label="Languages shown">
+        <option value="">All languages</option>
+        {% for name in languages_found %}
+        <option value="{{ name }}"{% if shown_languages | list == [name] and languages_found | length > 1 %} selected{% endif %}>{{ languages[name].label }}</option>
+        {% endfor %}
+      </select>
+      <input id="search-mode" type="hidden" name="mode" value="{{ default_mode }}">
       <div class="search-field">
         <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="search-input" type="search" name="q" placeholder="{{ search_modes[first_mode].placeholder }}"
+        <input id="search-input" type="search" name="q" placeholder="{{ search_modes[default_mode].placeholder }}"
                autocomplete="off" role="combobox" aria-expanded="false" aria-controls="search-results"
                hx-get="/search" hx-include="#search-mode" hx-target="#search-results"
                hx-trigger="input changed delay:250ms, focus, search-mode-changed">

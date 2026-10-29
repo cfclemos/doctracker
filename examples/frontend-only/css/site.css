@@ -1,0 +1,8 @@
+/* The content of the page. */
+.page { max-width: 40rem; margin: auto; }
+
+/* The main button. */
+.primary { background: navy; color: white; }
+
+/* Never used by the page: shown as front-end unused. */
+.forgotten { color: red; }

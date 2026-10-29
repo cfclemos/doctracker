@@ -2,7 +2,7 @@
 <h1>Nothing to document</h1>
 <p>{{ no_sources[0] }}</p>
 <p>{{ no_sources[1] }}</p>
-<ul>{% for folder, meaning in source_folder_kinds %}<li><code>{{ folder }}</code>: {{ meaning }}</li>{% endfor %}</ul>
+<ul>{% for language in languages.values() %}<li>{{ language.label }}: <code>{{ language.suffixes | join(", ") }}</code></li>{% endfor %}</ul>
 <p>{{ no_sources[2] }}</p>
 <p><strong>{{ no_sources[3] }}</strong></p>
 {% else %}

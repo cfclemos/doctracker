@@ -20,7 +20,7 @@ context at the right moments, and serves a live wiki of the project in your brow
   never imported or executed.
 - **Live wiki** — edit a file or commit and the open page updates by itself.
 - **Front-end too** — the JS functions, CSS classes and rules, templates and macros
-  inside the packages are entities of their own, read with tree-sitter and Jinja2,
+  are entities of their own, wherever their files are, read with tree-sitter and Jinja2,
   tied to the Python code (helpers, routes, rendered templates) and searchable.
 - **Code graphs** — architecture (modules and imports, cycles marked), class
   diagram and call graph of any function, with callbacks, templates and CSS classes.
@@ -87,26 +87,26 @@ the code without importing it, so it never needs the project's dependencies.
 
 ### Where the code is read from
 
-Run doctracker at the root of the project. It reads the Python code in `src/` and, in a
-monorepo, in the `src/` of each member of `packages/` or `package/`. **Code anywhere else
-is not documented** (a package next to `pyproject.toml`, `tests/`, `scripts/`, ...).
+Run doctracker at the root of the project. It reads **every file of a language it knows**
+(Python, JavaScript, CSS, HTML), wherever it is in the repository. Left out are the
+files `.gitignore` excludes (inside git), hidden folders (`.venv`, `.git`, ...), `doc/`
+and folders like `venv`, `node_modules`, `build`, `dist` and `__pycache__`.
+
+Nothing is configured, and a new file appears in the wiki while the server runs. Python is
+imported from the project root and from every `src/` folder, so a single project, a
+`src/` layout and a monorepo all work; namespace packages (a folder without `__init__.py`,
+like `acme` below, even when spread over several members) are one package.
+`pyproject.toml` is not read, so the same layouts work with pip, uv or any build backend.
 
 ```text
 my-project/                     my-monorepo/
 ├── pyproject.toml              ├── pyproject.toml        # e.g. [tool.uv.workspace]
-└── src/                        └── packages/
-    └── myapp/                      ├── billing/
-        └── __init__.py             │   ├── pyproject.toml
-                                    │   └── src/acme/billing/__init__.py
-                                    └── web/
-                                        ├── pyproject.toml
+├── src/                        └── packages/
+│   └── myapp/__init__.py           ├── billing/
+├── tests/                          │   └── src/acme/billing/__init__.py
+└── static/site.css                 └── web/
                                         └── src/acme/web/__init__.py
 ```
-
-Nothing is configured: every package, namespace package (a folder without `__init__.py`,
-like `acme` above, even when it is spread over several members) and module found there is
-documented, and a new one appears in the wiki while the server runs. `pyproject.toml` is
-not read, so the same layouts work with pip, uv or any build backend.
 
 The server prints where it wrote the agents' settings and its two addresses:
 
@@ -210,12 +210,11 @@ made while the server was off) and become tasks of the Reviews plan.
 
 | Mode | Finds | Needs the embedding model |
 | --- | --- | --- |
-| Default | the text as typed, in names, paths and descriptions | no |
 | BM25 | entities sharing words with the query, in any order; rare words and matches in names weigh more; identifiers are split (`get_weather` → `get`, `weather`) | no |
 | Semantic | entities close in meaning, in any language ("what happens when the city does not exist?") | yes |
 | Hybrid | BM25 and semantic combined (reciprocal rank fusion) | yes |
 
-`recall` (also the "All" mode in the wiki) groups its results: open planning first,
+`recall` (also the "All" mode, the wiki's default) groups its results: open planning first,
 then guidelines, memory, code and the archive. It uses hybrid search when the
 embedding model is ready and BM25 meanwhile.
 
@@ -244,10 +243,14 @@ to llama.cpp.
 
 ## The wiki
 
-- **Tree** — AGENT NOTES, the views (architecture, classes, calls, git), and the
-  packages, folders and modules (with [Tabler](https://tabler.io/icons) icons),
-  classes (**C**), functions (**f**) and methods (**m**). Branches collapse; the
-  tree can be resized or hidden (☰).
+- **Tree** — AGENT NOTES, the views (architecture, classes, calls, dead code, git), and
+  the code (with [Tabler](https://tabler.io/icons) icons): classes (**C**), functions
+  (**f**), methods (**m**), JS files, stylesheets and templates. The buttons beside CODE
+  show it **by language** (Python by packages and modules, the others by folder) or **by
+  folder** (the repository's folders and files). Branches collapse; the tree can be
+  resized or hidden (☰).
+- **Language filter** — the select in the search bar shows one language or all of them in
+  the whole wiki: tree, search, graphs and dead code. The MCP tools always see everything.
 - **Module pages** — description, public API (`__all__`) and members grouped by kind.
 - **Entity pages** — description, signature, parameters table, returns, raises,
   examples, notes, members (for classes) and the source code with syntax
@@ -259,7 +262,7 @@ to llama.cpp.
   everything can be created and edited here as well as by the agent.
 - **Code theme** — choose among the Pygments themes in the Source section; the
   choice is saved in `config.json`.
-- **Search** — pick a mode (Default, BM25, Semantic, Hybrid, All), press `/` anywhere,
+- **Search** — pick a mode (BM25, Semantic, Hybrid, All, the default), press `/` anywhere,
   type, use ↑/↓ and Enter; pages are at the bottom of the results.
 
 ## Configuration
