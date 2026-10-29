@@ -11,6 +11,9 @@
     {{ ui.icon(role, symbols.get(role, "")) }}
     <span class="name role-{{ role | replace(' ', '-') }}">{{ entity.name }}</span>
     <span class="kind">{{ role }}</span>
+    {% set dead = dead_code_of(state, entity.path) %}
+    {% if dead %}<a class="dead-badge verdict-{{ dead.verdict | replace(',', '') | replace(' ', '-') }}" title="{{ dead.message }}"
+       {{ ui.nav_url("/dead-code?path=" ~ entity.path) }}>{{ dead.verdict }}</a>{% endif %}
   </h1>
   <p class="meta">
     <code class="path">{{ entity.path }}</code>

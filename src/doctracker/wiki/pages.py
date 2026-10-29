@@ -12,6 +12,7 @@ from pygments.lexers import CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonCo
 from pygments.styles import get_all_styles, get_style_by_name
 from pygments.token import Token
 
+from doctracker.analysis import DEAD_KINDS, VERDICTS, filter_rows
 from doctracker.server.state import DocState
 
 _markdown = MarkdownIt("commonmark", {"html": False})
@@ -704,3 +705,38 @@ def relations(state: DocState, path: str) -> dict[str, list[dict]]:
                    "kind": RELATION_LABELS.get(edge["kind"], edge["kind"]), "via": edge.get("via", "")}
             found[side].setdefault((row["path"], row["kind"], row["via"]), row)
     return {side: [rows[key] for key in sorted(rows)] for side, rows in found.items()}
+
+
+CONFIDENCE_STEPS = (0, 60, 90, 100)
+"""The minimum confidences offered by the DEAD CODE filters."""
+
+
+def dead_code_view(state: DocState, params: dict) -> dict:
+    """What the DEAD CODE page shows: the findings kept by the filters, grouped by file.
+
+    Args:
+        state: Extracted entities and the dead code findings.
+        params: The query of the page: `verdict`, `kind`, `confidence` (minimum) and `path` (prefix).
+
+    Returns:
+        `filters` (the values chosen), `verdicts`, `kinds` and `confidences` (the choices), `total`
+        (every finding), `shown` and `groups`: `file` and its `rows`, each with `link` (the page to open:
+        the entity, or the module of the file for what is not one).
+    """
+    confidence = params.get("confidence", "0")
+    filters = {"verdict": params.get("verdict", ""), "kind": params.get("kind", ""),
+               "confidence": int(confidence) if confidence.isdigit() else 0, "path": params.get("path", "").strip()}
+    rows = filter_rows(state.dead_code, filters["path"], filters["verdict"], filters["kind"], filters["confidence"])
+    modules = {entity["filepath"]: path for path, entity in state.entities.items() if entity["kind"] == "module"}
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        link = row["path"] if row["path"] in state.entities else modules.get(row["file"], "")
+        groups.setdefault(row["file"], []).append({**row, "link": link})
+    return {"filters": filters, "verdicts": VERDICTS, "kinds": DEAD_KINDS, "confidences": CONFIDENCE_STEPS,
+            "total": len(state.dead_code), "shown": len(rows),
+            "groups": [{"file": file, "rows": file_rows} for file, file_rows in groups.items()]}
+
+
+def dead_code_of(state: DocState, path: str) -> dict | None:
+    """The dead code finding about an entity, for the badge on its page; None when there is none."""
+    return next((row for row in state.dead_code if row["path"] == path), None)
