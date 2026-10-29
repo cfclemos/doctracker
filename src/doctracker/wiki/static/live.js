@@ -82,7 +82,7 @@ function save(storage, key, value) {
 
 // Tree: remember which branches the user opened or closed (per tab), so they stay that way
 // when the tree is re-rendered (navigation or live update).
-const TREE_KEY = "doctracker-tree-v2";  // v2: first level folded by default
+const TREE_KEY = "doctracker-tree-v4";  // v4: branches kept by their place in the tree
 
 document.addEventListener("toggle", (event) => {
   const branch = event.target;
@@ -92,15 +92,42 @@ document.addEventListener("toggle", (event) => {
   save(sessionStorage, TREE_KEY, state);
 }, true);
 
+// Every page sends the tree again (to mark the current item): it keeps where the user scrolled to.
+let treeScroll = null;
+document.addEventListener("htmx:oobBeforeSwap", (event) => {
+  if (event.detail.target?.id === "tree") treeScroll = event.detail.target.scrollTop;
+});
+
 function restoreTree() {
   const state = load(sessionStorage, TREE_KEY, {});
   for (const branch of document.querySelectorAll("#tree details")) {
     if (branch.dataset.path in state) branch.open = state[branch.dataset.path];
   }
+  if (treeScroll !== null) {
+    document.getElementById("tree").scrollTop = treeScroll;
+    treeScroll = null;
+  }
 }
 
 document.addEventListener("DOMContentLoaded", restoreTree);
 document.addEventListener("htmx:afterSettle", restoreTree);
+
+// View settings kept in cookies, so the server builds every page with them: the tree's format
+// (button beside CODE) and the languages the whole wiki shows (select in the search bar).
+function setViewSetting(name, value) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
+  reloadContent();
+}
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".tree-layout");
+  if (!button) return;
+  event.preventDefault();  // the buttons sit in CODE's summary: a click must not close it
+  setViewSetting("tree-layout", button.dataset.layout);
+});
+document.addEventListener("change", (event) => {
+  if (event.target.id === "language-filter") setViewSetting("languages", event.target.value);
+});
 
 // Tree width (drag the resizer) and visibility (toggle button), kept per browser.
 const WIDTH_KEY = "doctracker-tree-width";

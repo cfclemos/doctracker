@@ -12,8 +12,7 @@ from dataclasses import dataclass, field
 from doctracker.embeddings.service import EmbeddingService
 from doctracker.notes import NoteStore, document_text, note_group
 from doctracker.server.state import DocState
-from doctracker.storage.index import searchable
-from doctracker.wiki.pages import description_text, summary
+from doctracker.wiki.pages import summary
 
 RRF_K = 60
 """Constant of reciprocal rank fusion: each list adds `1 / (RRF_K + rank)` to an entity's hybrid score."""
@@ -62,11 +61,6 @@ class SimilarNotesFound(ValueError):
         self.similar = similar
 
 MODES = {
-    "default": {
-        "label": "Default",
-        "title": "Text in names, paths and descriptions",
-        "placeholder": "Search modules, classes, functions…",
-    },
     "bm25": {
         "label": "BM25",
         "title": "Words in any order, ranked by BM25",
@@ -88,7 +82,11 @@ MODES = {
         "placeholder": "A task, a rule, a decision, some code…",
     },
 }
-"""Search modes accepted by `SearchEngine.run`, with the texts the wiki shows for each one."""
+"""Search modes of the wiki's search box, with the texts it shows for each one: `all` is `SearchEngine.recall`,
+the others `SearchEngine.run`."""
+
+DEFAULT_MODE = "all"
+"""The search mode the wiki's search box starts with."""
 
 
 @dataclass
@@ -131,38 +129,33 @@ class SearchEngine:
         self.embeddings = embeddings
         self.notes = notes
 
-    async def run(self, mode: str, query: str, limit: int, wait: float, offset: int = 0) -> SearchOutcome:
+    async def run(self, mode: str, query: str, limit: int, wait: float, offset: int = 0,
+                  languages: set[str] | None = None) -> SearchOutcome:
         """Run the search of the given mode and return one page of its results.
 
         Every mode ranks its whole list; the page is cut here, so paging works the
         same in all modes (and in the MCP tools and the wiki).
 
         Args:
-            mode: A key of `MODES`; anything else runs the default search.
+            mode: `bm25`, `semantic` or `hybrid`; anything else runs `bm25`.
             query: Text to search for.
             limit: Results per page.
             wait: Seconds to wait for the embedding backend (semantic and hybrid).
             offset: Results to skip, e.g. `limit * (page - 1)`.
+            languages: Keep only the entities of these languages (the wiki's filter); `None` keeps all.
 
         Returns:
             The page and the total, or the backend progress when it is not ready yet.
         """
-        typed = query
         query, renamed = self.with_current_names(query)
-        if mode == "bm25":
+        if mode not in ("semantic", "hybrid"):
             ranked = self.bm25(query)
-        elif mode in ("semantic", "hybrid"):
+        else:
             ranked = await (self.semantic(query, wait) if mode == "semantic" else self.hybrid(query, wait))
             if ranked is None:
                 return SearchOutcome(ready=False, status=self.embeddings.status())
-        else:
-            # The text is found as typed: each current name is looked for on its own.
-            best: dict[str, float] = {}
-            for text in [typed, *(entry["new"] for entry in renamed)]:
-                for path, score in self.text(text):
-                    best[path] = max(score, best.get(path, score))
-            ranked = sorted(best.items(), key=lambda item: -item[1])
-        ranked = [(path, score) for path, score in ranked if path in self.state.entities]
+        ranked = [(path, score) for path, score in ranked if path in self.state.entities
+                  and (languages is None or self.state.entities[path]["language"] in languages)]
         offset = max(0, offset)
         return SearchOutcome(ranked[offset : offset + limit], total=len(ranked), offset=offset, renamed=renamed)
 
@@ -187,38 +180,6 @@ class SearchEngine:
             if held and new in self.state.entities and new not in query and all(r["new"] != new for r in renamed):
                 renamed.append({"old": old, "new": new, "commit": row["commit"]})
         return " ".join([query, *(entry["new"] for entry in renamed)]), renamed
-
-    def text(self, query: str) -> list[tuple[str, float]]:
-        """Find the text as typed: exact name, name prefix, name, path or description containing it.
-
-        Args:
-            query: Text to find; case is ignored.
-
-        Returns:
-            `(path, score)` pairs, best first; the score only orders the groups above (4 = exact name).
-        """
-        query = query.strip().lower()
-        if not query:
-            return []
-        scored = []
-        for path, entity in self.state.entities.items():
-            if not searchable(entity):
-                continue
-            name = entity["name"].lower()
-            if name == query:
-                tier = 0
-            elif name.startswith(query):
-                tier = 1
-            elif query in name:
-                tier = 2
-            elif query in path.lower():
-                tier = 3
-            elif query in description_text(entity).lower():
-                tier = 4
-            else:
-                continue
-            scored.append((tier, len(path), path))
-        return [(path, float(4 - tier)) for tier, _, path in sorted(scored)]
 
     def bm25(self, query: str) -> list[tuple[str, float]]:
         """Rank entities by the words they share with the query (BM25), updating the index first.

@@ -2,17 +2,19 @@
 
 import re
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 from pygments import highlight as pygments_highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonConsoleLexer, PythonLexer
+from pygments.lexers import (CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonConsoleLexer, PythonLexer,
+                             get_lexer_by_name)
 from pygments.styles import get_all_styles, get_style_by_name
 from pygments.token import Token
 
 from doctracker.analysis import DEAD_KINDS, VERDICTS, filter_rows
+from doctracker.extraction.languages import LANGUAGES, language_of
 from doctracker.server.state import DocState
 
 _markdown = MarkdownIt("commonmark", {"html": False})
@@ -30,8 +32,9 @@ _python = PythonLexer()
 _console = PythonConsoleLexer()
 """Lexer for interactive sessions (`>>>` examples)."""
 
-_frontend_lexers = {"js": JavascriptLexer(), "css": CssLexer(), "jinja": HtmlDjangoLexer()}
-"""Lexers for the front-end code, by the `language` of its entities (Jinja templates read as Django ones)."""
+_frontend_lexers = {"js": JavascriptLexer(), "css": CssLexer(), "html": HtmlDjangoLexer()}
+"""Lexers for the front-end code, by the `language` of its entities (Jinja templates read as Django ones);
+the other languages of `LANGUAGES` use the Pygments lexer of the same name."""
 
 GROUPS = (
     ("module", "Modules"),
@@ -42,6 +45,7 @@ GROUPS = (
     ("script", "Scripts"),
     ("stylesheet", "Stylesheets"),
     ("template", "Templates"),
+    ("file", "Files"),
     ("js function", "Functions"),
     ("macro", "Macros"),
     ("css class", "CSS classes"),
@@ -49,8 +53,17 @@ GROUPS = (
 )
 """Order and labels of the member groups on module, class and front-end file pages, as `(kind, label)`."""
 
-TREE_KINDS = ("module", "class", "function", "script", "stylesheet", "template", "js function", "macro")
+TREE_KINDS = ("module", "class", "function", "script", "stylesheet", "template", "file", "js function", "macro")
 """Kinds shown in the navigation tree (CSS classes and rules only on their stylesheet's page: there are many)."""
+
+FILE_KINDS = ("script", "stylesheet", "template", "file")
+"""Kinds of the entities that are a whole file, besides Python modules (`file`: a language read as whole files)."""
+
+TREE_LAYOUTS = {"languages": "By language", "folders": "By folder"}
+"""The formats of the navigation tree (see `tree`), with the name the switch shows."""
+
+MEMBER_FOLDERS = ("packages", "package")
+"""Folders whose subfolders are the members of a monorepo, each a project of its own in the tree."""
 
 
 def render_markdown(text: str) -> str:
@@ -141,12 +154,17 @@ def highlight(code: str, language: str = "python") -> Markup:
 
     Args:
         code: Python source, or an interactive session starting with `>>>` (console lexer).
-        language: `python`, or the `language` of a front-end entity (`js`, `css`, `jinja`).
+        language: `python`, or the `language` of another entity (`js`, `css`, `html`, `java`...).
 
     Returns:
         Token spans with Pygments classes, safe to insert in a template.
     """
-    lexer = _frontend_lexers.get(language) or (_console if code.lstrip().startswith(">>>") else _python)
+    if language in _frontend_lexers:
+        lexer = _frontend_lexers[language]
+    elif language != "python" and language in LANGUAGES:
+        lexer = get_lexer_by_name(language, startinline=True)
+    else:
+        lexer = _console if code.lstrip().startswith(">>>") else _python
     return Markup(pygments_highlight(code, lexer, _formatter).rstrip("\n"))
 
 
@@ -254,20 +272,206 @@ SYMBOLS = {"class": "C", "function": "f", "method": "m", "attribute": "a", "type
 """Symbol shown before each item in the tree and on pages, by role (packages and modules use folder/file icons)."""
 
 
-def tree(state: DocState, current: str) -> list[dict]:
-    """Build the navigation tree: packages and modules, with their classes, functions and methods.
+def languages_found(state: DocState) -> list[str]:
+    """The languages of the extracted entities, in `LANGUAGES` order."""
+    present = {entity["language"] for entity in state.entities.values()}
+    return [language for language in LANGUAGES if language in present]
+
+
+def shown_languages(state: DocState, chosen: str) -> set[str]:
+    """The languages the wiki shows: those of the language filter (comma separated) that exist, or all."""
+    found = languages_found(state)
+    picked = [language for language in chosen.split(",") if language in found]
+    return set(picked or found)
+
+
+def visible(entity: dict | None, languages: set[str]) -> bool:
+    """Whether an entity passes the language filter of the wiki; the one helper every page uses."""
+    return entity is not None and entity["language"] in languages
+
+
+def visible_graph(state: DocState, graph: dict, languages: set[str]) -> dict:
+    """A drawing (`nodes`, `edges`) of the graph views with only the entities of the shown languages.
+
+    Nodes that are not entities (e.g. the boxes grouping them) stay; edges keep both ends.
+    """
+    nodes = [node for node in graph["nodes"]
+             if node["id"] not in state.entities or visible(state.entities[node["id"]], languages)]
+    kept = {node["id"] for node in nodes}
+    return {**graph, "nodes": nodes,
+            "edges": [edge for edge in graph["edges"] if edge["source"] in kept and edge["target"] in kept]}
+
+
+def tree(state: DocState, current: str, layout: str = "languages", languages: set[str] | None = None,
+         apart: str = "", within: str = "") -> list[dict]:
+    """Build the navigation tree in one of `TREE_LAYOUTS`, with the entities of the shown languages.
+
+    `folders` shows the folders and files of the repository, each file with what it defines (a
+    Python package is its folder). `languages` shows each project (`projects`) with one branch per
+    language it has: Python by packages and modules, the others by their folders and files.
 
     Args:
         state: Extracted entities.
         current: Path of the page being shown; its item is marked.
+        layout: `folders` or `languages`.
+        languages: Languages to show; `None` shows all.
+        apart: A folder left out of this tree, shown in a section of its own (`within`), e.g.
+            `examples` while doctracker itself is documented; empty leaves nothing out.
+        within: Build the tree of this folder only (e.g. the EXAMPLES section); each of its
+            subfolders is then a project. Empty builds the tree of the whole repository.
 
     Returns:
-        One node per root package, with nested `children`.
+        The top nodes, with nested `children`.
     """
-    return [_tree_node(state, path, current, "package") for path in state.roots if path in state.entities]
+    shown = languages if languages is not None else set(languages_found(state))
+    files = [path for path in _files(state, shown)
+             if not (apart and _inside(state.entities[path], (apart,)))
+             and (not within or _inside(state.entities[path], (within,)))]
+    if layout == "folders":
+        return _folder_nodes(state, files, current, shown)
+    found = []
+    for name, folders, link in projects(state, apart, within):
+        inside = tuple(folders)
+        groups = []
+        for language in languages_found(state):
+            if language not in shown:
+                continue
+            if language == "python":
+                children = [_tree_node(state, path, current, "package", {"python"}, inside)
+                            for path in state.roots if _inside(state.entities[path], inside)]
+            else:
+                mine = [path for path in files
+                        if state.entities[path]["language"] == language and _inside(state.entities[path], inside)]
+                children = _folder_nodes(state, mine, current, {language}, folders[0] if len(folders) == 1 else "")
+            if children:
+                groups.append({"path": f"language:{name}:{language}", "name": LANGUAGES[language]["label"],
+                               "role": "language", "symbol": "", "children": children, "current": False,
+                               "link": False})
+        if groups:
+            found.append({"path": link or f"project:{name}", "name": name, "role": "project", "symbol": "",
+                          "children": groups, "current": link == current and bool(link), "link": bool(link)})
+    return found
 
 
-def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
+def _files(state: DocState, shown: set[str]) -> list[str]:
+    """The entities that are a whole file (Python modules and packages, front-end files) of the shown languages."""
+    return [path for path, entity in state.entities.items()
+            if visible(entity, shown) and (entity["kind"] == "module" or entity["kind"] in FILE_KINDS)]
+
+
+def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[str, list[str], str]]:
+    """The projects of the repository, as the tree groups them by language.
+
+    A member of a monorepo (`packages/<name>` or `package/<name>`) is a project; otherwise each top-level
+    Python package or namespace package is one; files outside them belong to the project of their top
+    folder (e.g. `tests`), and files right at the root to `(root)`. Inside `within`, each subfolder is
+    a project (e.g. each example).
+
+    Args:
+        state: Extracted entities.
+        apart: A folder whose files are left out (see `tree`); empty leaves nothing out.
+        within: Only the files of this folder, one project per subfolder; empty takes the whole repository.
+
+    Returns:
+        `(name, folders, link)` for each project: the folders (or the single file) it holds, relative to
+        the repository, and the entity its name opens (its Python package; empty when it has none).
+    """
+    found: dict[str, tuple[list[str], str]] = {}
+    roots = {path: _locations(state.entities[path]) for path in state.roots if path in state.entities}
+    for entity in state.entities.values():
+        if entity["kind"] != "module" and entity["kind"] not in FILE_KINDS or apart and _inside(entity, (apart,)):
+            continue
+        parts = entity["filepath"].split("/")
+        if within:
+            depth = within.count("/") + 1
+            if not _inside(entity, (within,)) or len(parts) <= depth:
+                continue
+            name, folders, link = parts[depth], ["/".join(parts[:depth + 1])], ""
+        elif parts[0] in MEMBER_FOLDERS and len(parts) > 2:
+            name, folders, link = parts[1], ["/".join(parts[:2])], ""
+        else:
+            owner = next((path for path, places in roots.items() if _inside(entity, tuple(places))), None)
+            if owner:
+                name, folders, link = state.entities[owner]["name"], roots[owner], owner
+            elif len(parts) > 1:
+                name, folders, link = parts[0], [parts[0]], ""
+            else:
+                name, folders, link = "(root)", [entity["filepath"]], ""
+        known_folders, known_link = found.get(name, ([], ""))
+        found[name] = (list(dict.fromkeys(known_folders + folders)), known_link or link)
+    return [(name, folders, link) for name, (folders, link) in sorted(found.items())]
+
+
+
+def _locations(entity: dict) -> list[str]:
+    """Where an entity lies: the folders of a package (all of a namespace package's), else its file."""
+    if entity.get("folders"):
+        return entity["folders"]
+    if entity.get("is_package"):
+        return [str(PurePosixPath(entity["filepath"]).parent)]
+    return [entity["filepath"]]
+
+
+def _inside(entity: dict, places: tuple[str, ...] | None) -> bool:
+    """Whether an entity lies in one of `places` (folders or files); `None` means anywhere."""
+    if places is None:
+        return True
+    return any(location == place or location.startswith(f"{place}/")
+               for location in _locations(entity) for place in places)
+
+
+def _folder_nodes(state: DocState, files: list[str], current: str, shown: set[str], base: str = "") -> list[dict]:
+    """Nodes of the folders holding `files` (modules and front-end files): folders first, then files.
+
+    A folder that is a Python package links to it and also lists what its `__init__.py` defines; a
+    folder holding only one folder is shown with it on one line (`src/doctracker`). Folders are named
+    from `base` on (e.g. the project's folder), or from the repository's root when it is empty.
+    """
+    root: dict = {"folders": {}, "files": [], "entity": None}
+    placed = set(files)  # shown at their place in the folders, not again under their package
+
+    def folder(location: str) -> dict:
+        if base and (location == base or location.startswith(f"{base}/")):
+            location = location[len(base):]
+        node = root
+        for part in [part for part in location.split("/") if part and part != "."]:
+            node = node["folders"].setdefault(part, {"folders": {}, "files": [], "entity": None})
+        return node
+
+    for path in files:
+        entity = state.entities[path]
+        if entity.get("is_package"):
+            for location in entity.get("folders") or [str(PurePosixPath(entity["filepath"]).parent)]:
+                folder(location)["entity"] = path
+        else:
+            role = "module" if entity["kind"] == "module" else entity["kind"].replace(" ", "-")
+            folder(str(PurePosixPath(entity["filepath"]).parent))["files"].append(
+                _tree_node(state, path, current, role, shown))
+
+    def nodes(node: dict, prefix: str) -> list[dict]:
+        found = []
+        for name, child in sorted(node["folders"].items()):
+            label = name
+            while not child["entity"] and not child["files"] and len(child["folders"]) == 1:
+                (inner, child), = child["folders"].items()
+                label = f"{label}/{inner}"
+            location = f"{prefix}{label}"
+            children = nodes(child, f"{location}/")
+            if child["entity"]:
+                package = _tree_node(state, child["entity"], current,
+                                     "package" if child["entity"] in state.roots else "subpackage", shown)
+                package["children"] = children + [item for item in package["children"] if item["path"] not in placed]
+                found.append({**package, "name": label})
+            elif children:
+                found.append({"path": f"folder:{location}", "name": label, "role": "folder", "symbol": "",
+                              "children": children, "current": False, "link": False})
+        return found + sorted(node["files"], key=lambda item: item["name"])
+
+    return nodes(root, "")
+
+
+def _tree_node(state: DocState, path: str, current: str, role: str, shown: set[str] | None = None,
+               inside: tuple[str, ...] | None = None) -> dict:
     """Build one node of the navigation tree and, recursively, its children.
 
     Args:
@@ -275,6 +479,9 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
         path: Entity of this node.
         current: Path of the page being shown.
         role: Role of this node (`package`, `subpackage`, `module`, `class`, `function`, `method`).
+        shown: Languages whose members are listed; `None` lists all.
+        inside: Folders the members listed lie in (e.g. one monorepo member of a namespace package);
+            `None` lists them wherever they are.
 
     Returns:
         Path, name, role, symbol, children, and whether it is the current page.
@@ -283,8 +490,9 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
     children = []
     for member_path in entity["members"]:
         member = state.entities.get(member_path)
-        if member and member["kind"] in TREE_KINDS:
-            children.append(_tree_node(state, member_path, current, _role(entity, member)))
+        if (member and member["kind"] in TREE_KINDS and (shown is None or visible(member, shown))
+                and _inside(member, inside)):
+            children.append(_tree_node(state, member_path, current, _role(entity, member), shown, inside))
     return {
         "path": path,
         "name": entity["name"],
@@ -292,6 +500,7 @@ def _tree_node(state: DocState, path: str, current: str, role: str) -> dict:
         "symbol": SYMBOLS.get(role, ""),
         "children": children,
         "current": path == current,
+        "link": True,
     }
 
 
@@ -711,12 +920,13 @@ CONFIDENCE_STEPS = (0, 60, 90, 100)
 """The minimum confidences offered by the DEAD CODE filters."""
 
 
-def dead_code_view(state: DocState, params: dict) -> dict:
+def dead_code_view(state: DocState, params: dict, languages: set[str] | None = None) -> dict:
     """What the DEAD CODE page shows: the findings kept by the filters, grouped by file.
 
     Args:
         state: Extracted entities and the dead code findings.
         params: The query of the page: `verdict`, `kind`, `confidence` (minimum) and `path` (prefix).
+        languages: Keep only the findings in files of these languages (the wiki's filter); `None` keeps all.
 
     Returns:
         `filters` (the values chosen), `verdicts`, `kinds` and `confidences` (the choices), `total`
@@ -727,6 +937,8 @@ def dead_code_view(state: DocState, params: dict) -> dict:
     filters = {"verdict": params.get("verdict", ""), "kind": params.get("kind", ""),
                "confidence": int(confidence) if confidence.isdigit() else 0, "path": params.get("path", "").strip()}
     rows = filter_rows(state.dead_code, filters["path"], filters["verdict"], filters["kind"], filters["confidence"])
+    if languages is not None:
+        rows = [row for row in rows if language_of(row["file"]) in languages]
     modules = {entity["filepath"]: path for path, entity in state.entities.items() if entity["kind"] == "module"}
     groups: dict[str, list[dict]] = {}
     for row in rows:

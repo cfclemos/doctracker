@@ -5,12 +5,12 @@ process boundaries and be stored later without depending on griffe objects.
 """
 
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import griffe
 
 from doctracker.analysis.dead_code import scan
-from doctracker.config import detect_packages, source_folders
+from doctracker.config import project_files
 from doctracker.extraction.frontend import extract_frontend
 from doctracker.extraction.graph import extract_edges
 
@@ -19,11 +19,11 @@ MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
 
 
 def extract_project(project_root: str, docstring_style: str, show_private: bool) -> dict:
-    """Load every package of the source folders statically and turn it into plain data.
+    """Read every file of a known language in the project statically and turn it into plain data.
 
     Runs in a worker process, so it takes and returns only built-in types.
-    The project's code is read, never imported or executed. The packages are found again on every
-    call (`detect_packages`), so a new one is documented without a restart.
+    The project's code is read, never imported or executed. The files are listed again on every
+    call (`config.project_files`), so a new one is documented without a restart.
 
     Args:
         project_root: Root of the documented project.
@@ -31,17 +31,19 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
         show_private: Keep `_private` members.
 
     Returns:
-        `roots` (paths of the loaded packages), `entities` (every entity by path),
+        `roots` (paths of the loaded Python packages and modules), `entities` (every entity by path),
         `edges` (relations between entities, see `extract_edges`), `errors`
         (packages that could not be loaded, with the reason) and `dead_code` (see `analysis.scan`).
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
-    paths = [str(root / folder) for folder in source_folders(root)]
+    files = project_files(root)
+    search_paths, names = python_roots(files)
+    paths = [str(root / folder) for folder in search_paths]
     entities: dict[str, dict] = {}
     roots = []
     errors = []
-    for package in detect_packages(root):
+    for package in names:
         try:
             module = griffe.load(
                 package,
@@ -54,11 +56,52 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
             continue
         roots.append(module.path)
         _collect(module, root, docstring_style, show_private, entities)
-    entities.update(extract_frontend(root, entities))
+    entities.update(extract_frontend(root, files, entities))
     edges = extract_edges(entities, root)
     return {"roots": roots, "entities": entities, "edges": edges, "errors": errors,
             "dead_code": scan(root, entities, edges)}
 
+
+def python_roots(files: list[str]) -> tuple[list[str], list[str]]:
+    """Find where the Python code is imported from, and the top-level names to load there.
+
+    The import roots are the project root, every folder with a `pyproject.toml` (a project of its
+    own, e.g. a monorepo member or an example) and every folder named `src`; a Python file is
+    imported from the deepest root holding it. Under a root, a folder is a package (with
+    `__init__.py`) or a namespace package (without one, e.g. `acme` of `acme.billing`, one name even
+    when several roots share it), and a `.py` file is a module; a folder holding another root (e.g.
+    `packages`) is not a name of its own.
+
+    Args:
+        files: The project's files, relative to the root, with forward slashes; `.py` files are
+            loaded, `pyproject.toml` files mark roots.
+
+    Returns:
+        The import roots, relative to the project root (deepest first, the project root `.` last),
+        and the names, in the order found, without duplicates.
+    """
+    projects = {str(PurePosixPath(file).parent) for file in files if PurePosixPath(file).name == "pyproject.toml"}
+    found: dict[str, list[str]] = {}
+    for file in files:
+        if not file.endswith(".py"):
+            continue
+        parts = file.split("/")
+        cut = max([index + 1 for index in range(len(parts) - 1)
+                   if parts[index] == "src" or "/".join(parts[:index + 1]) in projects], default=0)
+        root, rest = "/".join(parts[:cut]) or ".", parts[cut:]
+        name = rest[0].removesuffix(".py") if len(rest) == 1 else rest[0]
+        if name.isidentifier():
+            found.setdefault(root, [])
+            if name not in found[root]:
+                found[root].append(name)
+    names = []
+    for root, listed in found.items():
+        for name in listed:
+            folder = name if root == "." else f"{root}/{name}"
+            if not any(other == folder or other.startswith(f"{folder}/") for other in found):
+                names.append(name)
+    roots = sorted((root for root in found if root != "."), key=lambda root: (-root.count("/"), root))
+    return roots + (["."] if "." in found else []), list(dict.fromkeys(names))
 
 def _collect(obj: griffe.Object, root: Path, style: str, show_private: bool, entities: dict) -> None:
     """Add `obj` and its members (recursively) to `entities`.
@@ -116,6 +159,7 @@ def _to_entity(obj: griffe.Object, root: Path, style: str) -> dict:
         "docstring": obj.docstring.value if obj.docstring else "",
         "sections": _sections(obj.docstring, style),
         "decorators": [str(decorator.value) for decorator in getattr(obj, "decorators", [])],
+        "language": "python",
     }
     if obj.is_function:
         entity["parameters"] = [_parameter(parameter) for parameter in obj.parameters]

@@ -112,6 +112,9 @@ main { grid-area: main; }
 /* Search: outlined field with a floating options list (MUI Autocomplete style). */
 .search { position: relative; flex: 1; max-width: 46rem; margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
 
+/* Languages shown in the whole wiki, before the search modes. */
+.language-filter { flex: none; height: 2.4rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: 0.85rem; }
+
 /* Search mode: joined toggle buttons (MUI ToggleButtonGroup style). */
 .search-modes { display: inline-flex; flex: none; }
 .search-modes button {
@@ -250,11 +253,23 @@ main { grid-area: main; }
 #tree summary { list-style: none; }
 #tree summary::-webkit-details-marker { display: none; }
 #tree summary .icon { cursor: pointer; }
-#tree details[open] > summary > .icon-subpackage::before { -webkit-mask-image: url("icons/folder-open.svg"); mask-image: url("icons/folder-open.svg"); }
-#tree a { flex: 1; min-width: 0; display: block; padding: 0.1rem 0.3rem; border-radius: 4px; color: var(--fg); overflow-wrap: anywhere; }
+#tree details[open] > summary > .icon-subpackage::before,
+#tree details[open] > summary > .icon-folder::before { -webkit-mask-image: url("icons/folder-open.svg"); mask-image: url("icons/folder-open.svg"); }
+#tree a, #tree summary > span[class^="role-"] { flex: 1; min-width: 0; display: block; padding: 0.1rem 0.3rem; border-radius: 4px; color: var(--fg); overflow-wrap: anywhere; }
+#tree summary > span[class^="role-"] { cursor: pointer; }
+#tree .role-folder { font-weight: 600; }
+#tree .role-language { font-weight: 700; font-size: 0.9rem; }
+#tree li:has(> details > summary > .role-project) + li { margin-top: 0.5rem; }
+/* CODE, with the switch of the tree's format beside it. */
+#tree .tree-examples { margin-top: 0.8rem; }
+#tree .tree-code { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+#tree .tree-layouts { display: inline-flex; gap: 0.1rem; }
+#tree .tree-layout { border: 1px solid transparent; background: none; color: var(--muted); border-radius: 4px; padding: 0.05rem 0.1rem; cursor: pointer; }
+#tree .tree-layout:hover { color: var(--fg); }
+#tree .tree-layout[aria-checked="true"] { color: var(--fg); border-color: var(--border); background: var(--panel); }
 #tree a.current { background: var(--accent); color: var(--bg); }
 /* Each level of the tree gets its own weight and size. */
-#tree a.role-package { text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
+#tree a.role-package, #tree .role-project { text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
 #tree li:has(a.role-module, a.role-subpackage) { margin-top: 0.35rem; }
 #tree a.role-module, #tree a.role-subpackage { font-weight: 600; }
 #tree a.role-class { font-weight: 500; }
@@ -274,7 +289,9 @@ main { grid-area: main; }
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
 .icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before,
-.icon-dead-code::before {
+.icon-dead-code::before, .icon-folder::before, .icon-language::before, .icon-project::before,
+.icon-code::before, .icon-examples::before, .icon-file::before,
+.icon-layout-folders::before, .icon-layout-languages::before {
   content: "";
   display: inline-block;
   width: 1.05rem;
@@ -284,9 +301,15 @@ main { grid-area: main; }
   -webkit-mask: center / contain no-repeat;
   mask: center / contain no-repeat;
 }
-.icon-package::before { -webkit-mask-image: url("icons/brand-python.svg"); mask-image: url("icons/brand-python.svg"); }
+.icon-code::before { -webkit-mask-image: url("icons/brand-python.svg"); mask-image: url("icons/brand-python.svg"); }
+.icon-package::before { -webkit-mask-image: url("icons/package.svg"); mask-image: url("icons/package.svg"); }
 .icon-subpackage::before { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
 .icon-module::before { -webkit-mask-image: url("icons/file-code.svg"); mask-image: url("icons/file-code.svg"); }
+.icon-project::before { -webkit-mask-image: url("icons/box.svg"); mask-image: url("icons/box.svg"); }
+.icon-examples::before { -webkit-mask-image: url("icons/puzzle.svg"); mask-image: url("icons/puzzle.svg"); }
+.icon-file::before { -webkit-mask-image: url("icons/file.svg"); mask-image: url("icons/file.svg"); }
+.icon-folder::before, .icon-layout-folders::before { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
+.icon-language::before, .icon-layout-languages::before { -webkit-mask-image: url("icons/braces.svg"); mask-image: url("icons/braces.svg"); }
 .icon-architecture::before { -webkit-mask-image: url("icons/sitemap.svg"); mask-image: url("icons/sitemap.svg"); }
 .icon-classes::before { -webkit-mask-image: url("icons/binary-tree.svg"); mask-image: url("icons/binary-tree.svg"); }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
@@ -301,8 +324,11 @@ main { grid-area: main; }
 .icon-git { --tint: var(--raises); }
 .icon-notes { --tint: var(--exports); }
 .icon-dead-code { --tint: var(--accent); }
-.icon.icon-package { --tint: var(--attribute); }
-.icon.icon-subpackage { --tint: var(--folder); }
+.icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
+.icon.icon-examples { --tint: var(--exports); }
+.icon.icon-subpackage, .icon.icon-folder { --tint: var(--folder); }
+.icon.icon-language { --tint: var(--method); }
+.icon.icon-project { --tint: var(--attribute); }
 
 /* The content uses the width beside the tree up to 1536px; on wider screens it is centered. */
 main { padding: 1.5rem 2.5rem; width: 100%; max-width: 1536px; margin-inline: auto; min-width: 0; box-sizing: border-box; }
@@ -389,7 +415,7 @@ details.block:not([open]) {
 .icon-method, .badge-method, .block-method { --tint: var(--method); }
 .icon-attribute, .icon-type-alias, .badge-attribute, .badge-type-alias, .badge-attributes,
 .block-attribute, .block-type-alias, .block-attributes { --tint: var(--attribute); }
-.icon-package, .icon-subpackage, .icon-module,
+.icon-package, .icon-subpackage, .icon-module, .icon-file, .badge-file, .block-file,
 .badge-module, .badge-subpackage, .badge-description,
 .block-module, .block-subpackage, .block-description { --tint: var(--accent); }
 .badge-exports, .block-exports { --tint: var(--exports); }
@@ -528,6 +554,7 @@ td p { margin: 0; }
 }
 
 /* CODE heading when the project has several root packages. */
+#tree summary > .tree-group { flex: 1; cursor: pointer; }
 #tree .tree-group { display: flex; align-items: center; gap: 0.55rem; margin: 0; padding: 0.1rem 0.3rem 0.1rem 0; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
 
 /* Links to the graph views at the top of the tree. */

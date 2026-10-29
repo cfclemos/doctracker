@@ -1,6 +1,8 @@
 """Load and write the doctracker configuration (`doc/config/config.json`)."""
 
 import json
+import os
+import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -32,24 +34,9 @@ QWEN3_QUERY_INSTRUCTION = (
 )
 """Prefix added to search queries; Qwen3-Embedding is trained to use an instruction like this."""
 
-MEMBER_FOLDERS = ("packages", "package")
-"""Folders holding the members of a monorepo, each with its own `src/` (e.g. `packages/billing/src`)."""
-
-SOURCE_FOLDER_KINDS = (
-    ("src/", "a single project, e.g. src/myapp/__init__.py"),
-    ("packages/*/src/", "each member of a monorepo, e.g. packages/billing/src/acme/billing/__init__.py"),
-    ("package/*/src/", "the same, with the members in package/"),
-)
-"""The kinds of source folders (`source_folders`), with what each is for; told when none is found."""
-
-NO_SOURCES = ("No Python code was found in the source folders.",
-              "doctracker reads the code only from these folders, relative to where it is started:",
-              "The code must come straight from these folders: src/ right at the project root, and each "
-              "member right inside packages/ or package/ (packages/billing/src/ is read, "
-              "packages/group/billing/src/ is not). Code anywhere else is not documented.",
-              "Start doctracker at the project root.")
-"""Told by `start` and the wiki when the project has no source folder or no code in them: the line
-before the list of `SOURCE_FOLDER_KINDS`, its title, the line after it and the advice, shown in bold."""
+SKIPPED_FOLDERS = {"venv", "node_modules", "build", "dist", "__pycache__", "site-packages"}
+"""Folders never read, at any depth, besides hidden ones (`.venv`, `.git`...) and doctracker's `doc/`;
+inside git, what `.gitignore` excludes is left out too."""
 
 
 @dataclass
@@ -86,8 +73,8 @@ class EmbeddingsConfig:
 class Config:
     """Settings read from `doc/config/config.json`.
 
-    The code documented is not set here: it is found in `src/` and in the `src/` of each monorepo
-    member (`source_folders`, `detect_packages`).
+    The code documented is not set here: every file of a known language in the repository is read
+    (`project_files`).
 
     Attributes:
         host: Address the server listens on.
@@ -193,46 +180,39 @@ def models_dir(project_root: Path, config: Config) -> Path:
     return folder if folder.is_absolute() else project_root / folder
 
 
-def source_folders(project_root: Path) -> list[str]:
-    """Find the folders the project's code is read from: `src/` and the `src/` of each monorepo member.
+def project_files(project_root: Path) -> list[str]:
+    """List the files of the project that doctracker may read, whatever their language.
 
-    Members are the folders of `packages/` or `package/` (e.g. `packages/billing/src`). Code anywhere
-    else is not documented.
-
-    Args:
-        project_root: Root of the project.
-
-    Returns:
-        The folders that exist, relative to `project_root`, with forward slashes; `src` first.
-    """
-    folders = ["src"] if (project_root / "src").is_dir() else []
-    for members in MEMBER_FOLDERS:
-        base = project_root / members
-        if base.is_dir():
-            folders += [f"{members}/{member.name}/src" for member in sorted(base.iterdir())
-                        if not member.name.startswith(".") and (member / "src").is_dir()]
-    return folders
-
-
-def detect_packages(project_root: Path) -> list[str]:
-    """Find the top-level Python packages, namespace packages and modules in the source folders.
-
-    A folder with `__init__.py` is a package; a folder without one that holds `.py` files is a
-    namespace package (e.g. `acme` of `acme.billing`), found once even when several members share it;
-    a `.py` file directly in a source folder is a module.
+    Inside a git repository these are the files git knows or would add (`git ls-files --cached
+    --others --exclude-standard`), so whatever `.gitignore` excludes is left out; outside one, every
+    file found walking the folders. Either way `SKIPPED_FOLDERS`, hidden folders and doctracker's own
+    `doc/` are left out. Each reader keeps the files of its language.
 
     Args:
         project_root: Root of the project.
 
     Returns:
-        Package and module names, in the order found, without duplicates.
+        The files, relative to `project_root`, with forward slashes, sorted.
     """
-    packages = []
-    for folder in source_folders(project_root):
-        for child in sorted((project_root / folder).iterdir()):
-            name = child.stem if child.is_file() else child.name
-            if child.name.startswith(".") or not name.isidentifier() or name in packages:
-                continue
-            if child.is_file() and child.suffix == ".py" or child.is_dir() and any(child.rglob("*.py")):
-                packages.append(name)
-    return packages
+    try:
+        listed = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                                cwd=project_root, capture_output=True, timeout=30, check=True).stdout
+        files = [name for name in listed.decode("utf-8", "replace").split("\0") if name]
+    except (OSError, subprocess.SubprocessError):  # no git, or not a repository
+        files = [Path(folder, name).relative_to(project_root).as_posix()
+                 for folder, folders, names in _walk(project_root) for name in names]
+    return sorted(file for file in set(files) if not _skipped(file) and (project_root / file).is_file())
+
+
+def _walk(project_root: Path):
+    """`os.walk` over the project, without descending into skipped folders."""
+    for folder, folders, names in os.walk(project_root):
+        relative = Path(folder).relative_to(project_root).as_posix()
+        folders[:] = [name for name in folders if not _skipped(f"{relative}/{name}/x")]
+        yield folder, folders, names
+
+
+def _skipped(file: str) -> bool:
+    """Whether a project file lies in doctracker's `doc/`, a hidden folder or one of `SKIPPED_FOLDERS`."""
+    parts = file.removeprefix("./").split("/")[:-1]
+    return parts[:1] == [DOC_DIR] or any(part.startswith(".") or part in SKIPPED_FOLDERS for part in parts)

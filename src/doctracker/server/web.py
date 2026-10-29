@@ -12,12 +12,13 @@ from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Re
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from doctracker.config import NO_SOURCES, SOURCE_FOLDER_KINDS, Config, set_config_value
+from doctracker.config import Config, set_config_value
+from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
-from doctracker.search import DEFAULT_LIMIT, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
+from doctracker.search import DEFAULT_LIMIT, DEFAULT_MODE, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
 
@@ -56,6 +57,18 @@ def _static_url(name: str) -> str:
     return f"/static/{name}?v={int(file.stat().st_mtime)}" if file.is_file() else f"/static/{name}"
 
 
+EXAMPLES_FOLDER = "examples"
+"""Folder of doctracker's own repository with the example projects, shown in the EXAMPLES section."""
+
+
+def _develops_doctracker(project_root: Path) -> bool:
+    """Whether the documented project is doctracker's own repository (the code running is its `src/`)."""
+    try:
+        return (project_root / "src" / "doctracker").resolve() == Path(__file__).resolve().parents[1]
+    except OSError:
+        return False
+
+
 def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine,
                notes: NoteStore) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
@@ -63,7 +76,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
     `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the plans,
     tasks and notes `/notes` (changed through `/notes/<action>`), `/source/<path>`,
-    `/search` (modes `default`, `bm25`, `semantic`, `hybrid`),
+    `/search` (modes `all`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
 
     Args:
@@ -76,6 +89,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     Returns:
         The routes, to add to the server app.
     """
+    developing = _develops_doctracker(project_root)
     templates = Environment(loader=PackageLoader("doctracker.wiki", "templates"), autoescape=select_autoescape())
     templates.filters["markdown"] = pages.render_markdown
     templates.filters["commit_message"] = pages.render_commit_message
@@ -84,10 +98,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates.globals.update(
         static_url=_static_url,
         no_sources=NO_SOURCES,
-        source_folder_kinds=SOURCE_FOLDER_KINDS,
+        languages=LANGUAGES,
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
         search_modes=MODES,
+        default_mode=DEFAULT_MODE,
         signature=pages.signature,
         summary=pages.summary,
         page_role=pages.page_role,
@@ -99,11 +114,24 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         dead_code_of=pages.dead_code_of,
     )
 
+    def view_settings(request: Request) -> tuple[str, set[str]]:
+        """The tree layout and the shown languages chosen in this browser (cookies set by `static/live.js`)."""
+        layout = request.cookies.get("tree-layout", "")
+        return (layout if layout in pages.TREE_LAYOUTS else "languages",
+                pages.shown_languages(state, request.cookies.get("languages", "")))
+
     def render_page(request: Request, content: str, url: str, context: dict, status: int = 200) -> HTMLResponse:
         """Render a page: the whole document, or only the content panel for htmx navigation."""
         is_fragment = "HX-Request" in request.headers and "HX-History-Restore-Request" not in request.headers
         template = "fragment.html" if is_fragment else "base.html"
-        html = templates.get_template(template).render(content=content, page_url=url, state=state, **context)
+        layout, shown = view_settings(request)
+        current = context.get("path", "")
+        html = templates.get_template(template).render(
+            content=content, page_url=url, state=state,
+            tree=pages.tree(state, current, layout, shown, EXAMPLES_FOLDER if developing else ""),
+            examples_tree=pages.tree(state, current, layout, shown, within=EXAMPLES_FOLDER) if developing else [],
+            tree_layout=layout, tree_layouts=pages.TREE_LAYOUTS, shown_languages=shown,
+            languages_found=pages.languages_found(state), **context)
         return HTMLResponse(html, status_code=status)
 
     async def earlier_names(path: str) -> list[dict]:
@@ -123,13 +151,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     async def render(request: Request, path: str) -> HTMLResponse:
         entity = state.entities.get(path)
-        context = {"path": path, "entity": entity, "tree": pages.tree(state, path)}
+        context = {"path": path, "entity": entity}
         if not state.ready:
             content, status = "loading.html", 200
         elif entity is None:
             content, status = "not_found.html", 404
         else:
-            if "language" in entity:  # a front-end file, function, CSS class or rule, template or macro
+            if entity["language"] != "python":  # a file, function, CSS class or rule, template or macro
                 content = "frontend.html"
                 context["relations"] = pages.relations(state, path)
             else:
@@ -145,7 +173,6 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         params = dict(request.query_params)
         context = {
             "path": "",
-            "tree": pages.tree(state, ""),
             "view": view,
             "params": params,
             "data_url": f"/graph/{view}?{request.url.query}" if request.url.query else f"/graph/{view}",
@@ -162,7 +189,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "notes":
             context.update(notes_context(params))
         if view == "dead-code":
-            context.update(pages.dead_code_view(state, params))
+            context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
 
@@ -419,7 +446,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 params["selected"] = result["item"]
                 if result["item"].startswith("plan:"):
                     params["plans"] = ",".join(p for p in [*params["plans"].split(","), str(result["id"])] if p.isdigit())
-        context = {"path": "", "tree": pages.tree(state, ""), "view": "notes", "params": params, "error": error,
+        context = {"path": "", "view": "notes", "params": params, "error": error,
                    **notes_context(params)}
         return render_page(request, "notes.html", f"/notes?{page_query(params)}", context)
 
@@ -451,16 +478,18 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         """Data of a graph view, as JSON, built by the same functions the MCP tools use."""
         view = request.path_params["view"]
         params = request.query_params
+        _, shown = view_settings(request)  # the wiki's language filter; the MCP tools see everything
         if view == "architecture":
-            return JSONResponse(architecture(state, params.get("level", "modules")))
+            return JSONResponse(pages.visible_graph(state, architecture(state, params.get("level", "modules")), shown))
         if view == "classes":
-            return JSONResponse(class_diagram(state, params.get("package", "")))
+            return JSONResponse(pages.visible_graph(state, class_diagram(state, params.get("package", "")), shown))
         if view == "planner":
             plans = [int(part) for part in params.get("plans", "").split(",") if part.isdigit()]
             return JSONResponse(notes.planner_graph(plans))
         if view == "calls":
             depth = int(params.get("depth", "1")) if params.get("depth", "1").isdigit() else 1
-            return JSONResponse(call_graph(state, params.get("focus", ""), depth, params.get("direction", "both")))
+            graph = call_graph(state, params.get("focus", ""), depth, params.get("direction", "both"))
+            return JSONResponse(pages.visible_graph(state, graph, shown))
         return JSONResponse({"error": f"Unknown view: {view}"}, status_code=404)
 
     async def index(request: Request) -> Response:
@@ -476,7 +505,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if entity is None:
             return HTMLResponse("", status_code=404)
         code = pages.source_code(project_root, entity)
-        language = entity.get("language", "python")
+        language = entity["language"]
         return HTMLResponse(templates.get_template("source.html").render(code=code, language=language))
 
     def recall_groups(found: dict, query: str) -> list[dict]:
@@ -503,15 +532,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     async def search_box(request: Request) -> Response:
         query = request.query_params.get("q", "")
-        mode = request.query_params.get("mode", "default")
+        mode = request.query_params.get("mode", DEFAULT_MODE)
         page = int(request.query_params.get("page", "1")) if request.query_params.get("page", "1").isdigit() else 1
-        context = {"query": query, "mode": mode, "show_score": mode != "default", "results": [], "preparing": None}
+        context = {"query": query, "mode": mode, "results": [], "preparing": None}
+        _, shown = view_settings(request)
         if query.strip() and mode == "all":
             found = await search.recall(query, WIKI_WAIT_SECONDS)
+            found["code"] = [row for row in found["code"] if pages.visible(state.entities.get(row["ref"]), shown)]
             context["groups"], context["renamed"] = recall_groups(found, query), found.get("renamed", [])
         elif query.strip():
             offset = DEFAULT_LIMIT * (max(1, page) - 1)
-            outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset)
+            outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset, shown)
             context["renamed"] = outcome.renamed
             if outcome.ready:
                 context["results"] = pages.ranked_results(state, outcome.results, query)

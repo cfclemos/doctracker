@@ -7,8 +7,8 @@ from pathlib import Path
 import click
 
 from doctracker import __version__
-from doctracker.config import (CONFIG_PATH, NO_SOURCES, SOURCE_FOLDER_KINDS, Config, detect_packages, load_config,
-                               source_folders, write_config)
+from doctracker.config import CONFIG_PATH, Config, load_config, project_files, write_config
+from doctracker.extraction.languages import LANGUAGES, NO_SOURCES, language_of
 from doctracker.integrations import autostart, claude_code, opencode
 
 
@@ -139,18 +139,21 @@ def _initialize(project_root: Path) -> None:
 
 
 def _echo_sources(project_root: Path) -> None:
-    """Print the source folders and the packages found in them, or `NO_SOURCES` when there are none."""
-    packages = detect_packages(project_root)
-    if not packages:
+    """Print how many files of each language will be read, or `NO_SOURCES` when there are none."""
+    counts: dict[str, int] = {}
+    for file in project_files(project_root):
+        if language := language_of(file):
+            counts[language] = counts.get(language, 0) + 1
+    if not counts:
         before, title, after, advice = NO_SOURCES
         click.echo(f"Nothing to document. {before}\n{title}")
-        for folder, meaning in SOURCE_FOLDER_KINDS:
-            click.echo(f"  - {folder}: {meaning}")
+        for language in LANGUAGES.values():
+            click.echo(f"  - {language['label']}: {', '.join(language['suffixes'])}")
         click.echo(after)
         click.echo(click.style(advice, bold=True))
         return
-    click.echo(f"Source folders: {', '.join(source_folders(project_root))}")
-    click.echo(f"Packages: {', '.join(packages)}")
+    click.echo("Files read: " + ", ".join(f"{LANGUAGES[name]['label']} {counts[name]}"
+                                          for name in LANGUAGES if name in counts))
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:

@@ -1,11 +1,11 @@
-"""The front-end files inside the packages, as entities: JS files and functions, CSS files with their
+"""The front-end files of the project, as entities: JS files and functions, CSS files with their
 classes and their other rules, templates and their macros.
 
 They are read statically, like the Python code: JS and CSS with tree-sitter, templates with Jinja2's
-own parser. Each file is an entity under the nearest Python package, and what it defines is an
-entity under the file, at `file:name` (e.g. `doctracker/wiki/static/live.js:reloadContent`; a CSS
-class keeps its dot, `style.css:.plan-card`; a rule naming no class is known by its selectors,
-`style.css:main`). Minified files (`*.min.*`) are vendored code and skipped. Their summary is the
+own parser. Each file is an entity at its path in the repository (under the nearest Python package
+when it sits in one), and what it defines is an entity under the file, at `file:name` (e.g.
+`src/doctracker/wiki/static/live.js:reloadContent`; a CSS class keeps its dot, `style.css:.plan-card`;
+a rule naming no class is known by its selectors, `style.css:main`). Minified files (`*.min.*`) are vendored code and skipped. Their summary is the
 comment written right above them; their text (the JS body, the CSS rules, the template) is kept for
 the search.
 """
@@ -19,6 +19,8 @@ from jinja2 import Environment, nodes
 from jinja2.exceptions import TemplateSyntaxError
 from tree_sitter import Language, Node, Parser
 
+from doctracker.extraction.languages import language_of
+
 FRONTEND_KINDS = {".js": "script", ".css": "stylesheet", ".html": "template"}
 """The front-end files read, by suffix, with the kind of their entity."""
 
@@ -31,16 +33,18 @@ _JINJA_COMMENT = re.compile(r"\{#(.*?)#\}", re.S)
 _MACRO_TAG = re.compile(r"\{%-?\s*(macro|endmacro)\b")
 
 
-def extract_frontend(root: Path, entities: dict[str, dict]) -> dict[str, dict]:
-    """Read the front-end files of the loaded packages.
+def extract_frontend(root: Path, files: list[str], entities: dict[str, dict]) -> dict[str, dict]:
+    """Read the JS, CSS and HTML files of the project, wherever they are, and the files of the other
+    languages of `LANGUAGES` as whole files (kind `file`, nothing inside yet).
 
     Args:
         root: Project root.
-        entities: The Python entities already extracted (their packages give the folders to read).
+        files: The project's files (`config.project_files`); those of a front-end suffix are read.
+        entities: The Python entities already extracted; a file inside a Python package is also
+            added to the `members` of that package.
 
     Returns:
-        The front-end entities, by path, with the same keys as the Python ones plus `language` and
-        `search_text`; each file is also added to the `members` of its package.
+        The front-end entities, by path, with the same keys as the Python ones plus `search_text`.
     """
     root = root.resolve()
     packages = {}
@@ -50,35 +54,33 @@ def extract_frontend(root: Path, entities: dict[str, dict]) -> dict[str, dict]:
             folders = entity.get("folders") or [(root / entity["filepath"]).resolve().parent.relative_to(root).as_posix()]
             packages.update(dict.fromkeys(folders, path))
     found: dict[str, dict] = {}
-    for folder, package in sorted(packages.items()):
-        if Path(folder).parent.as_posix() in packages:
-            continue  # read from its top package
-        for file in sorted((root / folder).rglob("*")):
-            kind = FRONTEND_KINDS.get(file.suffix)
-            if kind is None or ".min." in file.name or not file.is_file():
-                continue
-            try:
-                source = file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            relative = file.relative_to(root).as_posix()
-            parent = _package_of(relative, packages)
-            file_path = f"{package.replace('.', '/')}/{file.relative_to(root / folder).as_posix()}"
-            if kind == "script":
-                members = _js_functions(source)
-            elif kind == "stylesheet":
-                members = _css_rules(source)
-            else:
-                members = _macros(source)
-            children = []
-            for name, member_kind, lineno, endlineno, comment, text in members:
-                path = f"{file_path}:{name}"
-                children.append(path)
-                found[path] = _entity(path, name, member_kind, file_path, relative, lineno, endlineno, comment, text)
-            found[file_path] = _entity(file_path, file.name, kind, parent, relative, 1, source.count("\n") + 1,
-                                       _file_comment(kind, source), source, children)
-            if parent in entities:
-                entities[parent]["members"].append(file_path)
+    for file_path in files:
+        language = language_of(file_path)
+        kind = FRONTEND_KINDS.get(Path(file_path).suffix) or ("file" if language not in (None, "python") else None)
+        if kind is None or ".min." in Path(file_path).name:
+            continue
+        try:
+            source = (root / file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        parent = _package_of(file_path, packages)
+        if kind == "script":
+            members = _js_functions(source)
+        elif kind == "stylesheet":
+            members = _css_rules(source)
+        elif kind == "template":
+            members = _macros(source)
+        else:  # a language read as a whole file, for now
+            members = []
+        children = []
+        for name, member_kind, lineno, endlineno, comment, text in members:
+            path = f"{file_path}:{name}"
+            children.append(path)
+            found[path] = _entity(path, name, member_kind, file_path, file_path, lineno, endlineno, comment, text)
+        found[file_path] = _entity(file_path, Path(file_path).name, kind, parent, file_path, 1,
+                                   source.count("\n") + 1, _file_comment(kind, source), source, children)
+        if parent in entities:
+            entities[parent]["members"].append(file_path)
     return found
 
 
@@ -93,9 +95,7 @@ def _entity(path: str, name: str, kind: str, parent: str, filepath: str, lineno:
     """A front-end entity, with the keys of the Python ones."""
     return {"path": path, "name": name, "kind": kind, "parent": parent, "filepath": filepath, "lineno": lineno,
             "endlineno": endlineno, "is_private": False, "docstring": comment, "sections": [], "decorators": [],
-            "members": members or [], "language": {"script": "js", "js function": "js", "stylesheet": "css",
-                                                   "css class": "css", "css rule": "css"}.get(kind, "jinja"),
-            "search_text": text[:MAX_SEARCH_CHARS]}
+            "members": members or [], "language": language_of(filepath), "search_text": text[:MAX_SEARCH_CHARS]}
 
 
 def _comment_text(comments: list[str]) -> str:

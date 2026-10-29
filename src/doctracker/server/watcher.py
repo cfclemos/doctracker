@@ -14,30 +14,23 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from doctracker.config import DOC_DIR, Config, source_folders
+from doctracker.config import Config, project_files
 from doctracker.extraction import extract_project
-from doctracker.extraction.frontend import FRONTEND_KINDS
+from doctracker.extraction.languages import language_of
 from doctracker.history import git_dir
 from doctracker.notes import NoteStore
 from doctracker.notes.commit_flow import review_outside_commits
 from doctracker.server.state import DocState
 
-SKIPPED_DIRS = {DOC_DIR, ".git", ".venv", "venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache"}
-"""Folders never scanned for changes (besides any folder starting with a dot)."""
-
 GIT_FILES = ("HEAD", "packed-refs", "logs/HEAD")
 """Files of the git folder that change on commit, checkout, reset or branch creation (with `refs/`)."""
 
 
-WATCHED_SUFFIXES = (".py", *FRONTEND_KINDS)
-"""Files whose change rebuilds the documentation: Python and the front-end files read with it."""
-
-
 def snapshot(project_root: Path) -> dict[str, int]:
-    """Map every watched file (Python and front-end) of the source folders to its modification time.
+    """Map every project file of a known language to its modification time.
 
-    Runs in a worker process. The source folders are found on every call, so a new monorepo member
-    is watched without a restart.
+    Runs in a worker process. The files are listed on every call (`config.project_files`), so a new
+    file, or one no longer ignored, is watched without a restart.
 
     Args:
         project_root: Root of the documented project.
@@ -46,8 +39,12 @@ def snapshot(project_root: Path) -> dict[str, int]:
         Modification time in nanoseconds, by file path; two equal snapshots mean nothing changed.
     """
     files: dict[str, int] = {}
-    for folder in source_folders(project_root):
-        _scan(project_root / folder, files)
+    for file in project_files(project_root):
+        if language_of(file):
+            try:
+                files[file] = (project_root / file).stat().st_mtime_ns
+            except OSError:
+                pass
     return files
 
 
@@ -75,28 +72,6 @@ def git_snapshot(folder: Path | None) -> dict[str, int]:
             if path.is_file():
                 files[str(path)] = path.stat().st_mtime_ns
     return files
-
-
-def _scan(folder: Path, files: dict[str, int]) -> None:
-    """Add the `WATCHED_SUFFIXES` files of `folder` and its subfolders to `files`, skipping `SKIPPED_DIRS`.
-
-    Args:
-        folder: Folder to scan; unreadable folders are skipped.
-        files: Modification time by file path; filled in place.
-    """
-    try:
-        entries = list(folder.iterdir())
-    except OSError:
-        return
-    for entry in entries:
-        if entry.is_dir():
-            if entry.name not in SKIPPED_DIRS and not entry.name.startswith("."):
-                _scan(entry, files)
-        elif entry.suffix in WATCHED_SUFFIXES:
-            try:
-                files[str(entry)] = entry.stat().st_mtime_ns
-            except OSError:
-                pass
 
 
 async def watch(project_root: Path, config: Config, state: DocState, notes: NoteStore) -> None:
