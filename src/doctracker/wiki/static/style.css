@@ -561,7 +561,6 @@ td p { margin: 0; }
 .graph-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1rem; font-size: 0.85rem; color: var(--muted); }
 .graph-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
 .graph-filter .focus-input { width: 26rem; max-width: 60vw; }
-.graph-actions { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; font-size: 0.85rem; color: var(--muted); }
 /* A text field with a × to empty it (see live.js). */
 .field-clearable { position: relative; display: inline-flex; align-items: center; }
 .field-clear {
@@ -580,8 +579,7 @@ td p { margin: 0; }
 }
 .field-clear:hover { background: var(--panel); color: var(--fg); }
 .field-clear[hidden] { display: none; }
-.graph-filter select, .graph-filter input,
-.graph-actions select, .graph-actions input, .graph-actions button {
+.graph-filter select, .graph-filter input {
   height: 2rem;
   padding: 0 0.5rem;
   border: 1px solid var(--border);
@@ -591,9 +589,6 @@ td p { margin: 0; }
   font: inherit;
 }
 .field-clearable input { padding-right: 1.9rem; }
-.graph-actions button { cursor: pointer; }
-.graph-actions input[type="range"] { height: auto; padding: 0; border: 0; vertical-align: middle; accent-color: var(--accent); }
-.graph-actions button:hover { border-color: var(--accent); color: var(--accent); }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.8rem; color: var(--muted); }
 .graph-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .graph-legend .line { display: inline-block; width: 1.4rem; height: 0; border-top: 2px solid; }
@@ -1088,18 +1083,11 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 .planner-frame .arch-frame-head .planner-button { margin-left: 0; background: var(--bg); color: var(--fg); border-color: transparent; }
 .planner-plan { border-width: 2px; }
 
-/* Notes lists (guidelines, memory). */
-.notes-list { list-style: none; margin: 0.6rem 0; padding: 0; }
+/* A note (guidelines, memory). */
 .note { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left: 3px solid var(--tint, var(--border)); border-radius: 6px; }
 .note + .note { margin-top: 0.5rem; }
-.note-preference { --tint: var(--function); } .note-rule { --tint: var(--raises); } .note-decision { --tint: var(--accent); }
-.note-context { --tint: var(--method); } .note-pitfall { --tint: var(--class); } .note-reference { --tint: var(--neutral); }
-.note-superseded { opacity: 0.6; }
-.note-head { display: flex; gap: 0.5rem; align-items: baseline; }
 .note-statement { font-weight: 600; flex: 1; }
-.note-actions button { padding: 0.1rem 0.6rem; font-size: 0.75rem; }
 .note-why { margin: 0.3rem 0 0; font-size: 0.88rem; color: var(--muted); }
-.note-entities { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0 0; font-size: 0.8rem; }
 .note .notes-meta { margin: 0.35rem 0 0; }
 
 /* Modal. */
@@ -1130,9 +1118,6 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 .moment-options { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; }
 .notes-form .moment-options label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--fg); font-size: 0.9rem; cursor: pointer; }
 .moment-options input[type="checkbox"] { padding: 0; margin: 0; accent-color: var(--accent); }
-.dialog-section { margin: 0.8rem 0; padding-top: 0.6rem; border-top: 1px solid var(--border); }
-.dialog-section h3 { display: inline; margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.dialog-section > summary { cursor: pointer; }
 .dialog-list { margin: 0.4rem 0; padding-left: 1.1rem; font-size: 0.88rem; }
 .dialog-list li { margin: 0.2rem 0; }
 .criteria-list { list-style: none; padding-left: 0.2rem; }
@@ -1140,8 +1125,6 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 .dialog-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0; }
 .dialog-row input:not([type=hidden]), .dialog-row select { flex: 1 1 12rem; min-width: 0; }
 .inline-form { display: inline; }
-.notes-dialog .link-button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 0.75rem; text-decoration: underline; }
-.dialog-danger { margin-top: 1rem; text-align: right; }
 
 /* Planner: plan cards on top; the chosen plans on the left, the clicked item on the right. */
 /* The cards scroll on one row (like the Git page timeline); New plan stays beside the row, on the right, as
@@ -1183,7 +1166,6 @@ body.splitting { cursor: col-resize; user-select: none; }
 }
 @media (max-width: 720px) {
   .notes-tab { padding: 0.4rem 0.7rem; }
-  .note-head { flex-wrap: wrap; }
   .notes-filter { flex-wrap: wrap; gap: 0.4rem 1rem; }
 }
 .planner-external { display: grid; gap: 0.1rem; padding: 0.3rem 0.55rem; border: 1.5px dashed var(--tint); background: var(--panel);
