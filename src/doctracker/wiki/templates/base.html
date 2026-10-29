@@ -1,3 +1,4 @@
+{% import "macros.html" as ui %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -17,21 +18,33 @@
   <header id="topbar">
     <button id="tree-toggle" type="button" title="Show/hide the tree" aria-label="Show/hide the tree">☰</button>
     <a class="brand" href="/">doctracker</a>
+    {{ ui.grammars_warning(state.missing_grammars) }}
+    {# On a small screen the search is this button: it opens the search as a panel under the bar,
+       modes and languages on top, the field below (static/live.js). #}
+    <button type="button" class="search-open" title="Search (/)" aria-label="Search"><i class="search-open-icon"></i></button>
     <div class="search" id="search">
-      {# Search modes come from search.MODES: the same searches as the MCP tools. #}
-      <div class="search-modes" role="radiogroup" aria-label="Search mode">
-        {% for mode, texts in search_modes.items() %}
-        <button type="button" role="radio" data-mode="{{ mode }}" data-placeholder="{{ texts.placeholder }}"
-                aria-checked="{{ 'true' if mode == default_mode else 'false' }}" title="{{ texts.title }}">{{ texts.label }}</button>
-        {% endfor %}
+      {# The search modes and the language filter: side by side with room enough; on a narrow screen,
+         a plain filter button opens them as a menu, leaving the room to the search field. #}
+      <div class="search-filters" id="search-filters">
+        <button type="button" class="search-options-toggle" aria-expanded="false" aria-controls="search-options-menu"
+                title="Search mode and languages" aria-label="Search mode and languages"><i class="filter-icon"></i></button>
+        <div class="search-options-menu" id="search-options-menu">
+          {# Search modes come from search.MODES: the same searches as the MCP tools. #}
+          <div class="search-modes" role="radiogroup" aria-label="Search mode">
+            {% for mode, texts in search_modes.items() %}
+            <button type="button" role="radio" data-mode="{{ mode }}" data-placeholder="{{ texts.placeholder }}"
+                    aria-checked="{{ 'true' if mode == default_mode else 'false' }}" title="{{ texts.title }}">{{ texts.label }}</button>
+            {% endfor %}
+          </div>
+          {# The languages the whole wiki shows (tree, search, graphs, dead code), kept in a cookie by static/live.js. #}
+          <select id="language-filter" class="language-filter" title="Languages shown in the wiki" aria-label="Languages shown">
+            <option value="">All languages</option>
+            {% for name in languages_found %}
+            <option value="{{ name }}"{% if shown_languages | list == [name] and languages_found | length > 1 %} selected{% endif %}>{{ languages[name].label }}</option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
-      {# The languages the whole wiki shows (tree, search, graphs, dead code), kept in a cookie by static/live.js. #}
-      <select id="language-filter" class="language-filter" title="Languages shown in the wiki" aria-label="Languages shown">
-        <option value="">All languages</option>
-        {% for name in languages_found %}
-        <option value="{{ name }}"{% if shown_languages | list == [name] and languages_found | length > 1 %} selected{% endif %}>{{ languages[name].label }}</option>
-        {% endfor %}
-      </select>
       <input id="search-mode" type="hidden" name="mode" value="{{ default_mode }}">
       <div class="search-field">
         <span class="search-icon" aria-hidden="true">⌕</span>
@@ -40,6 +53,7 @@
                hx-get="/search" hx-include="#search-mode" hx-target="#search-results"
                hx-trigger="input changed delay:250ms, focus, search-mode-changed">
         <button id="search-clear" type="button" aria-label="Clear" hidden>×</button>
+        <button type="button" class="search-fold" title="Close the search" aria-label="Close the search">×</button>
       </div>
       <div id="search-results" class="search-popup"></div>
     </div>

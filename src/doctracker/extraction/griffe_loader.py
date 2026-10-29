@@ -11,7 +11,7 @@ import griffe
 
 from doctracker.analysis.dead_code import scan
 from doctracker.config import project_files
-from doctracker.extraction.frontend import extract_frontend
+from doctracker.extraction.code import extract_code
 from doctracker.extraction.graph import extract_edges
 
 MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
@@ -33,7 +33,8 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
     Returns:
         `roots` (paths of the loaded Python packages and modules), `entities` (every entity by path),
         `edges` (relations between entities, see `extract_edges`), `errors`
-        (packages that could not be loaded, with the reason) and `dead_code` (see `analysis.scan`).
+        (packages that could not be loaded, with the reason), `missing_grammars` (languages left out
+        because their grammar could not be fetched, see `code.extract_code`) and `dead_code` (see `analysis.scan`).
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
@@ -56,10 +57,11 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
             continue
         roots.append(module.path)
         _collect(module, root, docstring_style, show_private, entities)
-    entities.update(extract_frontend(root, files, entities))
+    code, missing_grammars = extract_code(root, files, entities)
+    entities.update(code)
     edges = extract_edges(entities, root)
     return {"roots": roots, "entities": entities, "edges": edges, "errors": errors,
-            "dead_code": scan(root, entities, edges)}
+            "missing_grammars": missing_grammars, "dead_code": scan(root, entities, edges)}
 
 
 def python_roots(files: list[str]) -> tuple[list[str], list[str]]:

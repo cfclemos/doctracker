@@ -15,7 +15,7 @@
   {% if entity.decorators %}
   <p class="chips decorators">{% for decorator in entity.decorators %}<code class="chip">@{{ decorator }}</code>{% endfor %}</p>
   {% endif %}
-  <pre class="signature code-block"><code>{{ signature(entity) | highlight }}</code></pre>
+  <pre class="signature code-block"><code>{{ signature(entity) | highlight(entity.language) }}</code></pre>
   {{ ui.previous_names(previous_names) }}
   {% if entity.kind == "class" and entity.bases %}
   <p class="bases">Bases: {% for base in entity.bases %}<code class="chip">{{ base }}</code>{% endfor %}</p>
@@ -79,15 +79,6 @@
 {% with divider = true %}{% include "members.html" %}{% endwith %}
 {% endif %}
 
-{# Open by default; the code is fetched right after the page is shown, so the page itself stays light. #}
-{% set source_attrs = 'hx-get="/source/%s" hx-trigger="load" hx-target="find .code"' | format(entity.path | e) %}
-{% call ui.section("source", "Source", divider=true, attrs=source_attrs) %}
-  {# Changing the theme saves it to doc/config/config.json. #}
-  <label class="theme-picker">Code theme
-    <select class="code-theme-select" name="code_theme"
-            hx-post="/settings/code-theme" hx-trigger="change" hx-swap="none">
-      {% for name in code_themes %}<option value="{{ name }}"{% if name == code_theme %} selected{% endif %}>{{ name }}</option>{% endfor %}
-    </select>
-  </label>
-  <div class="code"><p class="empty">Loading…</p></div>
-{% endcall %}
+{{ ui.relations(relations, role) }}
+
+{{ ui.source(entity, code_theme, code_themes) }}

@@ -3,7 +3,7 @@
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from doctracker.analysis import DEAD_KINDS, VERDICTS, filter_rows
+from doctracker.analysis import DEAD_KINDS, VERDICTS, dead_code_kinds, filter_rows
 from doctracker.config import Config, set_config_value
 from doctracker.graph import architecture, call_graph, class_diagram, entity_history
 from doctracker.history import commit_diff, read_branch_graph
@@ -358,7 +358,7 @@ from outside the project, or through data, is not seen. The same list as the wik
 Args:
     prefix: Only paths (or files) starting with it, e.g. `mypkg.api` or `mypkg/static`.
     verdict: One of {", ".join(VERDICTS)}; empty for all.
-    kind: One of {", ".join(DEAD_KINDS)}; empty for all.
+    kind: One of {", ".join(DEAD_KINDS)}, or the own kind of another language (`interface`...); empty for all.
     min_confidence: Only findings at least this sure, 0 to 100.
 
 Returns:
@@ -367,17 +367,20 @@ Returns:
     def dead_code(prefix: str = "", verdict: str = "", kind: str = "", min_confidence: int = 0) -> dict:
         if verdict and verdict not in VERDICTS:
             raise ToolError(f"Unknown verdict {verdict!r}; use one of: {', '.join(VERDICTS)}")
-        if kind and kind not in DEAD_KINDS:
-            raise ToolError(f"Unknown kind {kind!r}; use one of: {', '.join(DEAD_KINDS)}")
+        kinds = dead_code_kinds(state.dead_code)
+        if kind and kind not in kinds:
+            raise ToolError(f"Unknown kind {kind!r}; use one of: {', '.join(kinds)}")
         rows = filter_rows(state.dead_code, prefix.strip(), verdict, kind, min_confidence)
         return {"total": len(state.dead_code), "shown": len(rows), "rows": rows}
 
     @mcp.tool()
     def status() -> dict:
-        """Report whether the documentation is built and any loading errors."""
+        """Report whether the documentation is built, any loading errors, and the languages left out
+        because their grammar could not be fetched (e.g. without network)."""
         return {
             "ready": state.ready,
             "packages": state.roots,
             "entities": len(state.entities),
             "errors": state.errors,
+            "missing_grammars": state.missing_grammars,
         }

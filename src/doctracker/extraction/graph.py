@@ -13,7 +13,7 @@ import ast
 import re
 from pathlib import Path
 
-from doctracker.extraction.frontend import frontend_edges
+from doctracker.extraction.code import code_edges, frontend_edges
 
 EDGE_KINDS = ("contains", "imports", "inherits", "has", "calls", "refers", "uses")
 """Kinds of relations: parent → member, module → imported module, class → base class,
@@ -49,7 +49,7 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
     held_by: set[tuple[str, str, str]] = set()  # (class, held class, attribute)
     templates: dict[str, list[str]] = {}  # template file name → its entities
     for path, entity in entities.items():
-        if entity["kind"] == "template":
+        if entity.get("kind_label") == "template":
             templates.setdefault(entity["name"], []).append(path)
     registered: dict[str, str] = {}  # name a template uses → the Python function or class registered under it
     routes: list[tuple[str, str, str]] = []  # (URL pattern, entity declaring the route, handler)
@@ -66,7 +66,7 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
                 if tree is not None:
                     edges |= _call_edges(path, tree, resolver) | _import_edges(path, tree, resolver)
                     edges |= _python_frontend(path, tree, resolver, templates, registered, routes)
-        if entity["kind"] == "class":
+        if entity["kind"] == "class" and entity["language"] == "python":
             module = resolver.module_of(path)
             for base in entity["bases"]:
                 target = resolver.type_from_text(module, base)
@@ -80,7 +80,7 @@ def extract_edges(entities: dict[str, dict], root: Path) -> list[dict]:
     return ([{"source": source, "target": target, "kind": kind} for source, target, kind in sorted(edges)]
             + [{"source": source, "target": target, "kind": "has", "via": via}
                for source, target, via in sorted(held_by)]
-            + frontend_edges(entities, root, registered, routes))
+            + frontend_edges(entities, root, registered, routes) + code_edges(entities, root))
 
 
 def _python_frontend(module: str, tree: ast.Module, resolver: "_Resolver", templates: dict[str, list[str]],

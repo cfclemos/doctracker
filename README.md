@@ -19,15 +19,19 @@ context at the right moments, and serves a live wiki of the project in your brow
 - **Static analysis only** — the code is read with [griffe](https://mkdocstrings.github.io/griffe/),
   never imported or executed.
 - **Live wiki** — edit a file or commit and the open page updates by itself.
-- **Front-end too** — the JS functions, CSS classes and rules, templates and macros
-  are entities of their own, wherever their files are, read with tree-sitter and Jinja2,
-  tied to the Python code (helpers, routes, rendered templates) and searchable.
+- **Every language like Python** — JavaScript, TypeScript, CSS, HTML, PHP, Java, C#, C,
+  C++, Go, Rust and SQL are read with [tree-sitter-language-pack](https://github.com/xberg-io/tree-sitter-language-pack)
+  (MIT) into the same entities as Python: files, classes, interfaces, structs, functions,
+  methods, CSS classes, template macros, SQL tables, with their description (the comment
+  above), signature, source, the same pages and the same relations (calls, references,
+  inheritance, imports, CSS classes used, rendered templates, routes). Any other file the
+  pack recognises (YAML, JSON, TOML, Markdown...) has a page with its source.
 - **Code graphs** — architecture (modules and imports, cycles marked), class
   diagram and call graph of any function, with callbacks, templates and CSS classes.
 - **Dead code** — what nothing uses, from the code graph and
   [vulture](https://github.com/jendrikseipp/vulture) together (each errs where
-  the other does not), with filters, in the wiki's DEAD CODE section and the
-  `dead_code` tool.
+  the other does not) for Python, and from the code graph alone for the other
+  languages; with filters, in the wiki's DEAD CODE section and the `dead_code` tool.
 - **Renames followed** — renames and moves found at commit are kept, so notes,
   searches and the entity page still find an entity by its earlier names.
 - **Git history** — branch graph, commits with their diffs, and the commits that
@@ -88,7 +92,8 @@ the code without importing it, so it never needs the project's dependencies.
 ### Where the code is read from
 
 Run doctracker at the root of the project. It reads **every file of a language it knows**
-(Python, JavaScript, CSS, HTML), wherever it is in the repository. Left out are the
+(Python, JavaScript, TypeScript, CSS, HTML, PHP, Java, C#, C, C++, Go, Rust, SQL, and as
+whole files YAML, JSON, TOML, Markdown...), wherever it is in the repository. Left out are the
 files `.gitignore` excludes (inside git), hidden folders (`.venv`, `.git`, ...), `doc/`
 and folders like `venv`, `node_modules`, `build`, `dist` and `__pycache__`.
 
@@ -97,6 +102,12 @@ imported from the project root and from every `src/` folder, so a single project
 `src/` layout and a monorepo all work; namespace packages (a folder without `__init__.py`,
 like `acme` below, even when spread over several members) are one package.
 `pyproject.toml` is not read, so the same layouts work with pip, uv or any build backend.
+
+The grammars of the other languages are fetched the first time a file of theirs is read
+(from the pack's GitHub releases) into `doc/grammars/`, kept out of git; without network
+those files are listed without what they define, and the wiki says why. Templates are
+the one exception to reading through the pack: their Jinja syntax is read with Jinja2's
+own parser.
 
 ```text
 my-project/                     my-monorepo/

@@ -15,7 +15,7 @@ CONFIG_PATH = Path(DOC_DIR) / "config" / "config.json"
 GITIGNORE_PATH = Path(DOC_DIR) / ".gitignore"
 """`.gitignore` written by `init` to keep local data out of git."""
 
-GITIGNORE_CONTENT = "sqlite/\nmodels/\n"
+GITIGNORE_CONTENT = "sqlite/\nmodels/\ngrammars/\n"
 """Local data folders ignored by `doc/.gitignore`."""
 
 DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "doctracker.db"
@@ -24,6 +24,9 @@ DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "doctracker.db"
 NOTES_DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "notes.db"
 """Local database with the plans, tasks and notes, relative to the project root. Kept apart from the
 search indexes, which can be rebuilt from the code at any time; the notes cannot."""
+
+GRAMMARS_DIR = Path(DOC_DIR) / "grammars"
+"""Where the grammars of tree-sitter-language-pack are fetched to, relative to the project root."""
 
 DEFAULT_MODELS_DIR = Path(DOC_DIR) / "models"
 """Where models and the llama.cpp binaries go when `embeddings.models_dir` is not set."""
@@ -134,6 +137,16 @@ def write_config(project_root: Path, config: Config) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(config), indent=2) + "\n", encoding="utf-8")
     (project_root / GITIGNORE_PATH).write_text(GITIGNORE_CONTENT, encoding="utf-8")
+
+
+def ensure_gitignore(project_root: Path) -> None:
+    """Add to `doc/.gitignore` the local data folders it is missing (e.g. `grammars/` in older projects)."""
+    path = project_root / GITIGNORE_PATH
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    missing = [line for line in GITIGNORE_CONTENT.splitlines() if line not in lines]
+    if missing:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines + missing) + "\n", encoding="utf-8")
 
 
 def update_config_value(project_root: Path, key: str, value: object, section: str | None = None) -> None:

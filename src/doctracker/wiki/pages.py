@@ -13,7 +13,7 @@ from pygments.lexers import (CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonC
 from pygments.styles import get_all_styles, get_style_by_name
 from pygments.token import Token
 
-from doctracker.analysis import DEAD_KINDS, VERDICTS, filter_rows
+from doctracker.analysis import VERDICTS, dead_code_kinds, filter_rows
 from doctracker.extraction.languages import LANGUAGES, language_of
 from doctracker.server.state import DocState
 
@@ -38,26 +38,30 @@ the other languages of `LANGUAGES` use the Pygments lexer of the same name."""
 
 GROUPS = (
     ("module", "Modules"),
-    ("class", "Classes"),
-    ("function", "Functions"),
-    ("attribute", "Attributes"),
-    ("type alias", "Type aliases"),
     ("script", "Scripts"),
     ("stylesheet", "Stylesheets"),
     ("template", "Templates"),
     ("file", "Files"),
-    ("js function", "Functions"),
+    ("class", "Classes"),
+    ("interface", "Interfaces"),
+    ("struct", "Structs"),
+    ("enum", "Enums"),
+    ("trait", "Traits"),
+    ("function", "Functions"),
+    ("method", "Methods"),
     ("macro", "Macros"),
+    ("attribute", "Attributes"),
+    ("constant", "Constants"),
+    ("type alias", "Type aliases"),
     ("css class", "CSS classes"),
     ("css rule", "CSS rules"),
 )
-"""Order and labels of the member groups on module, class and front-end file pages, as `(kind, label)`."""
+"""Order and labels of the member groups on module and class pages, as `(kind, label)`: Python
+members by their `kind`, those of other languages by their own kind (`kind_label`); a kind not
+listed comes last, named after itself."""
 
-TREE_KINDS = ("module", "class", "function", "script", "stylesheet", "template", "file", "js function", "macro")
-"""Kinds shown in the navigation tree (CSS classes and rules only on their stylesheet's page: there are many)."""
-
-FILE_KINDS = ("script", "stylesheet", "template", "file")
-"""Kinds of the entities that are a whole file, besides Python modules (`file`: a language read as whole files)."""
+TREE_KINDS = ("module", "class", "function")
+"""Kinds shown in the navigation tree (attributes, CSS classes and rules only on their parent's page: there are many)."""
 
 TREE_LAYOUTS = {"languages": "By language", "folders": "By folder"}
 """The formats of the navigation tree (see `tree`), with the name the switch shows."""
@@ -178,6 +182,8 @@ def signature(entity: dict) -> str:
         `def name(params) -> type`, `class Name(bases)`, `name: type = value`, or the path for modules.
     """
     kind = entity["kind"]
+    if entity["language"] != "python":  # as the code writes it; a CSS class or a file has none
+        return entity.get("signature") or (entity["path"] if kind == "module" else entity["name"])
     if kind == "function":
         result = f"def {entity['name']}({_parameters(entity['parameters'])})"
         if entity["returns"]:
@@ -356,7 +362,7 @@ def tree(state: DocState, current: str, layout: str = "languages", languages: se
 def _files(state: DocState, shown: set[str]) -> list[str]:
     """The entities that are a whole file (Python modules and packages, front-end files) of the shown languages."""
     return [path for path, entity in state.entities.items()
-            if visible(entity, shown) and (entity["kind"] == "module" or entity["kind"] in FILE_KINDS)]
+            if visible(entity, shown) and entity["kind"] == "module"]
 
 
 def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[str, list[str], str]]:
@@ -379,7 +385,7 @@ def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[s
     found: dict[str, tuple[list[str], str]] = {}
     roots = {path: _locations(state.entities[path]) for path in state.roots if path in state.entities}
     for entity in state.entities.values():
-        if entity["kind"] != "module" and entity["kind"] not in FILE_KINDS or apart and _inside(entity, (apart,)):
+        if entity["kind"] != "module" or apart and _inside(entity, (apart,)):
             continue
         parts = entity["filepath"].split("/")
         if within:
@@ -444,7 +450,7 @@ def _folder_nodes(state: DocState, files: list[str], current: str, shown: set[st
             for location in entity.get("folders") or [str(PurePosixPath(entity["filepath"]).parent)]:
                 folder(location)["entity"] = path
         else:
-            role = "module" if entity["kind"] == "module" else entity["kind"].replace(" ", "-")
+            role = _role({}, entity)
             folder(str(PurePosixPath(entity["filepath"]).parent))["files"].append(
                 _tree_node(state, path, current, role, shown))
 
@@ -516,9 +522,11 @@ def _role(parent: dict, member: dict) -> str:
     """
     if member["kind"] == "module" and member.get("is_package"):
         return "subpackage"
-    if member["kind"] == "function" and parent["kind"] == "class":
+    if member["kind"] == "function" and parent.get("kind") == "class":
         return "method"
-    return member["kind"].replace(" ", "-")  # `js function` → `js-function`: a role names CSS classes
+    if member["language"] == "python" or member["kind"] in ("class", "function") and member["kind_label"] != "macro":
+        return member["kind"]
+    return member["kind_label"].replace(" ", "-")  # a file's (`script`...) or a CSS class's: a role names CSS classes
 
 
 def members_by_group(state: DocState, entity: dict) -> list[dict]:
@@ -536,12 +544,16 @@ def members_by_group(state: DocState, entity: dict) -> list[dict]:
         its role and its rows: path, name, role, symbol, signature details and summary.
     """
     documented = _documented_attributes(entity)
+    members = [state.entities[path] for path in entity["members"] if path in state.entities]
+    present = {_group_of(member) for member in members}
+    order = [kind for kind, _ in GROUPS] + sorted(present - {kind for kind, _ in GROUPS})
+    labels = dict(GROUPS)
     groups = []
-    for kind, label in GROUPS:
+    for kind in order:
+        label = labels.get(kind) or f"{kind.capitalize()}s"
         items = []
-        for member_path in entity["members"]:
-            member = state.entities.get(member_path)
-            if member and member["kind"] == kind:
+        for member in members:
+            if _group_of(member) == kind:
                 role = _role(entity, member)
                 items.append(
                     {
@@ -565,6 +577,11 @@ def members_by_group(state: DocState, entity: dict) -> list[dict]:
     return groups
 
 
+def _group_of(member: dict) -> str:
+    """The member group of an entity: its kind for Python, its own kind (`kind_label`) for other languages."""
+    return member["kind"] if member["language"] == "python" else member["kind_label"]
+
+
 def signature_details(entity: dict) -> str:
     """Get the part of the signature after the name, shown muted next to the name in member lists.
 
@@ -576,6 +593,9 @@ def signature_details(entity: dict) -> str:
     """
     full = signature(entity)
     kind = entity["kind"]
+    if entity["language"] != "python":
+        start = full.find(entity["name"]) if kind != "module" else -1
+        return full[start + len(entity["name"]):] if start >= 0 and full != entity["name"] else ""
     if kind == "function":
         return full.removeprefix(f"def {entity['name']}")
     if kind == "class":
@@ -598,7 +618,7 @@ def page_role(state: DocState, entity: dict) -> str:
     if entity["path"] in state.roots:
         return "package"
     parent = state.entities.get(entity["parent"] or "")
-    return _role(parent, entity) if parent else entity["kind"].replace(" ", "-")
+    return _role(parent or {}, entity)
 
 
 def parameter_rows(entity: dict) -> list[dict]:
@@ -659,6 +679,8 @@ def other_sections(entity: dict) -> list[dict]:
     Returns:
         The remaining sections, in docstring order.
     """
+    if entity["language"] != "python":  # its description is the comment above it, as one text section
+        return [{"kind": "text", "title": "", "text": entity["docstring"], "items": []}] if entity["docstring"] else []
     hidden = {"parameters", "other parameters"}
     if entity["kind"] in ("module", "class"):
         hidden.add("attributes")
@@ -944,7 +966,7 @@ def dead_code_view(state: DocState, params: dict, languages: set[str] | None = N
     for row in rows:
         link = row["path"] if row["path"] in state.entities else modules.get(row["file"], "")
         groups.setdefault(row["file"], []).append({**row, "link": link})
-    return {"filters": filters, "verdicts": VERDICTS, "kinds": DEAD_KINDS, "confidences": CONFIDENCE_STEPS,
+    return {"filters": filters, "verdicts": VERDICTS, "kinds": dead_code_kinds(state.dead_code), "confidences": CONFIDENCE_STEPS,
             "total": len(state.dead_code), "shown": len(rows),
             "groups": [{"file": file, "rows": file_rows} for file, file_rows in groups.items()]}
 

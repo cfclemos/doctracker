@@ -6,7 +6,8 @@ returned values). vulture (MIT) only compares names, so it sees those, but a nam
 saves every entity with that name. A Python function or class is `unused` only when both agree;
 one its package offers (`__all__`, re-exported) is `public, unused inside` when the graph finds no use.
 vulture alone judges what the graph has no data for: variables, attributes, properties, imports
-and unreachable code. The front-end is judged by the graph alone, and a CSS class or template
+and unreachable code. The other languages are judged by the graph alone (`unused by the graph`):
+their functions, methods and classes, CSS classes, templates and macros; a CSS class or template
 whose name the Python code writes as a string may be used through data.
 
 The project's code is read, never run.
@@ -18,15 +19,16 @@ from pathlib import Path
 
 from vulture import Vulture
 
-VERDICTS = ("unused", "public, unused inside", "front-end unused", "maybe used by data", "vulture only")
+VERDICTS = ("unused", "public, unused inside", "unused by the graph", "maybe used by data", "vulture only")
 """What a row says, from the surest to the least sure."""
 
-DEAD_KINDS = ("function", "class", "variable", "attribute", "property", "import", "unreachable code",
-              "js function", "css class", "template", "macro")
-"""The kinds of the rows, for the filters."""
+DEAD_KINDS = ("function", "method", "class", "variable", "attribute", "property", "import", "unreachable code",
+              "css class", "template", "macro")
+"""The usual kinds of the rows, for the filters; other languages add their own (`interface`, `struct`...)."""
 
 _PYTHON_KINDS = ("function", "class")
-_FRONTEND_KINDS = ("js function", "css class", "template", "macro")
+_GRAPH_LABELS = ("css class", "template")
+"""Kinds of the other languages judged by the graph besides their functions and classes (`kind_label`)."""
 _VULTURE_ONLY = {"variable": "variable", "attribute": "attribute", "property": "property", "import": "import",
                  "unreachable_code": "unreachable code"}
 _WORD = re.compile(r"[A-Za-z_][\w-]*")
@@ -60,9 +62,14 @@ def scan(root: Path, entities: dict[str, dict], edges: list[dict]) -> list[dict]
     rows = []
     for path, entity in entities.items():
         kind = entity["kind"]
-        if used_by.get(path) or kind not in _PYTHON_KINDS + _FRONTEND_KINDS:
+        if entity["language"] != "python":
+            judged = kind in _PYTHON_KINDS or entity.get("kind_label") in _GRAPH_LABELS
+            kind = entity.get("kind_label", kind)
+        else:
+            judged = kind in _PYTHON_KINDS
+        if used_by.get(path) or not judged or entity["language"] != "python" and _entry_point(entity, entities):
             continue
-        if kind in _PYTHON_KINDS:
+        if entity["language"] == "python":
             if _special(entity):
                 continue
             if path in exported:  # vulture counts a name in `__all__` as used: the graph alone decides
@@ -78,7 +85,7 @@ def scan(root: Path, entities: dict[str, dict], edges: list[dict]) -> list[dict]
         else:
             name = entity["name"].lstrip(".").removesuffix(".html")
             data = kind in ("css class", "template") and name in strings
-            verdict = "maybe used by data" if data else "front-end unused"
+            verdict = "maybe used by data" if data else "unused by the graph"
             message = (f"'{name}' is written as a string in the Python code" if data
                        else f"no use of this {kind} in the project")
             rows.append(_row(path, entity, kind, verdict, 60 if data else 100, message))
@@ -89,6 +96,22 @@ def scan(root: Path, entities: dict[str, dict], edges: list[dict]) -> list[dict]
                              "verdict": "vulture only", "confidence": item.confidence, "used_by": 0, "file": file,
                              "line": item.first_lineno, "message": item.message})
     return sorted(rows, key=lambda row: (row["file"], row["line"], row["name"]))
+
+
+_ENTRY_POINTS = {"main", "__construct", "constructor", "__destruct", "Main"}
+"""Names called by the language itself, not by the project: entry points and constructors."""
+
+
+def _entry_point(entity: dict, entities: dict[str, dict]) -> bool:
+    """Whether the language itself calls an entity of another language: `main`, a constructor (a method
+    named after its class, `__construct`, `constructor`)."""
+    parent = entities.get(entity["parent"], {})
+    return entity["name"] in _ENTRY_POINTS or parent.get("kind") == "class" and entity["name"] == parent.get("name")
+
+
+def dead_code_kinds(rows: list[dict]) -> list[str]:
+    """The kinds the rows can be filtered by: `DEAD_KINDS`, then those of other languages found in the rows."""
+    return list(dict.fromkeys([*DEAD_KINDS, *sorted({row["kind"] for row in rows})]))
 
 
 def filter_rows(rows: list[dict], prefix: str = "", verdict: str = "", kind: str = "",

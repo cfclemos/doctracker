@@ -17,3 +17,10 @@
 {% endif %}
 
 {% include "members.html" %}
+
+{% set role = page_role(state, entity) %}
+{{ ui.relations(relations, role) }}
+
+{% if entity.language != "python" %}
+{{ ui.source(entity, code_theme, code_themes) }}
+{% endif %}
