@@ -1,0 +1,93 @@
+# Test databases for doctracker's DATABASE section: the acme shop on Postgres, MySQL, SQL Server and
+# SQLite, holding every kind of object each catalog can describe. Start with `docker compose up -d`
+# from this folder (copy .env.example to .env first). Ports listen on localhost only.
+name: doctracker-testbed
+
+services:
+  postgres:
+    image: postgres:17.6
+    hostname: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: acme
+      READER_PASSWORD: ${READER_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d acme"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [testbed]
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4.6
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: acme
+      READER_PASSWORD: ${READER_PASSWORD}
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-53306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [testbed]
+    restart: unless-stopped
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-CU20-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      MSSQL_PID: Developer
+    ports:
+      - "127.0.0.1:${MSSQL_PORT:-51433}:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    networks: [testbed]
+    restart: unless-stopped
+
+  # SQL Server has no init folder: this one-shot container loads the schema once the server is up.
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2022-CU20-ubuntu-22.04
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      READER_PASSWORD: ${READER_PASSWORD}
+    volumes:
+      - ./mssql:/scripts:ro
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        SQLCMD="/opt/mssql-tools18/bin/sqlcmd -C -I -S mssql -U sa -P $$MSSQL_SA_PASSWORD -b";
+        if $$SQLCMD -h -1 -Q "SET NOCOUNT ON; SELECT DB_ID('acme')" | grep -q NULL;
+        then $$SQLCMD -v READER_PASSWORD="$$READER_PASSWORD" -i /scripts/acme.sql; else echo "acme already loaded"; fi
+    networks: [testbed]
+    restart: "no"
+
+volumes:
+  postgres-data:
+  mysql-data:
+  mssql-data:
+
+networks:
+  testbed:
