@@ -54,10 +54,15 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% macro local_graph(path, role) -%}
 {% call section(role, "Local graph", name="local-graph", divider=true) %}
 <div class="graph-page local-graph">
-  <div class="graph-toolbar">
-    <label class="field"><span class="field-label">Depth</span> <select class="graph-local-depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if step == max_call_depth %} selected{% endif %}>{{ step }}</option>{% endfor %}</select></label>
+  {# Its filter (Depth) behind the bar's Filters button, as in the diagrams. #}
+  {% set local_filters %}
+  <div class="graph-toolbar filters-line">
+    <label class="field"><span class="field-label">Depth</span> <select class="graph-local-depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if step == 1 %} selected{% endif %}>{{ step }}</option>{% endfor %}</select></label>
   </div>
-  {% call view_canvas("local", "/graph/local?focus=" ~ (path | urlencode) ~ "&depth=" ~ max_call_depth, path, layouts=true) %}
+  {% endset %}
+  {# Depth 1 at first: the page's own neighbours (the diagrams start at 3). #}
+  {% call view_canvas("local", "/graph/local?focus=" ~ (path | urlencode) ~ "&depth=1", path, layouts=true,
+                      details=true, filters=local_filters) %}
     <span><i class="box call-focus"></i>this page</span>
     <span><i class="box call-callee"></i>what it uses</span>
     <span><i class="box call-caller"></i>what uses it</span>
@@ -67,13 +72,28 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="") -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false) -%}
+{# The side panel: the page's own (the planner's), or, with `details`, the one static/graph.js fills with
+   the box clicked and what it relates to. #}
+{% set panel = panel or (('<div class="graph-details"><p class="empty">Click a box to see what it is and what it relates to.</p></div>') | safe if details else "") %}
 <div class="graph-area">
-  {# Bar on top of the drawing: highlight; then icon buttons in groups, each named by a floating label
-     (data-tip): the layout (layers or forces), the colours, hide unconnected / rearrange / fit, zoom,
-     export (SVG or PNG). Layout, colours, hide unconnected, rearrange and export are for the diagrams. #}
+  {# Bar on top of the drawing: highlight, then icon buttons in groups, each named by a floating label
+     (data-tip): what opens around the drawing (filters, evolution, details); the layout (layers or
+     forces); the colours; hide unconnected and rearrange; export (SVG or PNG) and expand, last. #}
   <div class="graph-canvas-bar">
     <input class="graph-find" type="search" placeholder="Highlight…" autocomplete="off">
+    {# What opens around the drawing, closed at first: the rows under the bar (the page's filters, then the
+       evolution) and the details panel beside it. #}
+    {% if filters or evolution or panel %}
+    <span class="graph-buttons">
+      {% if filters %}<button type="button" class="graph-icon graph-row-toggle" data-row="filters" aria-pressed="false" aria-label="Filters"
+              data-tip="Filters"><i class="bar-icon bar-icon-filters"></i></button>{% endif %}
+      {% if evolution %}<button type="button" class="graph-icon graph-row-toggle" data-row="evolution" aria-pressed="false"
+              aria-label="Architecture evolution" data-tip="Architecture evolution"><i class="bar-icon bar-icon-timeline"></i></button>{% endif %}
+      {% if panel %}<button type="button" class="graph-icon graph-panel-toggle" aria-expanded="false" aria-label="Details"
+              data-tip="Details"><i class="bar-icon bar-icon-panel"></i></button>{% endif %}
+    </span>
+    {% endif %}
     {% if layouts %}
     <span class="graph-buttons graph-layouts" role="radiogroup" aria-label="Layout">
       <button type="button" role="radio" class="graph-icon graph-layout" data-layout="layers" aria-label="Layers"
@@ -97,26 +117,29 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
               data-tip="Rearrange what is on screen"><i class="bar-icon bar-icon-rearrange"></i></button>
     </span>
     {% endif %}
-    {% if layouts %}
-    <span class="graph-export-menu">
-      <button type="button" class="graph-icon graph-export-toggle" aria-label="Export" aria-expanded="false"
-              data-tip="Export"><i class="bar-icon bar-icon-export"></i></button>
-      <span class="graph-export-items" hidden>
-        <button type="button" class="graph-export" data-format="svg">SVG file</button>
-        <button type="button" class="graph-export" data-format="png">PNG image</button>
+    {# Export, and Expand: the whole area in a modal over the page, where the same button is the × that closes it. #}
+    <span class="graph-buttons">
+      {% if layouts %}
+      <span class="graph-export-menu">
+        <button type="button" class="graph-icon graph-export-toggle" aria-label="Export" aria-expanded="false"
+                data-tip="Export"><i class="bar-icon bar-icon-export"></i></button>
+        <span class="graph-export-items" hidden>
+          <button type="button" class="graph-export" data-format="svg">SVG file</button>
+          <button type="button" class="graph-export" data-format="png">PNG image</button>
+        </span>
       </span>
+      {% endif %}
+      <button type="button" class="graph-icon graph-expand" aria-label="Expand" data-tip="Expand"><i class="bar-icon bar-icon-expand"></i></button>
     </span>
-    {% endif %}
-    {% if panel %}
-    <button type="button" class="graph-icon graph-panel-toggle" aria-expanded="true" aria-label="Details"
-            data-tip="Open or close the details"><i class="bar-icon bar-icon-panel"></i></button>
-    {% endif %}
   </div>
+  {% if filters %}
+  <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}>{{ filters }}</div>
+  {% endif %}
   {% if evolution %}
   {# Architecture evolution: a slider through the commits; each file appears at the commit that added it
      (from the git log), the relations when both their files are there. While the handle is held, the
      commit shows under it, in the same box as the commits of the GIT page. #}
-  <div class="graph-evolution" hidden>
+  <div class="graph-evolution closed" data-row-of="evolution" hidden>
     <span class="graph-evolution-title">Architecture evolution</span>
     <div class="graph-evolution-track">
       <input type="range" class="graph-evolution-range" min="0" max="0" value="0" aria-label="Architecture evolution: the commit shown">
@@ -130,10 +153,10 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
      left one: the legend opens in a box under it, as the info panel (open or closed, kept per browser).
      A page may give a side panel (`panel`, e.g. the planner's details): a column beside the drawing,
      inside its area, that the bar's button opens and closes and ⇄ moves to the other side. #}
-  <div class="graph-stage">
+  <div class="graph-stage{% if panel %} panel-closed{% endif %}">  {# closed until live.js says otherwise #}
   <div class="graph-canvas-box">
     <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
-      <p class="empty">Loading…</p>
+      <p class="empty">{{ empty or "Loading…" }}</p>
     </div>
     <div class="graph-view-tools">
       <span class="graph-buttons graph-zoom" hidden>
@@ -143,8 +166,6 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
       </span>
       <button type="button" class="graph-icon graph-fit" aria-label="Fit" data-tip="Fit to the screen"><i class="bar-icon bar-icon-fit"></i></button>
     </div>
-    {# What a click chose: under the zoom and fit, in the drawing's right side. #}
-    <aside class="graph-info" hidden></aside>
     {% if caller is defined %}
     <button type="button" class="graph-icon graph-legend-open" aria-expanded="false" aria-label="Legend" data-tip="Legend">
       <i class="bar-icon bar-icon-legend"></i></button>
@@ -161,6 +182,9 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     <header class="graph-side-head">
       <h2>Details</h2>
       <button type="button" class="graph-panel-side" aria-label="Move to the other side" title="Move to the other side">⇄</button>
+      {% if details %}{# the page of the box shown, in the consultation modal (graph.js sets it) #}
+      <button type="button" class="graph-panel-page" aria-label="Open its page" title="Open its page" hidden><i class="bar-icon bar-icon-link"></i></button>
+      {% endif %}
       <button type="button" class="graph-close graph-panel-close" aria-label="Close" title="Close">×</button>
     </header>
     {{ panel }}

@@ -59,6 +59,17 @@
   <main id="content">
     {% include "fragment_content.html" %}
   </main>
+  {# The consultation modal: an entity's page opened from a drawing, over everything (the expanded
+     drawing too), without leaving it; names inside open in it; its footer holds the page's actions (the page
+     itself, the views focused on it), sent with the page; see live.js. #}
+  <dialog id="page-dialog" class="page-dialog">
+    <header class="page-dialog-head">
+      <i class="bar-icon bar-icon-info"></i><span class="page-dialog-title">Details</span>
+      <button type="button" class="graph-close page-dialog-close" aria-label="Close" title="Close">×</button>
+    </header>
+    <div id="page-dialog-body"></div>
+    <footer id="page-dialog-foot" class="page-dialog-foot"></footer>
+  </dialog>
   {# The one confirmation modal: every hx-confirm of the wiki asks through it (see live.js). #}
   <dialog id="confirm-dialog" class="notes-dialog confirm-dialog">
     <form method="dialog">

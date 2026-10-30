@@ -23,16 +23,22 @@
     <span class="location">{{ entity.filepath }}{% if entity.lineno and entity.kind != "module" %}:{{ entity.lineno }}–{{ entity.endlineno }}{% endif %}</span>
     {% endif %}
   </p>
-  {# Open the graph views focused on this entity. #}
+  {# Open the graph views focused on this entity, with its direct neighbours. #}
   {% set views = [] %}
   {% if entity.kind == "module" %}
-    {% set views = [("architecture", "Architecture", "/architecture?focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
+    {% set views = [("architecture", "Architecture", "/architecture?depth=1&focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
   {% elif entity.kind == "class" %}
-    {% set views = [("classes", "Classes", "/classes?package=" ~ entity.parent ~ "&focus=" ~ entity.path), ("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
+    {% set views = [("classes", "Classes", "/classes?depth=1&focus=" ~ entity.path), ("calls", "Functions and Calls", "/calls?focus=" ~ entity.path)] %}
   {% elif entity.kind == "function" or entity.language != "python" %}
-    {% set views = [("calls", "Calls", "/calls?focus=" ~ entity.path)] %}
+    {% set views = [("calls", "Functions and Calls", "/calls?focus=" ~ entity.path)] %}
   {% endif %}
-  {% if views %}
+  {% if modal %}
+  {# In the consultation modal, the actions go to its footer (swapped out of band): the page, the views. #}
+  <footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+    <a class="see-in-link" {{ ui.nav(entity.path) }}><i class="bar-icon bar-icon-link"></i>Open the page</a>
+    {% for name, label, url in views %}<a class="see-in-link" {{ ui.nav_url(url) }}>{{ ui.icon(name) }}{{ label }}</a>{% endfor %}
+  </footer>
+  {% elif views %}
   <p class="see-in">See in
     {% for name, label, url in views %}<a class="see-in-link" {{ ui.nav_url(url) }}>{{ ui.icon(name) }}{{ label }}</a>{% endfor %}
   </p>

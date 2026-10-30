@@ -708,6 +708,20 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
         edges: data.edges.filter((edge) => reached.has(edge.source) && reached.has(edge.target)) };
     }
   }
+  // A focus (e.g. "See in Architecture" from a page) opens, the first time, every level holding what is
+  // drawn: the server sent only the focus and its neighbours, so they show at once instead of closed boxes.
+  const focusId = whole.focus || canvas.dataset.focus;
+  if (view.levels && focusId && !canvas.dataset.focusOpened) {
+    canvas.dataset.focusOpened = "1";
+    const byId = Object.fromEntries(whole.nodes.map((node) => [node.id, node]));
+    if (byId[focusId] || byId[`${focusId}.__init__`]) {
+      const open = openFrames(view.levels);
+      for (const node of whole.nodes) {
+        if (!node.frame) for (let up = node.parent; up; up = byId[up]?.parent) open.add(up);
+      }
+      saveOpenFrames(view.levels, open);
+    }
+  }
   if (view.levels) data = foldLevels(data, openFrames(view.levels), setting("hide-loose"));
   // Colour by language or project (the bar's Colour): the groups of each box — its language or project,
   // or, for a closed level, those of everything inside it. A group turned off by its chip is left out of
@@ -1131,12 +1145,19 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     return true;
   };
   // With `info`, a click also opens the panel of the box: what it is and its relations, each a link.
-  const info = view.info && canvas.closest(".graph-area").querySelector(".graph-info:not(.graph-legend-box)");
+  // The box clicked, in the drawing's Details side panel: what it is, its page, what it relates to; a
+  // name there shows that item in the panel too (and lights it in the drawing).
+  const info = view.info && canvas.closest(".graph-area").querySelector(".graph-details");
+  const pageButton = canvas.closest(".graph-area").querySelector(".graph-panel-page");  // in the panel's head
   const showInfo = (id) => {
     if (!info) return;
     const node = data.nodes.find((item) => item.id === id);
+    if (pageButton) {
+      pageButton.hidden = !node || node.page === "";
+      pageButton.dataset.pageModal = node ? node.page || node.id : "";
+    }
     if (!node) {
-      info.hidden = true;
+      info.innerHTML = '<p class="empty">Click a box to see what it is and what it relates to.</p>';
       return;
     }
     const relations = {};
@@ -1148,19 +1169,22 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     }
     const page = node.page || node.id;
     info.innerHTML = `
-      ${infoHead(node.role || "", wikiLink(page, node.label), page)}
+      <p class="graph-info-role">${escapeHtml(node.role || "")}</p>
+      <h3 class="graph-details-name">${escapeHtml(node.label)}</h3>
+      <code class="path">${escapeHtml(page)}</code>
       ${node.summary ? `<p>${escapeHtml(node.summary)}</p>` : ""}
       ${Object.entries(relations).map(([key, others]) => `
-        <h3>${escapeHtml(key)} <span class="count">${others.length}</span></h3>
-        <ul>${others.map((other) => `<li>${wikiLink(other.page || other.id, other.label)}</li>`).join("")}</ul>`).join("")}`;
-    info.hidden = false;
+        <h4>${escapeHtml(key)} <span class="count">${others.length}</span></h4>
+        <ul>${others.map((other) => `<li><button type="button" class="graph-details-show" data-show="${escapeHtml(other.id)}">${escapeHtml(other.label)}</button></li>`).join("")}</ul>`).join("")}`;
     htmx.process(info);
+    openSidePanel(canvas.closest(".graph-area"));
   };
   info?.addEventListener("click", (event) => {
-    if (event.target.closest(".graph-close")) {
-      info.hidden = true;
-      highlight("");
-    }
+    const other = event.target.closest("[data-show]")?.dataset.show;
+    if (!other) return;
+    chosen = other;
+    highlight(other);
+    showInfo(other);
   }, { signal });
   canvas.addEventListener("click", (event) => {
     if (drag && drag.moved) return;  // the end of a drag, not a click
@@ -1179,12 +1203,15 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     chosen = box ? box.dataset.box : "";
     highlight(chosen);
     showInfo(chosen);
-    const open = event.target.closest("[data-open]")?.dataset.open;  // e.g. the planner's right panel
-    if (open && view.openTarget) htmx.ajax("GET", open, { target: view.openTarget });
+    const open = event.target.closest("[data-open]")?.dataset.open;  // e.g. the planner's details panel
+    if (open && view.openTarget) {
+      htmx.ajax("GET", open, { target: view.openTarget });
+      openSidePanel(canvas.closest(".graph-area"));
+    }
   }, { signal });
-  canvas.addEventListener("dblclick", (event) => {
+  canvas.addEventListener("dblclick", (event) => {  // the page, in the consultation modal: the drawing stays
     const page = event.target.closest("[data-page]")?.dataset.page;
-    if (page) htmx.ajax("GET", `/wiki/${page}`, { target: "#content" }).then(() => history.pushState({}, "", `/wiki/${page}`));
+    if (page) openPageModal(page);
   }, { signal });
 
   page.querySelector(".graph-fit")?.addEventListener("click", fit, { signal });
@@ -1300,6 +1327,12 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
       shown.hidden = true;
       page.timelineAt = Number(range.value);
     };
+    // Closing the row shows everything again (now); opening it starts there too.
+    page.querySelector('.graph-row-toggle[data-row="evolution"]')?.addEventListener("click", () => {
+      range.value = commits.length;
+      page.timelineAt = commits.length;
+      showAt(commits.length);
+    }, { signal });
     range.addEventListener("pointerdown", follow, { signal });
     range.addEventListener("input", follow, { signal });
     for (const name of ["pointerup", "pointercancel", "change", "blur"]) range.addEventListener(name, release, { signal });
@@ -1318,7 +1351,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
 
 function initViews() {
   for (const canvas of document.querySelectorAll(".graph-canvas")) {
-    if (canvas.dataset.ready || !DIAGRAMS[canvas.dataset.view]) continue;
+    if (canvas.dataset.ready || !DIAGRAMS[canvas.dataset.view] || !canvas.dataset.url) continue;  // no url: nothing chosen yet
     canvas.dataset.ready = "1";
     drawDiagram(canvas, DIAGRAMS[canvas.dataset.view]);
   }

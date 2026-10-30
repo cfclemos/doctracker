@@ -88,7 +88,7 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
                         kinds: list[str] | None = None) -> dict:
         """Get what a function, method or class calls and what calls it, or the calls from it to another.
 
-        The same options as the wiki's Calls tab; over 500 boxes, only the most connected.
+        The same options as the wiki's Functions and Calls tab; over 500 boxes, only the most connected.
 
         Args:
             path: Entity in the center: its path (`pkg.api.get_weather`) or its name (`get_weather`).
