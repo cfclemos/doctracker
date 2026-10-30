@@ -2,19 +2,29 @@
 
 from doctracker.graph.model import (
     CALL_DIRECTIONS,
+    CALL_KINDS,
+    LOCAL_KINDS,
     MAX_CALL_DEPTH,
     architecture,
     call_graph,
     class_diagram,
     entity_history,
+    file_timeline,
+    find_callable,
+    trim_view,
 )
 
 __all__ = [
     "CALL_DIRECTIONS",
+    "CALL_KINDS",
+    "LOCAL_KINDS",
     "MAX_CALL_DEPTH",
     "architecture",
     "call_graph",
     "class_diagram",
     "entity_history",
+    "file_timeline",
+    "find_callable",
+    "trim_view",
 ]
 """Public API of the graph package."""

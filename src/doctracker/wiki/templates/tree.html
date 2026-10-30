@@ -27,10 +27,10 @@
 </li>
 {% endmacro %}
 <nav id="tree" {% if oob %}hx-swap-oob="true"{% endif %}>
-  {# Graph views, one page each. #}
+  {# The views: AGENT NOTES, DIAGRAMS (architecture, classes and calls as its tabs) and GIT. #}
   <ul class="view-links">
-    {% for name, title in (("notes", "AGENT NOTES"), ("architecture", "ARCHITECTURE"), ("classes", "CLASSES"), ("calls", "CALLS"), ("dead-code", "DEAD CODE"), ("git", "GIT")) %}
-    <li><a class="view-link{% if view == name %} current{% endif %}" {{ ui.nav_url("/" ~ name) }}>{{ ui.icon(name) }}{{ title }}</a></li>
+    {% for name, title, url, views in (("notes", "AGENT NOTES", "/notes", ("notes",)), ("diagrams", "DIAGRAMS", "/" ~ diagram_tab, ("architecture", "classes", "calls")), ("git", "GIT", "/git", ("git",))) %}
+    <li><a class="view-link{% if view in views %} current{% endif %}" {{ ui.nav_url(url) }}>{{ ui.icon(name) }}{{ title }}</a></li>
     {% endfor %}
   </ul>
   {# CODE, with the switch of the tree's format (kept in a cookie by static/live.js). #}
@@ -49,6 +49,10 @@
         </summary>
         <ul>{% for item in tree %}{{ node(item, "code:" ~ tree_layout) }}{% endfor %}</ul>
       </details>
+    </li>
+    {# What nothing in the code uses: right under the code it is about. #}
+    <li class="tree-section">
+      <a class="tree-group{% if view == "dead-code" %} current{% endif %}" {{ ui.nav_url("/dead-code") }}>{{ ui.icon("dead-code") }}DEAD CODE</a>
     </li>
     {% if examples_tree %}
     {# doctracker's own example projects, apart from its code: shown only in doctracker's repository. #}

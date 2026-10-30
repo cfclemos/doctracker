@@ -10,8 +10,9 @@
   <link rel="stylesheet" id="code-theme" href="/code-theme/{{ code_theme }}.css" data-default="{{ code_theme }}">
   <script src="{{ static_url('htmx.min.js') }}" defer></script>
   <script src="{{ static_url('live.js') }}" defer></script>
-  <script src="{{ static_url('cytoscape.min.js') }}" defer></script>
-  <script src="{{ static_url('dagre.min.js') }}" defer></script>
+  {# WebCola (MIT): the Forces layout of the diagrams. #}
+  <script src="{{ static_url('cola.min.js') }}" defer></script>
+ <script src="{{ static_url('dagre.min.js') }}" defer></script>
   <script src="{{ static_url('graph.js') }}" defer></script>
 </head>
 <body>
@@ -37,12 +38,7 @@
             {% endfor %}
           </div>
           {# The languages the whole wiki shows (tree, search, graphs, dead code), kept in a cookie by static/live.js. #}
-          <select id="language-filter" class="language-filter" title="Languages shown in the wiki" aria-label="Languages shown">
-            <option value="">All languages</option>
-            {% for name in languages_found %}
-            <option value="{{ name }}"{% if shown_languages | list == [name] and languages_found | length > 1 %} selected{% endif %}>{{ languages[name].label }}</option>
-            {% endfor %}
-          </select>
+          {{ ui.language_select(languages_found, shown_languages, languages, "language-filter") }}
         </div>
       </div>
       <input id="search-mode" type="hidden" name="mode" value="{{ default_mode }}">

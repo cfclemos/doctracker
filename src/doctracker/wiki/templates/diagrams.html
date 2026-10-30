@@ -1,0 +1,121 @@
+{% import "macros.html" as ui %}
+{# DIAGRAMS: architecture, classes and calls as tabs of one page, each at its own URL. Every tab has the
+   same header and the same bar: its options on the left, the language filter shown, the legend on the
+   right; then the drawing, with its own bar (highlight, zoom, fit). #}
+{% set texts = {
+  "architecture": "How the project is organized: modules inside their packages, and which module imports which (the importer above, the arrow pointing to what it imports). Imports that form a cycle are red.",
+  "classes": "UML class diagram: each class, interface, struct, enum or trait of any language with its attributes and methods; inheritance, implementation, composition (an attribute holds another class), use (a method calls another class) and reference (named as a type).",
+  "calls": "How a function works: what it calls and what calls it, a few calls away, or the calls that lead from it to another. Only calls that can be read from the code are shown.",
+} %}
+{# The levels both architecture and classes are drawn by: what each frame is, the closed boxes, the
+   UNCONNECTED groups, and the lines that stand for relations inside closed boxes. #}
+{% macro levels_legend(relations) -%}
+<span title="A project of the repository, as in the tree"><i class="box project"></i>project</span>
+<span title="A member of a monorepo (packages/<name> or package/<name>)"><i class="box member"></i>member</span>
+<span title="A package that is installed and imported by name; a namespace package has no __init__.py"><i class="box package"></i>package</span>
+<span title="A package inside another package"><i class="box subpackage"></i>subpackage</span>
+<span title="Items with no relation at all, at each level"><i class="box unconnected"></i>unconnected</span>
+<span title="A closed level: how many items it holds; click to open it, click its title to close it"><i class="box closed">3 ▸</i>closed (click to open)</span>
+<span title="Relations between items inside closed boxes, drawn between those boxes; thicker = more"><i class="line lifted"></i>{{ relations }} inside closed boxes</span>
+{%- endmacro %}
+{# The filters architecture and classes share: a project, a focus and how far from it. #}
+{% macro filters(url, targets, placeholder) -%}
+<form class="graph-filter" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
+      hx-trigger="change">
+  <label class="field"><span class="field-label">Project</span>
+    <select name="project">
+      <option value="">All</option>
+      {% for group in project_groups %}<option value="{{ group.id }}"{% if params.project == group.id %} selected{% endif %}>{{ group.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field graph-focus"><span class="field-label">Focus</span>
+    <span class="field-clearable">
+      <input name="focus" data-options="focus-targets" value="{{ params.focus or '' }}" placeholder="{{ placeholder }}" class="focus-input" autocomplete="off">
+      <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
+    </span>
+    {{ ui.focus_options("focus-targets", targets) }}
+  </label>
+  <label class="field"><span class="field-label">Depth</span>
+    <select name="depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>
+  </label>
+</form>
+{%- endmacro %}
+<div class="graph-page">
+  {{ ui.view_header("diagrams", "DIAGRAMS", "") }}
+  {{ ui.tabs((("architecture", "Architecture", "/architecture"), ("classes", "Classes", "/classes"), ("calls", "Calls", "/calls")), view) }}
+  <p class="tab-description">{{ texts[view] }}</p>
+  {% if view == "architecture" %}
+  <div class="graph-toolbar">
+    {{ filters("/architecture", module_targets, "A module or file…") }}
+    <label class="field graph-language"><span class="field-label">Languages</span> {{ ui.language_select(languages_found, shown_languages, languages) }}</label>
+  </div>
+  <details class="graph-cycles" hidden><summary>Import cycles <span class="count"></span></summary><ul></ul></details>
+  {% call ui.view_canvas("architecture", data_url, params.focus, layouts=true, evolution=true) %}
+    {{ levels_legend("relations") }}
+    <span title="A file of any language; a package's own __init__.py is its module"><i class="box module"></i>file (module)</span>
+    {# Each kind of relation: a click turns its lines off or on. #}
+    {{ ui.relation_kinds(("imports", "uses", "calls", "refers", "inherits", "has")) }}
+    <span><i class="line cycle"></i>import cycle</span>
+  {% endcall %}
+  {% elif view == "classes" %}
+  {# Focus on a line of its own, then Project, Depth and Languages side by side. #}
+  <div class="graph-toolbar focus-apart">
+    {{ filters("/classes", class_targets, "A class, interface, struct or enum…") }}
+    <label class="field graph-language"><span class="field-label">Languages</span> {{ ui.language_select(languages_found, shown_languages, languages) }}</label>
+  </div>
+  {% call ui.view_canvas("classes", data_url, params.focus, layouts=true) %}
+    {{ levels_legend("relations") }}
+    <span title="The file a class is in"><i class="box module"></i>file</span>
+    <span title="A class, interface, struct, enum or trait of any language, with its attributes and methods"><i class="box class"></i>class</span>
+    {# Each kind of relation: a click turns its lines off or on. #}
+    {{ ui.relation_kinds(("inherits", "implements", "has", "uses", "refers")) }}
+  {% endcall %}
+  {% else %}
+  <div class="graph-toolbar">
+    <form class="graph-filter" hx-get="/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <label class="field"><span class="field-label">Focus</span>
+        <span class="field-clearable">
+          <input name="focus" data-options="call-targets" value="{{ params.focus or '' }}" placeholder="A name or path…" class="focus-input" autocomplete="off">
+          <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
+        </span>
+        {{ ui.focus_options("call-targets", call_targets) }}
+      </label>
+      {# With Path to, the shortest calls from the focus to it, instead of its neighbourhood. #}
+      <label class="field"><span class="field-label">Path to</span>
+        <span class="field-clearable">
+          <input name="to" data-options="call-targets" value="{{ params.to or '' }}" placeholder="Another function…" class="focus-input" autocomplete="off">
+          <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.to %} hidden{% endif %}>×</button>
+        </span>
+      </label>
+      <label class="field"><span class="field-label">Depth</span>
+        <select name="depth">
+          {% for depth in range(1, max_call_depth + 1) %}
+          <option value="{{ depth }}"{% if (params.depth or max_call_depth | string) == depth | string %} selected{% endif %}>{{ depth }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field"><span class="field-label">Direction</span>
+        <select name="direction">
+          {% for direction, label in (("both", "Calls and callers"), ("out", "What it calls"), ("in", "What calls it")) %}
+          <option value="{{ direction }}"{% if params.direction == direction %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    <label class="field graph-language"><span class="field-label">Languages</span> {{ ui.language_select(languages_found, shown_languages, languages) }}</label>
+  </div>
+  {# Nothing is drawn until a focus is chosen; the fields above say what is drawn. #}
+  {% if not params.focus %}
+  <p class="empty graph-hint">Choose a function, method or class in <strong>Focus</strong> to see its calls.</p>
+  {% else %}
+  {% call ui.view_canvas("calls", data_url, params.focus, layouts=true) %}
+    <span title="The function, method or class chosen in Focus"><i class="box call-focus"></i>focus</span>
+    <span title="What the focus calls, on its right"><i class="box call-callee"></i>called by the focus</span>
+    <span title="What calls the focus, on its left"><i class="box call-caller"></i>calls the focus</span>
+    <span title="On a call path between the focus and Path to"><i class="box call-path"></i>on the path</span>
+    {# Each kind of relation: a click turns its lines off or on. #}
+    {{ ui.relation_kinds(("calls", "refers", "template", "css-class", "route")) }}
+  {% endcall %}
+  {% endif %}
+  {% endif %}
+</div>

@@ -5,7 +5,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.analysis import DEAD_KINDS, VERDICTS, dead_code_kinds, filter_rows
 from doctracker.config import Config, set_config_value
-from doctracker.graph import architecture, call_graph, class_diagram, entity_history
+from doctracker.graph import (CALL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram, entity_history,
+                              trim_view)
 from doctracker.history import commit_diff, read_branch_graph
 from doctracker.notes.context import CONTEXT_KINDS, context_for
 from doctracker.search import AGENT_WAIT_SECONDS, DEFAULT_LIMIT, SearchEngine
@@ -30,49 +31,80 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
     project_root = embeddings.project_root
 
     @mcp.tool()
-    def architecture_view(level: str = "modules") -> dict:
-        """Get the architecture: packages and modules, and which module imports which.
+    def architecture_view(level: str = "modules", project: str = "", focus: str = "",
+                          depth: int = MAX_CALL_DEPTH, kinds: list[str] | None = None,
+                          hide_unconnected: bool = False) -> dict:
+        """Get the architecture: packages and files of every language, and how the files relate.
+
+        The same options as the wiki's Architecture tab; over 500 boxes, only the most connected.
 
         Args:
-            level: `modules` (every module) or `packages` (modules merged into their package).
+            level: `modules` (every file) or `packages` (files merged into their package, imports only).
+            project: Only this project (`project:<name>`, as in the nodes); empty for all.
+            focus: Only this module (or file) and those `depth` relations away from it.
+            depth: How many relations away from `focus` (1 to 3).
+            kinds: Only these relations: `imports`, `uses`, `calls`, `refers`, `inherits`, `has`; all by default.
+            hide_unconnected: Leave out the files with no relation.
 
         Returns:
-            `nodes` (id, `role`: package, subpackage or module; `frame`: a package drawn around
-            its modules; enclosing `parent`; `page`: entity path; summary; a package's own
-            `__init__.py` is the module `<package>.__init__`) and `edges` (imports; at module
-            level directed, with `cycle` marking import cycles; at package level one undirected
-            link per pair of packages, `weight` = imports both ways, `counts` by direction).
+            `nodes` (id, `role`: project, package, subpackage or module; `frame`: drawn around what
+            it holds; enclosing `parent`; `page`: entity path; summary; a package's own `__init__.py`
+            is the module `<package>.__init__`), `edges` (`kind`, `weight`; imports in a cycle have
+            `cycle`; at package level one undirected link per pair, `counts` by direction), `cycles`
+            (the files of each import cycle) and `left_out` (boxes over the limit).
         """
-        return architecture(state, level)
+        graph = architecture(state, level, "", project, focus, depth)
+        return trim_view(graph, kinds, hide_unconnected)
 
     @mcp.tool()
-    def class_diagram_view(package: str = "") -> dict:
-        """Get the class diagram: classes with attributes and methods, and how they relate.
+    def class_diagram_view(package: str = "", project: str = "", focus: str = "",
+                           depth: int = MAX_CALL_DEPTH, kinds: list[str] | None = None,
+                           hide_unconnected: bool = False) -> dict:
+        """Get the class diagram: classes, interfaces, structs, enums... with their members, and how they relate.
+
+        The same options as the wiki's Classes tab; over 500 boxes, only the most connected.
 
         Args:
             package: Only classes under this path (e.g. `pkg.server`); empty means all.
+            project: Only the classes of this project (`project:<name>`); empty for all.
+            focus: Only this class and those `depth` relations away from it.
+            depth: How many relations away from `focus` (1 to 3).
+            kinds: Only these relations: `inherits`, `implements`, `has`, `uses`, `refers`; all by default.
+            hide_unconnected: Leave out the classes with no relation.
 
         Returns:
-            `nodes` (class path, `stereotype` such as dataclass or enum, `attributes` with name,
-            type, icon and the project class they hold, `methods` with name, signature and kind)
-            and `edges` (`inherits`, `has` = an attribute holds another class, with `via` naming
-            the attribute, `uses` = a method calls another class).
+            `nodes` (class path, `stereotype` such as dataclass, enum or interface, `attributes` with
+            name, type, icon and the project class they hold, `methods` with name, signature and kind;
+            the files and packages above as frames), `edges` (`inherits`; `implements` = the base is an
+            interface, trait or protocol; `has` = an attribute holds another class, `via` naming it;
+            `uses` = a method calls another class; `refers` = named without a call, e.g. a type)
+            and `left_out` (boxes over the limit).
         """
-        return class_diagram(state, package)
+        graph = class_diagram(state, package, "", project, focus, depth)
+        return trim_view(graph, kinds, hide_unconnected)
 
     @mcp.tool()
-    def call_graph_view(path: str, depth: int = 1, direction: str = "both") -> dict:
-        """Get what a function, method or class calls and what calls it, a few calls away.
+    def call_graph_view(path: str, depth: int = MAX_CALL_DEPTH, direction: str = "both", to: str = "",
+                        kinds: list[str] | None = None) -> dict:
+        """Get what a function, method or class calls and what calls it, or the calls from it to another.
+
+        The same options as the wiki's Calls tab; over 500 boxes, only the most connected.
 
         Args:
-            path: Entity in the center, e.g. `pkg.api.get_weather`.
+            path: Entity in the center: its path (`pkg.api.get_weather`) or its name (`get_weather`).
             depth: How many calls away to go (1 to 3).
             direction: `out` (what it calls), `in` (what calls it) or `both`.
+            to: Another entity (path or name): the shortest call paths between the two instead.
+            kinds: Only these relations, followed and returned: `calls`, `refers`, `template`, `css-class`,
+                `route`; all by default.
 
         Returns:
-            `nodes` (with `distance` from the center and `side`: focus, callee, caller) and `edges` (calls).
+            `focus` (the path found), `nodes` (with `distance` from the center and `side`: focus,
+            callee, caller, path), `edges` (`kind`) and `left_out`; `error` when nothing has that
+            name or no calls link the two.
         """
-        return call_graph(state, path, depth, direction)
+        chosen = tuple(kind for kind in CALL_KINDS if kinds is None or kind in kinds)
+        return trim_view(call_graph(state, path, depth, direction, to, chosen))
 
     @mcp.tool()
     async def git_history(path: str, limit: int = 20) -> dict:

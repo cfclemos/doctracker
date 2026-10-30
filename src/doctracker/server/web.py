@@ -5,6 +5,7 @@ import inspect
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.requests import Request
@@ -14,7 +15,8 @@ from starlette.staticfiles import StaticFiles
 
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
-from doctracker.graph import CALL_DIRECTIONS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram
+from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
+                              file_timeline, find_callable)
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
@@ -56,6 +58,9 @@ def _static_url(name: str) -> str:
     file = Path(str(files("doctracker.wiki").joinpath("static", name)))
     return f"/static/{name}?v={int(file.stat().st_mtime)}" if file.is_file() else f"/static/{name}"
 
+
+DIAGRAM_TABS = ("architecture", "classes", "calls")
+"""The tabs of the DIAGRAMS page, each a view at its own URL (`/architecture`...)."""
 
 EXAMPLES_FOLDER = "examples"
 """Folder of doctracker's own repository with the example projects, shown in the EXAMPLES section."""
@@ -100,6 +105,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         no_sources=NO_SOURCES,
         grammars_dir=GRAMMARS_DIR.as_posix(),
         languages=LANGUAGES,
+        max_call_depth=MAX_CALL_DEPTH,  # the Depth of every diagram: 1 to it, it by default
         code_theme=config.code_theme if config.code_theme in pages.CODE_THEMES else "default",
         code_themes=pages.CODE_THEMES,
         search_modes=MODES,
@@ -132,6 +138,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             tree=pages.tree(state, current, layout, shown, EXAMPLES_FOLDER if developing else ""),
             examples_tree=pages.tree(state, current, layout, shown, within=EXAMPLES_FOLDER) if developing else [],
             tree_layout=layout, tree_layouts=pages.TREE_LAYOUTS, shown_languages=shown,
+            diagram_tab=request.cookies.get("diagram-tab") if request.cookies.get("diagram-tab") in DIAGRAM_TABS else "architecture",
             languages_found=pages.languages_found(state), **context)
         return HTMLResponse(html, status_code=status)
 
@@ -169,15 +176,28 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         """One of the views: architecture, classes, calls, git, notes or dead code."""
         view = request.url.path.strip("/")
         params = dict(request.query_params)
+        query = request.url.query
+        if view == "calls":
+            # Calls opens on what was chosen last (focus, path to, depth, direction), and its fields
+            # show what is drawn: the path found for a name typed, the depth (all of it by default).
+            if not params and request.cookies.get("calls-view"):
+                params = dict(parse_qsl(request.cookies["calls-view"]))
+            params.setdefault("depth", str(MAX_CALL_DEPTH))
+            for field in ("focus", "to"):
+                if params.get(field, "").strip():
+                    params[field] = find_callable(state, params[field]) or params[field]
+            query = urlencode(params)
         context = {
             "path": "",
             "view": view,
             "params": params,
-            "data_url": f"/graph/{view}?{request.url.query}" if request.url.query else f"/graph/{view}",
-            "class_packages": pages.class_packages(state),
-            "call_targets": pages.call_targets(state),
+            "data_url": f"/graph/{view}?{query}" if query else f"/graph/{view}",
+            "class_targets": [row for row in pages.focus_targets(state, ("class",)) if state.entities[row["path"]]["language"] != "sql"],
+            "project_groups": [group for group in pages.project_groups(state, EXAMPLES_FOLDER if developing else "")
+                               if group["role"] == "project"],
+            "module_targets": pages.focus_targets(state, ("module",)),
+            "call_targets": pages.focus_targets(state, ("function", "class")),
             "call_directions": CALL_DIRECTIONS,
-            "max_call_depth": MAX_CALL_DEPTH,
         }
         if view == "git":
             # Commits newest first, optionally only those that changed one file.
@@ -189,7 +209,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
-        return render_page(request, f"{view}.html" if state.ready else "loading.html", url, context)
+        template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
+        response = render_page(request, template if state.ready else "loading.html", url, context)
+        if view in DIAGRAM_TABS:  # DIAGRAMS in the menu opens the tab used last
+            response.set_cookie("diagram-tab", view, max_age=31536000, samesite="lax")
+        if view == "calls" and request.query_params:
+            response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
+        return response
 
     def chosen_plans(params: dict) -> list[int]:
         """The plans selected in the planner (`plans=1,2`); by default the newest in progress, else the
@@ -472,21 +498,34 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                                                                 planned=notes.archived(commit_hash))
         return HTMLResponse(html)
 
+    def depth_of(params) -> int:
+        """The Depth chosen in a diagram's bar: 1 to `MAX_CALL_DEPTH`, all of it by default."""
+        depth = params.get("depth", "")
+        return min(int(depth), MAX_CALL_DEPTH) or 1 if depth.isdigit() else MAX_CALL_DEPTH
+
     async def view_data(request: Request) -> Response:
         """Data of a graph view, as JSON, built by the same functions the MCP tools use."""
         view = request.path_params["view"]
         params = request.query_params
         _, shown = view_settings(request)  # the wiki's language filter; the MCP tools see everything
         if view == "architecture":
-            return JSONResponse(pages.visible_graph(state, architecture(state, params.get("level", "modules")), shown))
+            graph = architecture(state, params.get("level", "modules"), EXAMPLES_FOLDER if developing else "",
+                                 params.get("project", ""), params.get("focus", ""), depth_of(params))
+            return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "classes":
-            return JSONResponse(pages.visible_graph(state, class_diagram(state, params.get("package", "")), shown))
+            graph = class_diagram(state, params.get("package", ""), EXAMPLES_FOLDER if developing else "",
+                                  params.get("project", ""), params.get("focus", ""), depth_of(params))
+            return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "planner":
             plans = [int(part) for part in params.get("plans", "").split(",") if part.isdigit()]
             return JSONResponse(notes.planner_graph(plans))
         if view == "calls":
-            depth = int(params.get("depth", "1")) if params.get("depth", "1").isdigit() else 1
-            graph = call_graph(state, params.get("focus", ""), depth, params.get("direction", "both"))
+            graph = call_graph(state, params.get("focus", ""), depth_of(params), params.get("direction", "both"), params.get("to", ""))
+            return JSONResponse(pages.visible_graph(state, graph, shown))
+        if view == "timeline":  # when each file appeared, for the timeline of the architecture
+            return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
+        if view == "local":  # an entity's page: the entity and its neighbours, a few steps away
+            graph = call_graph(state, params.get("focus", ""), depth_of(params), "both", kinds=LOCAL_KINDS)
             return JSONResponse(pages.visible_graph(state, graph, shown))
         return JSONResponse({"error": f"Unknown view: {view}"}, status_code=404)
 

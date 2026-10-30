@@ -60,6 +60,9 @@ GROUPS = (
 members by their `kind`, those of other languages by their own kind (`kind_label`); a kind not
 listed comes last, named after itself."""
 
+CLASS_KINDS = ("interface", "struct", "enum", "trait", "impl")
+"""The own kinds of other languages drawn and named as what they are, not as classes (`kind_label`)."""
+
 TREE_KINDS = ("module", "class", "function")
 """Kinds shown in the navigation tree (attributes, CSS classes and rules only on their parent's page: there are many)."""
 
@@ -272,7 +275,8 @@ def _section_items(entity: dict, kinds: tuple[str, ...]) -> list[dict]:
     return [item for section in entity["sections"] if section["kind"] in kinds for item in section["items"]]
 
 
-SYMBOLS = {"class": "C", "function": "f", "method": "m", "attribute": "a", "type alias": "t",
+SYMBOLS = {"class": "C", "interface": "I", "struct": "S", "enum": "E", "trait": "Tr", "impl": "Im",
+           "function": "f", "method": "m", "attribute": "a", "type alias": "t",
            "script": "JS", "stylesheet": "CSS", "template": "T", "js-function": "f", "macro": "M",
            "css-class": ".", "css-rule": "#"}
 """Symbol shown before each item in the tree and on pages, by role (packages and modules use folder/file icons)."""
@@ -392,7 +396,10 @@ def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[s
             depth = within.count("/") + 1
             if not _inside(entity, (within,)) or len(parts) <= depth:
                 continue
-            name, folders, link = parts[depth], ["/".join(parts[:depth + 1])], ""
+            if len(parts) == depth + 1:  # a file right in the folder: its own root files
+                name, folders, link = "(root)", [entity["filepath"]], ""
+            else:
+                name, folders, link = parts[depth], ["/".join(parts[:depth + 1])], ""
         elif parts[0] in MEMBER_FOLDERS and len(parts) > 2:
             name, folders, link = parts[1], ["/".join(parts[:2])], ""
         else:
@@ -407,6 +414,49 @@ def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[s
         found[name] = (list(dict.fromkeys(known_folders + folders)), known_link or link)
     return [(name, folders, link) for name, (folders, link) in sorted(found.items())]
 
+
+
+def project_groups(state: DocState, apart: str = "") -> list[dict]:
+    """The projects of the repository as groups for the diagrams, the same ones as the tree's (`projects`).
+
+    Args:
+        state: Extracted entities.
+        apart: A folder whose projects go in a group of their own (e.g. `examples` while doctracker
+            itself is documented, as in the tree's EXAMPLES section); empty keeps all at the top.
+
+    Returns:
+        Groups, outer ones first: `id` (`project:<name>`, or the `group:<folder>` of `apart`), `label`,
+        `role` (`project` or `examples`), `page` (the entity its name opens, or empty), `parent`
+        (the group above, or `None`) and `folders` (what it holds).
+    """
+    groups = []
+    if apart and any(_inside(entity, (apart,)) for entity in state.entities.values() if entity["kind"] == "module"):
+        groups.append({"id": f"group:{apart}", "label": apart.upper(), "role": "examples", "page": "",
+                       "parent": None, "folders": [apart]})
+        groups += [{"id": f"project:{apart}/{name}", "label": name, "role": "project", "page": link,
+                    "parent": f"group:{apart}", "folders": folders}
+                   for name, folders, link in projects(state, within=apart)]
+    groups += [{"id": f"project:{name}", "label": name, "role": "project", "page": link, "parent": None,
+                "folders": folders} for name, folders, link in projects(state, apart)]
+    # The members of a monorepo inside a project (e.g. an example that is a monorepo): a level of their own.
+    members = {}
+    for entity in state.entities.values():
+        if entity["kind"] != "module":
+            continue
+        for group in groups:
+            for folder in group["folders"] if group["role"] == "project" else []:
+                rest = entity["filepath"].removeprefix(f"{folder}/").split("/")
+                if entity["filepath"].startswith(f"{folder}/") and len(rest) > 2 and rest[0] in MEMBER_FOLDERS:
+                    member = f"{folder}/{rest[0]}/{rest[1]}"
+                    members[member] = {"id": f"member:{member}", "label": rest[1], "role": "member", "page": "",
+                                       "parent": group["id"], "folders": [member]}
+    return groups + sorted(members.values(), key=lambda member: member["id"])
+
+
+def group_of(entity: dict, groups: list[dict]) -> str | None:
+    """The innermost project or monorepo member (`project_groups`) an entity lies in, or `None`."""
+    holding = [group for group in groups if group["role"] in ("project", "member") and _inside(entity, tuple(group["folders"]))]
+    return max(holding, key=lambda group: max(len(folder) for folder in group["folders"]))["id"] if holding else None
 
 
 def _locations(entity: dict) -> list[str]:
@@ -524,6 +574,8 @@ def _role(parent: dict, member: dict) -> str:
         return "subpackage"
     if member["kind"] == "function" and parent.get("kind") == "class":
         return "method"
+    if member["kind"] == "class" and member.get("kind_label") in CLASS_KINDS:
+        return member["kind_label"]  # an interface, struct, enum, trait or impl is not a class
     if member["language"] == "python" or member["kind"] in ("class", "function") and member["kind_label"] != "macro":
         return member["kind"]
     return member["kind_label"].replace(" ", "-")  # a file's (`script`...) or a CSS class's: a role names CSS classes
@@ -758,36 +810,21 @@ def ranked_results(state: DocState, ranked: list[tuple[str, float]], query: str)
     return results
 
 
-def class_packages(state: DocState) -> list[str]:
-    """List the packages and modules that contain classes, for the filter of the class diagram.
+def focus_targets(state: DocState, kinds: tuple[str, ...]) -> list[dict]:
+    """List what a diagram's Focus can be: the entities of some kinds, for its autocomplete.
 
     Args:
         state: Extracted entities.
+        kinds: The categories offered, e.g. `("function", "class")`.
 
     Returns:
-        Sorted paths of every package or module with at least one class below it.
+        Rows with `path`, `name`, `role` and `symbol`, sorted by path.
     """
-    found = set()
-    for path, entity in state.entities.items():
-        if entity["kind"] == "class":
-            parent = entity["parent"]
-            while parent in state.entities:
-                if state.entities[parent]["kind"] == "module":
-                    found.add(parent)
-                parent = state.entities[parent]["parent"]
-    return sorted(found)
-
-
-def call_targets(state: DocState) -> list[str]:
-    """List the entities a call graph can be centered on: functions, methods and classes.
-
-    Args:
-        state: Extracted entities.
-
-    Returns:
-        Their paths, sorted.
-    """
-    return sorted(path for path, entity in state.entities.items() if entity["kind"] in ("function", "class"))
+    rows = []
+    for path in sorted(path for path, entity in state.entities.items() if entity["kind"] in kinds):
+        role = page_role(state, state.entities[path])
+        rows.append({"path": path, "name": state.entities[path]["name"], "role": role, "symbol": SYMBOLS.get(role, "")})
+    return rows
 
 
 PAGINATION_SIBLINGS = 1
