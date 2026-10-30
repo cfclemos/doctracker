@@ -1,0 +1,140 @@
+{# The modals of DATABASE › Connections. `details`: everything about one connection (the card shows
+   only its kind and server), in the consultation modal; with `editing`, its settings become the form's
+   fields. Its actions sit in the modal's footer (sent out of band, as an entity's page does); they answer
+   in the modal, the card following; Delete asks first, over the modal, then the page comes back and the
+   modal closes. Without `details`: a new connection, in the notes' modal, posted to /database/save.
+   Every field is the wiki's form field (macros.form_field): ? with its explanation, outlined, * if required. #}
+{% import "macros.html" as ui %}
+{% from "database.html" import card %}
+{% set HELP = {
+  "Name": "The name this connection is shown by, in DATABASE and to the agents. Only for you to recognise it; it changes nothing in the connection.",
+  "Kind": "The kind of database. It decides the driver doctracker uses (pg8000, PyMySQL, python-tds, Python's sqlite3, oracledb) and how the session is made read only.",
+  "Host": "The database server's name or address (for SQLite, the file's path, from the project's root). When the connection goes through SSH, it is the server as the SSH server sees it, e.g. a name inside its network. Any value may be ${VARIABLE} or ${VARIABLE:-default}, read from the environment and the project's .env files when connecting.",
+  "Port": "The database server's port. Empty: the kind's usual one (PostgreSQL 5432, MySQL 3306, SQL Server 1433, Oracle 1521). May be ${VARIABLE}.",
+  "Server": "Address and port of the database server. Any value may be ${VARIABLE} or ${VARIABLE:-default}, read from the environment and the project's .env files when connecting.",
+  "File": "The SQLite file, from the project's root. It is opened read only.",
+  "Database": "Name of the database on the server. Empty: the user's default database.",
+  "User": "The user doctracker connects as. A read-only user is best; whatever the user may do, doctracker only reads. May be ${VARIABLE}.",
+  "Password": "The user's password. Typed here, it is saved encrypted in doc/connections/ (out of git), the key kept in your system's vault; or write ${VARIABLE} to take it from an environment variable. Never shown afterwards: once saved, empty keeps it. Not asked with AWS RDS IAM, whose token takes its place.",
+  "SSH host": "An SSH server to go through: doctracker logs in to it and reaches the database from there. Empty: no tunnel, straight to the database.",
+  "SSH port": "The SSH server's port. Empty: 22.",
+  "SSH user": "The user on the SSH server. Empty: taken from ~/.ssh/config when that is ticked.",
+  "Key file": "The private key to log in to the SSH server, e.g. ~/.ssh/id_ed25519 (a path from the project's root, or absolute). Empty: the password below, or your SSH agent's keys.",
+  "SSH password": "The SSH user's password, or, when there is a key file, the key's passphrase. Saved encrypted like the database password, or ${VARIABLE}. Empty keeps the one saved.",
+  "Jump host": "An SSH server reached first, to get to the SSH server above (a bastion): user@host:port. Empty: none.",
+  "~/.ssh/config": "Ticked: whatever is not typed here (host name, port, user, key, jump host) comes from your ~/.ssh/config, by the SSH host's name.",
+  "Sign-in": "How doctracker signs in: with the password, or with an AWS RDS IAM token made for this server and user (it needs doctracker's extra: pip install doctracker[aws]).",
+  "AWS region": "Only for AWS RDS IAM: the region of the database, e.g. us-east-1. Empty: the one AWS's own settings give.",
+  "SSH": "An SSH server the connection goes through: doctracker logs in to it, with a key or a password, and reaches the database from there. A jump host is reached first. With ~/.ssh/config, what is not typed comes from your SSH settings.",
+  "URL in": "The environment variable holding the whole connection URL, read when connecting.",
+  "From": "Where the connection is declared (file and line), or that it was entered here.",
+  "Last test": "The last test, read only: connect, read the server's version, try a write that must be aborted before it reaches the database; with when it ran and how long it took.",
+} %}
+{# A name in the details (not a form), with the ? explaining it. #}
+{% macro label(name) -%}
+<dt>{{ ui.help_hover(name, HELP[name]) }}{{ name }}</dt>
+{%- endmacro %}
+
+{# The fields of a connection, the same in the New form and when changing one (`c`); a new one also
+   has its name and kind. #}
+{% macro connection_fields(c) -%}
+{% set sqlite = c and c.kind == "sqlite" %}
+{% if not c %}
+{% call ui.form_field("Name", HELP["Name"], required=True) %}<input name="name" required autofocus>{% endcall %}
+{% call ui.form_field("Kind", HELP["Kind"], required=True) %}<select name="kind" required>{% for kind, title in kinds.items() %}<option value="{{ kind }}">{{ title }}</option>{% endfor %}</select>{% endcall %}
+{% endif %}
+<div class="form-row">
+  {% call ui.form_field("File" if sqlite else "Host", HELP["File" if sqlite else "Host"], required=True) %}<input name="host" value="{{ c.host if c else '' }}" required>{% endcall %}
+  {% if not sqlite %}{% call ui.form_field("Port", HELP["Port"]) %}<input name="port" value="{{ c.port if c else '' }}">{% endcall %}{% endif %}
+</div>
+{% if not sqlite %}
+{% call ui.form_field("Database", HELP["Database"]) %}<input name="database" value="{{ c.database if c else '' }}">{% endcall %}
+{% call ui.form_field("User", HELP["User"], required=True) %}<input name="user" value="{{ c.user if c else '' }}" required>{% endcall %}
+{% call ui.form_field("Password", HELP["Password"], required=True, extra="password-only") %}<input type="password" name="password" autocomplete="new-password"{% if c and c.password %} placeholder="saved: empty keeps it"{% endif %}>{% endcall %}
+<details class="form-optional">
+  <summary>SSH tunnel<small>optional{% if c and c.ssh_host %} · {{ c.ssh_user ~ "@" if c.ssh_user }}{{ c.ssh_host }}{% endif %}</small></summary>
+  <div class="form-group">
+    <div class="form-row">
+      {% call ui.form_field("SSH host", HELP["SSH host"]) %}<input name="ssh_host" value="{{ c.ssh_host if c else '' }}">{% endcall %}
+      {% call ui.form_field("SSH port", HELP["SSH port"]) %}<input name="ssh_port" value="{{ c.ssh_port if c else '' }}">{% endcall %}
+    </div>
+    {% call ui.form_field("SSH user", HELP["SSH user"]) %}<input name="ssh_user" value="{{ c.ssh_user if c else '' }}">{% endcall %}
+    {% call ui.form_field("Key file", HELP["Key file"]) %}<input name="ssh_key" value="{{ c.ssh_key if c else '' }}">{% endcall %}
+    {% call ui.form_field("SSH password", HELP["SSH password"]) %}<input type="password" name="ssh_password" autocomplete="new-password"{% if c and c.ssh_password %} placeholder="saved: empty keeps it"{% endif %}>{% endcall %}
+    {% call ui.form_field("Jump host", HELP["Jump host"]) %}<input name="ssh_jump" value="{{ c.ssh_jump if c else '' }}" placeholder="user@host:port">{% endcall %}
+    {% call ui.form_field("~/.ssh/config", HELP["~/.ssh/config"]) %}<span class="field-check"><input type="checkbox" name="ssh_config" value="1"{% if c and c.ssh_config %} checked{% endif %}> complete what is not typed from ~/.ssh/config</span>{% endcall %}
+  </div>
+</details>
+<div class="form-row choice">
+  {% call ui.form_field("Sign-in", HELP["Sign-in"], choice=True) %}<span class="toggle-group">{% for key, title in sign_ins.items() %}<label><input type="radio" name="sign_in" value="{{ key }}"{% if (c.sign_in if c else "password") == key or (key == "password" and c and not c.sign_in) %} checked{% endif %}>{{ title }}</label>{% endfor %}</span>{% endcall %}
+  {% call ui.form_field("AWS region", HELP["AWS region"], extra="aws-only") %}<input name="sign_in_option" value="{{ c.sign_in_option if c else '' }}">{% endcall %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% if details %}
+{% set c = details %}
+<header class="page-header">
+  <h1><span class="icon icon-database"></span><span class="name">{{ c.name }}</span><span class="kind">{{ c.kind_name }}</span>
+    <span class="notes-pill {% if c.allowed %}connection-allowed{% else %}connection-blocked{% endif %}">{% if c.allowed %}allowed{% else %}blocked{% endif %}</span></h1>
+</header>
+{% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+{% if editing %}
+<form id="connection-edit" class="form-group connection-form" hx-post="/database/edit" hx-target="#page-dialog-body">
+  <input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1">
+  {{ connection_fields(c) }}
+</form>
+{% else %}
+<dl class="connection-details">
+  {{ label("Kind") }}<dd>{{ c.kind_name }}</dd>
+  {% if c.kind == "sqlite" %}
+  {{ label("File") }}<dd><code>{{ c.host }}</code></dd>
+  {% else %}
+  {{ label("Server") }}<dd><code>{{ c.host or "—" }}{% if c.port %}:{{ c.port }}{% endif %}</code></dd>
+  {{ label("Database") }}<dd>{% if c.database %}<code>{{ c.database }}</code>{% else %}—{% endif %}</dd>
+  {{ label("User") }}<dd>{% if c.user %}<code>{{ c.user }}</code>{% else %}—{% endif %}</dd>
+  {{ label("Password") }}<dd><code>{{ c.password or "none" }}</code></dd>
+  {{ label("SSH") }}<dd>{% if c.ssh_host %}<code>{% if c.ssh_user %}{{ c.ssh_user }}@{% endif %}{{ c.ssh_host }}:{{ c.ssh_port or 22 }}</code>{% if c.ssh_jump %} via <code>{{ c.ssh_jump }}</code>{% endif %}{% if c.ssh_key %} · key <code>{{ c.ssh_key }}</code>{% endif %}{% if c.ssh_password %} · <code>{{ c.ssh_password }}</code>{% endif %}{% if c.ssh_config %} · ~/.ssh/config{% endif %}
+    {% else %}none: straight to the server{% endif %}</dd>
+  {{ label("Sign-in") }}<dd>{{ sign_ins.get(c.sign_in or "password") }}{% if c.sign_in_option %} · <code>{{ c.sign_in_option }}</code>{% endif %}</dd>
+  {% endif %}
+  {% if c.url_variable %}{{ label("URL in") }}<dd><code>${{ "{" }}{{ c.url_variable }}{{ "}" }}</code></dd>{% endif %}
+  {{ label("From") }}<dd>{% if c.source == "entered" %}entered here{% else %}{{ c.source }} · <code>{{ c.origin }}</code>{% if c.edited %} · changed here{% endif %}{% endif %}</dd>
+  {{ label("Last test") }}
+  <dd class="connection-test{% if test and not test.ok %} failed{% endif %}">
+    {% if not test %}{% if c.allowed %}not tested yet{% else %}blocked: allow it to test it{% endif %}
+    {% elif test.ok %}Read only: connected{% if test.version %} to {{ test.version }}{% endif %}; the write tried was aborted{% if test.read_only_session %}; the session is read only{% endif %}{% if test.can_write %}; this user may write, doctracker still only reads{% endif %}. · {{ test.tested_at | local_time(seconds=True) }} <small>({{ test.seconds }} s)</small>
+    {% else %}Failed: {{ test.error }} · {{ test.tested_at | local_time(seconds=True) }} <small>({{ test.seconds }} s)</small>{% endif %}
+  </dd>
+</dl>
+{% endif %}
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  {% if editing %}
+  <button type="button" class="see-in-link" hx-get="/database/form?details={{ c.id }}" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-cancel"></i>Cancel</button>
+  <button type="submit" form="connection-edit" class="see-in-link"><i class="bar-icon bar-icon-save"></i>Save</button>
+  {% else %}
+  <button type="button" class="see-in-link" hx-get="/database/form?details={{ c.id }}&edit=1" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-edit"></i>Edit</button>
+  <form hx-post="/database/remove" hx-target="#page-dialog-body" hx-confirm="Delete the connection {{ c.name }}?{% if c.source != 'entered' %} Its declaration stays in {{ c.origin }}; it only leaves this list.{% endif %}" data-confirm-title="Delete connection">
+    <input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-remove"></i>Delete</button></form>
+  {% if c.allowed %}
+  <form hx-post="/database/block" hx-target="#page-dialog-body"><input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1">
+    <button type="submit" class="see-in-link"><i class="bar-icon bar-icon-block"></i>Block</button></form>
+  {% else %}
+  <form hx-post="/database/allow" hx-target="#page-dialog-body" hx-confirm="Allow doctracker to connect to {{ c.name }}? It will only read." data-confirm-title="Allow connection">
+    <input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-allow"></i>Allow</button></form>
+  {% endif %}
+  <form hx-post="/database/test" hx-target="#page-dialog-body"><input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1">
+    <button type="submit" class="see-in-link"{% if not c.allowed %} disabled title="Allow the connection first"{% endif %}><i class="bar-icon bar-icon-test"></i>Test connection</button></form>
+  {% endif %}
+</footer>
+{% if oob %}{{ card(c, test, oob=True) }}{% endif %}
+{% else %}
+<div class="dialog-head">
+  <h2>New connection</h2>
+  <button type="button" class="dialog-close" aria-label="Close" title="Close">×</button>
+</div>
+<form hx-post="/database/save" hx-target="#content" class="form-group connection-form">
+  {{ connection_fields(None) }}
+  <div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">Add connection</button></div>
+</form>
+{% endif %}

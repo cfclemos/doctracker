@@ -14,6 +14,9 @@ from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
+from doctracker.databases import ConnectionStore, Locked
+from doctracker.databases.discovery import KINDS
+from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
                               class_paths, file_timeline, find_callable)
@@ -75,12 +78,13 @@ def _develops_doctracker(project_root: Path) -> bool:
 
 
 def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine,
-               notes: NoteStore) -> list[BaseRoute]:
+               notes: NoteStore, connections: ConnectionStore) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
 
     `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
     `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the plans,
-    tasks and notes `/notes` (changed through `/notes/<action>`), `/source/<path>`,
+    tasks and notes `/notes` (changed through `/notes/<action>`), the databases `/database` (changed
+    through `/database/<action>`), `/source/<path>`,
     `/search` (modes `all`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
 
@@ -90,6 +94,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         config: Project settings; the code theme chosen in the wiki is saved here.
         search: Search engine behind the search box (the same one the MCP tools use).
         notes: Store of the plans, tasks and notes (the same one the MCP tools use).
+        connections: Store of the database connections (the same one the MCP tools use).
 
     Returns:
         The routes, to add to the server app.
@@ -213,6 +218,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context.update(notes_context(params))
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
+        if view == "database":
+            context.update(database_context(params))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
         response = render_page(request, template if state.ready else "loading.html", url, context)
@@ -220,6 +227,68 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             response.set_cookie("diagram-tab", view, max_age=31536000, samesite="lax")
         if view == "calls" and request.query_params:
             response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
+        return response
+
+    connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
+
+    def database_context(params: dict, error: str = "") -> dict:
+        """What DATABASE shows: its tab (Connections), the connections, their last tests, whether the
+        saved passwords wait for the master password, and a refusal to show on top."""
+        return {"tab": params.get("tab", "connections"), "connections": connections.connections(),
+                "tests": connection_tests, "kinds": KINDS, "locked": connections.locked(),
+                "has_secrets": (connections.folder / "secrets.bin").is_file(), "error": error}
+
+    def database_modal(details: str = "", editing: bool = False, oob: bool = False, error: str = "") -> str:
+        """The modals of DATABASE: everything about a connection (`details`, changed in place with
+        `editing`), or, without `details`, the form of a new one; `oob` sends its card again with it."""
+        listed = {c["id"]: c for c in connections.connections()}
+        return templates.get_template("database_form.html").render(
+            details=listed.get(details), test=connection_tests.get(details), editing=editing, kinds=KINDS, sign_ins=SIGN_INS,
+            oob=oob, error=error)
+
+    async def database_form(request: Request) -> Response:
+        """A modal of DATABASE (see `database_modal`): `?details=<id>`, `&edit=1` to change it, or a new one."""
+        query = request.query_params
+        return HTMLResponse(database_modal(query.get("details", ""), bool(query.get("edit"))))
+
+    async def database_action(request: Request) -> Response:
+        """Allow, block, test, add, change or delete a connection, or unlock the saved passwords.
+
+        The same store the MCP tools use. Sent from a connection's details (`modal`), the details come
+        back (a refusal shown in them) and its card follows; otherwise the page comes back redrawn,
+        with a refusal (a field missing, a wrong master password...) shown on top.
+        """
+        if not _same_origin(request):
+            return Response("", status_code=403)
+        form = {key: value for key, value in (await request.form()).items()}
+        name, identifier = request.path_params["action"], form.get("id", "")
+        actions = {
+            "allow": lambda: connections.allow(identifier),
+            "block": lambda: connections.allow(identifier, False),
+            "remove": lambda: connections.remove(identifier),
+            "save": lambda: connections.save(form, form.get("password", ""), form.get("ssh_password", "")),
+            "edit": lambda: connections.edit(identifier, form, form.get("password", ""), form.get("ssh_password", "")),
+            "unlock": lambda: connections.unlock(form.get("master_password", "")),
+        }
+        if name not in actions and name != "test":
+            return Response("", status_code=404)
+        error = ""
+        try:
+            if name == "test":
+                connection_tests[identifier] = await run_test(connections.spec(identifier))
+            else:
+                actions[name]()
+                if name in ("block", "remove", "edit"):
+                    connection_tests.pop(identifier, None)
+        except (ValueError, Locked) as refused:
+            error = str(refused)
+        if form.get("modal") and not (name == "remove" and not error):
+            # From the details: they stay open, with the refusal if any, and the card follows.
+            return HTMLResponse(database_modal(identifier, editing=name == "edit" and bool(error), oob=True, error=error))
+        context = {"path": "", "view": "database", "params": {}, **database_context({}, error)}
+        response = render_page(request, "database.html", "/database", context)
+        if form.get("modal"):  # deleted from its details: the page comes back in place of them, which close
+            response.headers.update({"HX-Retarget": "#content", "HX-Reswap": "innerHTML", "HX-Trigger": "page-dialog-done"})
         return response
 
     def chosen_plans(params: dict) -> list[int]:
@@ -642,6 +711,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/git", view_page),
         Route("/dead-code", view_page),
         Route("/notes", view_page),
+        Route("/database", view_page),
+        Route("/database/form", database_form),
+        Route("/database/{action}", database_action, methods=["POST"]),
         Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),
         Route("/graph/{view}", view_data),

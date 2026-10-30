@@ -490,6 +490,8 @@ function openPageModal(path) {
   htmx.ajax("GET", `/wiki/${path}?modal=1`, { target: "#page-dialog-body" });
   if (!dialog.open) dialog.showModal();
 }
+// An action done from the modal that ends what it showed (a connection deleted) closes it.
+document.body.addEventListener("page-dialog-done", () => document.getElementById("page-dialog")?.close());
 document.addEventListener("htmx:afterSwap", (event) => {  // the names of the page shown open in the modal
   if (event.detail.target.id !== "page-dialog-body") return;
   event.detail.target.scrollTop = 0;
@@ -896,3 +898,26 @@ document.addEventListener("mouseout", (event) => {
 commitTip.addEventListener("mouseenter", () => clearTimeout(commitTipHiding));
 commitTip.addEventListener("mouseleave", hideCommitTip);
 
+
+// The explanation of a ? opens beside it, inside the modal holding the ? (within its sides), or inside
+// the window elsewhere; under it, or above when there is no room below. Being fixed to the screen, it
+// never scrolls or widens the modal or panel holding the ?.
+function placeHelp(event) {
+  const hover = event.target.closest?.(".help-hover");
+  const box = hover?.querySelector(".help-box");
+  if (!box) return;
+  const gap = 8, area = hover.closest("dialog")?.getBoundingClientRect()
+    ?? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  box.style.maxWidth = `${area.right - area.left - 2 * gap}px`;
+  box.style.visibility = "hidden";
+  box.style.display = "block";
+  const icon = hover.getBoundingClientRect(), width = box.offsetWidth, height = box.offsetHeight;
+  const left = Math.max(area.left + gap, Math.min(icon.left - gap, area.right - width - gap));
+  const below = icon.bottom + gap + height <= Math.min(area.bottom, window.innerHeight) - gap;
+  box.style.left = `${left}px`;
+  box.style.top = `${below ? icon.bottom + gap : Math.max(gap, icon.top - gap - height)}px`;
+  box.style.display = "";
+  box.style.visibility = "";
+}
+document.addEventListener("mouseover", placeHelp);
+document.addEventListener("focusin", placeHelp);

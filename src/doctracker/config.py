@@ -15,7 +15,7 @@ CONFIG_PATH = Path(DOC_DIR) / "config" / "config.json"
 GITIGNORE_PATH = Path(DOC_DIR) / ".gitignore"
 """`.gitignore` written by `init` to keep local data out of git."""
 
-GITIGNORE_CONTENT = "sqlite/\nmodels/\ngrammars/\n"
+GITIGNORE_CONTENT = "sqlite/\nmodels/\ngrammars/\nconnections/\n"
 """Local data folders ignored by `doc/.gitignore`."""
 
 DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "doctracker.db"

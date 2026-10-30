@@ -143,9 +143,11 @@ main { grid-area: main; }
 .graph-language .language-filter { height: 2.3rem; }
 .language-filter { flex: none; height: 2.4rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: 0.85rem; }
 
-/* Search mode: joined toggle buttons (MUI ToggleButtonGroup style). */
-.search-modes { display: inline-flex; flex: none; }
-.search-modes button {
+/* Search mode, and a form's choice among a few (`toggle-group`, radio buttons): joined toggle buttons
+   (MUI ToggleButtonGroup style). */
+.search-modes, .toggle-group { display: inline-flex; flex: none; }
+.toggle-group input { position: absolute; opacity: 0; pointer-events: none; }
+.search-modes button, .toggle-group label {
   height: 2.4rem;
   padding: 0 0.75rem;
   border: 1px solid var(--border);
@@ -156,11 +158,13 @@ main { grid-area: main; }
   letter-spacing: 0.04em;
   cursor: pointer;
 }
-.search-modes button + button { margin-left: -1px; }
-.search-modes button:first-child { border-radius: 4px 0 0 4px; }
-.search-modes button:last-child { border-radius: 0 4px 4px 0; }
-.search-modes button:hover { background: var(--panel); color: var(--fg); }
-.search-modes button[aria-checked="true"] {
+.toggle-group label { display: inline-flex; align-items: center; }
+.search-modes button + button, .toggle-group label + label { margin-left: -1px; }
+.search-modes button:first-child, .toggle-group label:first-child { border-radius: 4px 0 0 4px; }
+.search-modes button:last-child, .toggle-group label:last-child { border-radius: 0 4px 4px 0; }
+.search-modes button:hover, .toggle-group label:hover { background: var(--panel); color: var(--fg); }
+.toggle-group label:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+.search-modes button[aria-checked="true"], .toggle-group label:has(input:checked) {
   position: relative;
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
@@ -328,6 +332,7 @@ main { grid-area: main; }
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
 .icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before, .icon-diagrams::before,
+.icon-database::before,
 .icon-dead-code::before, .icon-folder::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
 .icon-layout-folders::before, .icon-layout-languages::before {
@@ -354,6 +359,7 @@ main { grid-area: main; }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
 .icon-notes::before { -webkit-mask-image: url("icons/notebook.svg"); mask-image: url("icons/notebook.svg"); }
+.icon-database::before { -webkit-mask-image: url("icons/database.svg"); mask-image: url("icons/database.svg"); }
 .icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
@@ -362,6 +368,7 @@ main { grid-area: main; }
 .icon-calls { --tint: var(--function); }
 .icon-git { --tint: var(--raises); }
 .icon-notes { --tint: var(--exports); }
+.icon-database { --tint: var(--class); }
 .icon-dead-code { --tint: var(--accent); }
 .icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
 .icon.icon-examples { --tint: var(--exports); }
@@ -693,6 +700,31 @@ td p { margin: 0; }
 .focus-menu-path { overflow: hidden; color: var(--muted); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
 .focus-menu-empty { color: var(--muted); cursor: default; }
 .field select:focus, .field input:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+/* The fields of every form (macros.form_field): the ? first, then the outlined field taking the rest of the line. */
+.form-field { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.15rem; }
+.form-field .field { flex: 1; min-width: 0; }
+.form-field.narrow { flex: none; }
+.form-field .field input:not([type=checkbox]), .form-field .field select, .form-field .field textarea { width: 100%; box-sizing: border-box;
+  padding: 0.35rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+.form-field .field textarea { height: auto; }
+.field-check { display: flex; align-items: center; gap: 0.5rem; width: 100%; height: 2.3rem; box-sizing: border-box; padding: 0 0.6rem;
+  border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+.connection-form { margin: 0.2rem 0 0.6rem; }
+.page-dialog .connection-form { max-width: 40rem; }
+.form-row { display: grid; grid-template-columns: 1fr 9rem; gap: 0.6rem; }
+.form-row.choice { grid-template-columns: auto minmax(0, 1fr); }
+.toggle-group { flex-wrap: wrap; }
+.form-group { display: grid; gap: 0.55rem; }
+.form-group-title { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+/* An optional part of a form, closed until opened. */
+.form-optional > summary { cursor: pointer; padding: 0.3rem 0; color: var(--muted); font-size: 0.78rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.form-optional > summary small { margin-left: 0.4rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.form-optional[open] > .form-group { margin-top: 0.4rem; }
+.field-choice { display: flex; align-items: center; min-height: 2.3rem; }
+/* The AWS region is asked only when signing in with AWS RDS IAM, and the password only when not. */
+.connection-form:not(:has(input[name=sign_in][value=aws-iam]:checked)) .aws-only { display: none; }
+.connection-form:has(input[name=sign_in][value=aws-iam]:checked) .password-only { display: none; }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.8rem; color: var(--muted); }
 .graph-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .graph-legend .line { display: inline-block; width: 1.4rem; height: 0; border-top: 2px solid; }
@@ -1241,7 +1273,9 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .help-hover { position: relative; display: inline-flex; flex: none; cursor: help; }
 .help-icon { width: 1rem; height: 1rem; background: var(--accent);
   -webkit-mask: url("icons/help-circle.svg") center / contain no-repeat; mask: url("icons/help-circle.svg") center / contain no-repeat; }
-.help-box { display: none; position: absolute; z-index: 20; top: calc(100% + 0.35rem); left: -0.4rem;
+/* Fixed to the screen, placed by live.js next to its ?: it never takes room in, nor scrolls, the box it is in
+   (a modal's body, a panel). */
+.help-box { display: none; position: fixed; z-index: 1000; top: 0; left: 0;
   width: min(34rem, 85vw); padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 6px;
   background: var(--bg); color: var(--fg); box-shadow: 0 6px 20px rgb(0 0 0 / 18%); font-size: 0.85rem; cursor: default; }
 .help-hover:hover .help-box, .help-hover:focus-within .help-box { display: block; }
@@ -1339,17 +1373,19 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 .notes-dialog { width: min(44rem, calc(100vw - 1.5rem)); max-height: 90vh; padding: 0; border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); color: var(--fg); box-shadow: 0 12px 40px rgb(0 0 0 / 25%); }
 .notes-dialog::backdrop { background: rgb(0 0 0 / 35%); }
-#notes-dialog-body { padding: 1rem 1.2rem 1.2rem; }
+#notes-dialog-body, #database-dialog-body { padding: 1rem 1.2rem 1.2rem; }
 .dialog-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
 .dialog-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
 .notes-dialog .dialog-close { padding: 0 0.5rem; border: 0; background: none; font-size: 1.3rem; line-height: 1; }
 /* Head of a creation modal: the same colored band as the confirmation modal, edge to edge. */
 .notes-dialog .dialog-head:not(.panel-head) { --mark: #0288d1; --head-bg: #e5f6fd; --head-fg: #014361;
-  margin: -1rem -1.2rem 0.9rem; padding: 0.75rem 0.8rem 0.75rem 1.1rem; border-left: 4px solid var(--mark);
+  position: sticky; top: 0; z-index: 3; margin: -1rem -1.2rem 0.9rem; padding: 0.75rem 0.8rem 0.75rem 1.1rem; border-left: 4px solid var(--mark);
   background: var(--head-bg); color: var(--head-fg); }
 .notes-dialog .dialog-head:not(.panel-head) .dialog-close { color: var(--head-fg); }
 /* Foot of a creation modal: Cancel and the button on the right, as in the confirmation modal. */
 .dialog-foot { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+.notes-dialog .dialog-foot { position: sticky; bottom: -1.2rem; z-index: 3; margin: 0.4rem -1.2rem -1.2rem; padding: 0.7rem 1.2rem;
+  border-top: 1px solid var(--border); background: var(--bg); }
 .notes-dialog .dialog-foot .dialog-cancel { padding: 0.3rem 0.8rem; border: 1px solid var(--border); background: var(--panel);
   font-size: 0.82rem; line-height: normal; }
 @media (prefers-color-scheme: dark) {
@@ -1482,6 +1518,13 @@ body.splitting { cursor: col-resize; user-select: none; }
 .bar-icon-info { --icon: url("icons/info-circle.svg"); }
 .bar-icon-filters { --icon: url("icons/filter.svg"); }
 .bar-icon-timeline { --icon: url("icons/timeline.svg"); }
+.bar-icon-test { --icon: url("icons/refresh.svg"); }
+.bar-icon-allow { --icon: url("icons/check.svg"); }
+.bar-icon-block { --icon: url("icons/eye-off.svg"); }
+.bar-icon-edit { --icon: url("icons/pencil.svg"); }
+.bar-icon-remove { --icon: url("icons/trash.svg"); }
+.bar-icon-save { --icon: url("icons/check.svg"); }
+.bar-icon-cancel { --icon: url("icons/x.svg"); }
 .graph-canvas-bar .graph-row-toggle[aria-pressed="true"], .graph-canvas-bar .graph-panel-toggle[aria-expanded="true"] {
   border-color: var(--accent); background: var(--accent); color: var(--bg); }
 /* The filters under the drawing's bar, in a row like the evolution's; the field names sit on its colour. */
@@ -1729,3 +1772,41 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .git-planned-task p { margin: 0 0 0.3rem; }
 .git-planned-head { color: var(--muted); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 .git-planned-list { margin: 0 0 0.4rem; padding-left: 1.1rem; }
+
+/* DATABASE › Connections: a card per connection (the notes' buttons and modal are reused). */
+.database-page button, .database-page .connection-actions button { cursor: pointer; }
+.database-page, #page-dialog { --state-allowed: #2da44e; --state-blocked: #d1242f; }
+/* A connection's details take two thirds of the screen's width. */
+#page-dialog:has(.connection-details) { width: calc(100vw * 2 / 3); }
+.connection-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); grid-auto-rows: 1fr;
+  gap: 0.7rem; padding: 0.9rem 0; }
+/* Every card the same size: the actions stay at the bottom, a long test result is cut (whole on hover). */
+.connection-card { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; padding: 0.55rem 0.7rem; border: 1px solid var(--border);
+  border-left: 4px solid var(--muted); border-radius: 8px; background: var(--panel); font-size: 0.8rem; }
+.connection-card.allowed { border-left-color: var(--state-allowed); }
+.connection-card.blocked { border-left-color: var(--state-blocked); }
+.connection-allowed { --tint: var(--state-allowed); --on-tint: #ffffff; }
+.connection-blocked { --tint: var(--state-blocked); --on-tint: #ffffff; }
+.notes-pill.connection-allowed, .notes-pill.connection-blocked { color: var(--on-tint); }
+.connection-card h3 { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 0.88rem; min-width: 0; }
+.connection-card h3 .connection-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-card dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.05rem 0.6rem; margin: 0; }
+.connection-card dt { font-weight: 600; }
+.connection-card dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-test { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; font-size: 0.76rem; }
+.connection-test.failed { color: var(--raises); }
+.connection-details { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0 0 0.8rem; font-size: 0.85rem; }
+.connection-details dt { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; }
+.connection-details .help-box { width: min(22rem, 85vw); font-weight: 400; }
+.page-dialog-foot button.see-in-link:disabled { opacity: 0.45; cursor: not-allowed; border-color: var(--border); color: var(--fg); }
+.connection-details dd { margin: 0; overflow-wrap: anywhere; }
+.connection-details .connection-test { display: block; }
+.page-dialog-foot form { display: contents; }
+.page-dialog-foot button.see-in-link { gap: 0.35rem; padding-left: 0.45rem; background: none; font: inherit; font-weight: 600; cursor: pointer; }
+.page-dialog-foot .see-in-link .bar-icon { color: var(--accent); }
+/* The whole card opens its details. */
+.connection-card { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+.connection-card:hover, .connection-card:focus-visible { border-color: var(--accent); box-shadow: 0 2px 10px rgb(0 0 0 / 12%); outline: none; }
+.connection-card h3 .notes-pill { margin-left: auto; }
+.database-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem;
+  padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 0.85rem; }

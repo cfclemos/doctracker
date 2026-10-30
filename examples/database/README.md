@@ -25,6 +25,16 @@ docker compose down           # stop, keeping the data
 docker compose down -v        # stop and drop the data: the next start loads everything again
 ```
 
+Two OpenSSH servers test doctracker's SSH tunnels: `ssh-bastion`, on `127.0.0.1:${SSH_PORT:-52222}`, and
+`ssh-inner`, reachable only through the bastion (a jump). Both let the user `tunnel` in with a key made
+once, before the first start (the key stays out of git):
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ssh/keys/id_test
+```
+
+From the bastion the databases are `postgres:5432`, `mysql:3306` and `mssql:1433`.
+
 doctracker connects as `doctracker_reader`, with `READER_PASSWORD`. It reads and changes nothing:
 Postgres gives it `pg_read_all_data` and makes its sessions read only; MySQL gives it `SELECT`,
 `SHOW VIEW` and `SHOW_ROUTINE` (MySQL shows triggers only to users who may create them, so the

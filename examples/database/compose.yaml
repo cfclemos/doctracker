@@ -84,6 +84,29 @@ services:
     networks: [testbed]
     restart: "no"
 
+  # SSH, to test tunnels: the bastion is published on localhost; the inner host is reachable only through
+  # it (a jump). Both let the `tunnel` user in with the key made by `ssh-keygen` (see README) and reach
+  # the databases inside this network.
+  ssh-bastion:
+    build: ./ssh
+    image: doctracker-testbed-ssh:1
+    hostname: ssh-bastion
+    ports:
+      - "127.0.0.1:${SSH_PORT:-52222}:22"
+    volumes:
+      - ./ssh/keys/id_test.pub:/etc/ssh/authorized_keys/tunnel:ro
+    networks: [testbed]
+    restart: unless-stopped
+
+  ssh-inner:
+    image: doctracker-testbed-ssh:1
+    hostname: ssh-inner
+    depends_on: [ssh-bastion]
+    volumes:
+      - ./ssh/keys/id_test.pub:/etc/ssh/authorized_keys/tunnel:ro
+    networks: [testbed]
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   mysql-data:
