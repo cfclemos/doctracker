@@ -278,7 +278,7 @@ to llama.cpp.
   - **Classes** — classes of any language with their attributes and methods, in their files and
     packages (SQL tables are not classes: they are left out). Filters: project, focus with depth.
     Relations: inherits, implements, has, uses, refers.
-  - **Calls** — a function by its name or path: what it calls and what calls it (depth and
+  - **Functions and Calls** — a function by its name or path: what it calls and what calls it (depth and
     direction), or, with Path to, the shortest calls from it to another. Relations: calls,
     refers, templates, CSS classes, routes. It opens on the last
     choice; with no focus, nothing is drawn.

@@ -81,6 +81,6 @@
 
 {{ ui.relations(relations, role) }}
 
-{{ ui.local_graph(entity.path, role) }}
+{% if not modal %}{{ ui.local_graph(entity.path, role) }}{% endif %}
 
 {{ ui.source(entity, code_theme, code_themes) }}

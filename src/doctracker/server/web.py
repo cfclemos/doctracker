@@ -16,7 +16,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
-                              file_timeline, find_callable)
+                              class_paths, file_timeline, find_callable)
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
@@ -130,6 +130,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     def render_page(request: Request, content: str, url: str, context: dict, status: int = 200) -> HTMLResponse:
         """Render a page: the whole document, or only the content panel for htmx navigation."""
         is_fragment = "HX-Request" in request.headers and "HX-History-Restore-Request" not in request.headers
+        if is_fragment and request.query_params.get("modal"):
+            # The page alone, for the consultation modal opened from a drawing (no tree, no local graph).
+            html = templates.get_template(content).render(page_url=url, state=state, modal=True, **context)
+            return HTMLResponse(html, status_code=status)
         template = "fragment.html" if is_fragment else "base.html"
         layout, shown = view_settings(request)
         current = context.get("path", "")
@@ -187,12 +191,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 if params.get(field, "").strip():
                     params[field] = find_callable(state, params[field]) or params[field]
             query = urlencode(params)
+        classes = set(class_paths(state))  # what the class diagram (and its Focus) holds
         context = {
             "path": "",
             "view": view,
             "params": params,
             "data_url": f"/graph/{view}?{query}" if query else f"/graph/{view}",
-            "class_targets": [row for row in pages.focus_targets(state, ("class",)) if state.entities[row["path"]]["language"] != "sql"],
+            "class_targets": [row for row in pages.focus_targets(state, ("class",)) if row["path"] in classes],
             "project_groups": [group for group in pages.project_groups(state, EXAMPLES_FOLDER if developing else "")
                                if group["role"] == "project"],
             "module_targets": pages.focus_targets(state, ("module",)),

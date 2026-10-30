@@ -21,7 +21,7 @@
 {% set role = page_role(state, entity) %}
 {{ ui.relations(relations, role) }}
 
-{{ ui.local_graph(entity.path, role) }}
+{% if not modal %}{{ ui.local_graph(entity.path, role) }}{% endif %}
 
 {% if entity.language != "python" %}
 {{ ui.source(entity, code_theme, code_themes) }}

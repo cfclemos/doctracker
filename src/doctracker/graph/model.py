@@ -390,6 +390,20 @@ IMPLEMENTED = ("interface", "trait", "protocol")
 """Stereotypes of a class that others implement instead of extending: a base with one is `implements`."""
 
 
+def class_paths(state: DocState) -> list[str]:
+    """List what the class diagram holds: classes and what goes with them (interfaces, structs, enums,
+    traits) of any language; not SQL tables nor Rust `impl` blocks, which are not types of their own.
+
+    Args:
+        state: Extracted entities.
+
+    Returns:
+        Their paths, sorted.
+    """
+    return sorted(path for path, entity in state.entities.items() if entity["kind"] == "class"
+                  and entity["language"] != "sql" and entity.get("kind_label") != "impl")
+
+
 def class_diagram(state: DocState, package: str = "", apart: str = "", project: str = "", focus: str = "",
                   depth: int = MAX_CALL_DEPTH) -> dict:
     """Build a UML class diagram.
@@ -398,7 +412,7 @@ def class_diagram(state: DocState, package: str = "", apart: str = "", project: 
     (name and full signature). Relations: inheritance, implementation (the base is an interface,
     a trait or a protocol), composition (an attribute holds another class; `via` names the
     attribute), use (a method calls another class or one of its methods) and reference (a class
-    named without being called, e.g. as a type). SQL tables are left out: they are not classes.
+    named without being called, e.g. as a type). Only what `class_paths` lists is drawn.
 
     Args:
         state: Extracted entities and relations.
@@ -414,11 +428,7 @@ def class_diagram(state: DocState, package: str = "", apart: str = "", project: 
         above the classes as frames (`frame` true, `parent` the package above), and `edges`
         (one of `CLASS_RELATIONS`; `has` with `via`).
     """
-    classes = [
-        path for path, entity in state.entities.items()
-        if entity["kind"] == "class" and entity["language"] != "sql"
-        and (not package or path == package or path.startswith(package + "."))
-    ]
+    classes = [path for path in class_paths(state) if not package or path == package or path.startswith(package + ".")]
     kept = set(classes)
     held = {edge["via"]: edge["target"] for edge in _edges_of(state, "has")}  # attribute path -> class it holds
     nodes = []

@@ -646,8 +646,6 @@ td p { margin: 0; }
 .graph-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1rem; font-size: 0.85rem; color: var(--muted); }
 .graph-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
 /* A bar whose Focus has a line of its own: the other fields, the language filter included, share the next. */
-.graph-toolbar.focus-apart .graph-filter { display: contents; }
-.graph-toolbar.focus-apart .graph-focus { flex-basis: 100%; order: -1; }
 .graph-filter .focus-input { width: 26rem; max-width: 60vw; }
 /* A text field with a × to empty it (see live.js). */
 .field-clearable { position: relative; display: inline-flex; align-items: center; }
@@ -910,6 +908,33 @@ td p { margin: 0; }
 .graph-evolution .graph-evolution-commit strong { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; }
 .evolution-later { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
 .uml-box, .arch-frame, .uml-line { transition: opacity 0.12s; }
+/* A drawing expanded into a modal: the same area, fixed over the dimmed page, the drawing taking the
+   room left; the Expand button becomes the × that closes it. The page does not scroll meanwhile. */
+.graph-area.expanded { position: fixed; inset: 1rem; z-index: 100; display: flex; flex-direction: column; margin: 0;
+  padding: 1rem; border-radius: 10px; background: var(--bg); box-shadow: 0 10px 40px rgb(0 0 0 / 35%); }
+.graph-area.expanded .bar-icon-expand { --icon: url("icons/x.svg"); }
+.graph-area.expanded .graph-stage { flex: 1; min-height: 0; }
+.graph-area.expanded .graph-canvas-box { display: flex; flex-direction: column; }
+.graph-area.expanded .graph-stage .graph-canvas[data-view] { flex: 1; height: auto; min-height: 0; }
+body.drawing-expanded { overflow: hidden; }
+body.drawing-expanded::after { content: ""; position: fixed; inset: 0; z-index: 99; background: rgb(0 0 0 / 45%); }
+@media (max-width: 720px) { .graph-area.expanded { inset: 0; border-radius: 0; } }
+/* The consultation modal (an entity's page opened from a drawing): smaller than the expanded drawing,
+   its own scroll, "Open the page" and × on top. */
+.page-dialog { width: min(60rem, 92vw); max-height: 85vh; padding: 0; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 10px 40px rgb(0 0 0 / 35%); overflow: hidden; }
+.page-dialog[open] { display: flex; flex-direction: column; }
+.page-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.page-dialog-head { position: relative; display: flex; align-items: center; gap: 0.5rem; min-height: 2.6rem;
+  padding: 0.4rem 3rem 0.4rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel); }
+.page-dialog-head .bar-icon { color: var(--muted); }
+.page-dialog-title { font-weight: 600; }
+.page-dialog-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.4rem 1rem; padding: 0.55rem 1.2rem;
+  border-top: 1px solid var(--border); background: var(--panel); font-size: 0.85rem; }
+.page-dialog-foot:empty { display: none; }
+.page-dialog-foot .see-in-link { display: inline-flex; align-items: center; gap: 0.35rem; }
+.page-dialog-head .graph-close { top: 0.4rem; right: 0.6rem; }
+#page-dialog-body { overflow: auto; padding: 0.5rem 1.5rem 1.5rem; }
 /* A drawing's side panel (the planner's details): a column beside the drawing, inside its area, on the
    right or the left (.panel-left), closed with .panel-closed; the drawing takes the room it leaves. */
 .graph-stage { display: flex; align-items: stretch; }
@@ -922,10 +947,12 @@ td p { margin: 0; }
 .graph-side-head { display: flex; align-items: center; gap: 0.3rem; padding: 0.45rem 0.6rem 0.45rem 1rem;
   border-bottom: 1px solid var(--border); background: var(--bg); }
 .graph-side-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
-.graph-side-head .graph-panel-side, .graph-side-head .graph-close { position: static; width: 1.7rem; height: 1.7rem; padding: 0;
+.graph-side-head .graph-panel-page { display: inline-flex; align-items: center; justify-content: center; }
+.graph-side-head .graph-panel-page[hidden] { display: none; }
+.graph-side-head .graph-panel-side, .graph-side-head .graph-panel-page, .graph-side-head .graph-close { position: static; width: 1.7rem; height: 1.7rem; padding: 0;
   border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }
-.graph-side-head .graph-panel-side:hover, .graph-side-head .graph-close:hover { background: var(--panel); color: var(--fg); }
-.graph-canvas-bar .graph-panel-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.graph-side-head .graph-panel-side:hover, .graph-side-head .graph-panel-page:hover, .graph-side-head .graph-close:hover { background: var(--panel); color: var(--fg); }
+
 @media (max-width: 720px) { .graph-stage { flex-direction: column; } .graph-side-panel { width: auto; border-left: 1px solid var(--border); } }
 /* The Legend button, floating in the drawing's top left corner, and the legend it opens under it in the
    info panel's box (.graph-info): its name on top with the close button, one item per line, small. */
@@ -1378,7 +1405,17 @@ body.splitting { cursor: col-resize; user-select: none; }
   border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .planner-layout .graph-area { min-width: 0; margin-top: 0; }
 .planner-layout .graph-canvas { height: calc(100vh - var(--topbar-height) - 20rem); min-height: 26rem; }
-.planner-detail { flex: 1; min-height: 0; overflow: auto; padding: 0.8rem 1rem; }
+.planner-detail, .graph-details { flex: 1; min-height: 0; overflow: auto; padding: 0.8rem 1rem; }
+/* The Details panel of the diagrams: the box clicked, its page, and what it relates to as names that
+   show that item in the panel. */
+.graph-details { font-size: 0.88rem; }
+.graph-details-name { margin: 0.1rem 0; font-size: 1.05rem; }
+.graph-details .path { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.graph-details h4 { margin: 0.8rem 0 0.2rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.graph-details .count { color: var(--muted); font-weight: 400; }
+.graph-details ul { margin: 0; padding-left: 1rem; }
+.graph-details-show { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
+.graph-details-show:hover { text-decoration: underline; }
 .planner-detail .dialog-head h2 { font-size: 0.98rem; }
 /* Narrower screens: the panel goes under the drawing; phones: one card per line, form rows wrap. */
 @media (max-width: 1100px) {
@@ -1428,6 +1465,9 @@ body.splitting { cursor: col-resize; user-select: none; }
 .graph-buttons > button:first-child { border-radius: 4px 0 0 4px; }
 .graph-buttons > button:last-child { border-radius: 0 4px 4px 0; }
 .graph-buttons > button:only-child { border-radius: 4px; }
+/* The export menu as the first button of its group (with Expand). */
+.graph-buttons > .graph-export-menu + button { margin-left: -1px; border-radius: 0 4px 4px 0; }
+.graph-buttons > .graph-export-menu:not(:only-child) > .graph-export-toggle { border-radius: 4px 0 0 4px; }
 .graph-canvas-bar .graph-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.9rem; height: 1.7rem; padding: 0; }
 .bar-icon { width: 1rem; height: 1rem; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
 .bar-icon-layers { --icon: url("icons/stack-2.svg"); }
@@ -1437,6 +1477,36 @@ body.splitting { cursor: col-resize; user-select: none; }
 .bar-icon-fit { --icon: url("icons/arrows-maximize.svg"); }
 .bar-icon-legend { --icon: url("icons/list-details.svg"); }
 .bar-icon-panel { --icon: url("icons/layout-sidebar-right.svg"); }
+.bar-icon-expand { --icon: url("icons/maximize.svg"); }
+.bar-icon-link { --icon: url("icons/external-link.svg"); }
+.bar-icon-info { --icon: url("icons/info-circle.svg"); }
+.bar-icon-filters { --icon: url("icons/filter.svg"); }
+.bar-icon-timeline { --icon: url("icons/timeline.svg"); }
+.graph-canvas-bar .graph-row-toggle[aria-pressed="true"], .graph-canvas-bar .graph-panel-toggle[aria-expanded="true"] {
+  border-color: var(--accent); background: var(--accent); color: var(--bg); }
+/* The filters under the drawing's bar, in a row like the evolution's; the field names sit on its colour. */
+.graph-filters-row { padding: 0.8rem 0.75rem 0.6rem; border: 1px solid var(--border); border-bottom: 0; background: var(--panel); }
+.graph-filters-row .graph-toolbar { padding: 0; border: 0; }
+.graph-filters-row .field-label { background: var(--panel); }
+.graph-filters-row.closed, .graph-evolution.closed { display: none; }
+/* Filters on one line: the name fields (.graph-focus: Focus, Path to) take the room left. As the row
+   narrows (its own width, not the window's), they move to a second line under the others (the ::after
+   breaks the line); at the narrowest, each field has a line. */
+.graph-filters-row { container-type: inline-size; }
+.graph-toolbar.filters-line { flex-wrap: nowrap; gap: 0.5rem 1rem; }
+.graph-toolbar.filters-line .graph-filter { display: contents; }
+.graph-toolbar.filters-line .graph-focus { flex: 1 1 16rem; min-width: 0; }
+.graph-toolbar.filters-line .graph-focus .field-clearable { flex: 1; min-width: 0; }
+.graph-toolbar.filters-line .graph-focus .focus-input { width: 100%; max-width: none; }
+@container (max-width: 860px) {
+  .graph-toolbar.filters-line { flex-wrap: wrap; row-gap: 0; }
+  .graph-toolbar.filters-line::after { content: ""; order: 1; flex-basis: 100%; }
+  .graph-toolbar.filters-line .graph-focus { order: 2; flex-basis: 12rem; }
+}
+@container (max-width: 460px) {
+  .graph-toolbar.filters-line > .field, .graph-toolbar.filters-line .graph-filter > .field { flex-basis: 100%; }
+  .graph-toolbar.filters-line .field select { flex: 1; }
+}
 .bar-icon-export { --icon: url("icons/download.svg"); }
 [data-tip] { position: relative; }
 [data-tip]:hover::after {
