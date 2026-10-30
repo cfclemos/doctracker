@@ -27,9 +27,9 @@
 </li>
 {% endmacro %}
 <nav id="tree" {% if oob %}hx-swap-oob="true"{% endif %}>
-  {# The views: AGENT NOTES, DIAGRAMS (architecture, classes and calls as its tabs) and GIT. #}
+  {# The views: AGENT NOTES, DATABASE, DIAGRAMS (architecture, classes and calls as its tabs) and GIT. #}
   <ul class="view-links">
-    {% for name, title, url, views in (("notes", "AGENT NOTES", "/notes", ("notes",)), ("diagrams", "DIAGRAMS", "/" ~ diagram_tab, ("architecture", "classes", "calls")), ("git", "GIT", "/git", ("git",))) %}
+    {% for name, title, url, views in (("notes", "AGENT NOTES", "/notes", ("notes",)), ("database", "DATABASE", "/database", ("database",)), ("diagrams", "DIAGRAMS", "/" ~ diagram_tab, ("architecture", "classes", "calls")), ("git", "GIT", "/git", ("git",))) %}
     <li><a class="view-link{% if view in views %} current{% endif %}" {{ ui.nav_url(url) }}>{{ ui.icon(name) }}{{ title }}</a></li>
     {% endfor %}
   </ul>

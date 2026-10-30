@@ -97,13 +97,14 @@ def render_commit_message(text: str) -> str:
     return _commit_markdown.render(text or "")
 
 
-def local_time(stamp: str) -> str:
+def local_time(stamp: str, seconds: bool = False) -> str:
     """Show an ISO 8601 date-time in this machine's time zone, to the minute (e.g. `2026-10-26 13:35`).
 
     Notes are stored in UTC and commits carry their author's offset; both are shown as local time.
 
     Args:
         stamp: The date-time, e.g. `2026-10-26T16:35:00+00:00`.
+        seconds: Show the seconds too (`2026-10-26 13:35:07`).
 
     Returns:
         The local date and time; the text as it is when it is not a date-time.
@@ -112,7 +113,7 @@ def local_time(stamp: str) -> str:
         moment = datetime.fromisoformat(stamp)
     except (TypeError, ValueError):
         return stamp or ""
-    return (moment.astimezone() if moment.tzinfo else moment).strftime("%Y-%m-%d %H:%M")
+    return (moment.astimezone() if moment.tzinfo else moment).strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
 
 
 CODE_THEMES = sorted(get_all_styles())

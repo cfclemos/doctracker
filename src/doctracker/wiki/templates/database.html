@@ -1,0 +1,48 @@
+{% import "macros.html" as ui %}
+{# DATABASE: the project's databases. For now its one tab, Connections: what the project declares
+   (blocked until allowed) and what the user enters; every form posts to /database/<action>, the same
+   store the MCP tools use, and the page comes back redrawn. The notes' buttons and modal are reused. #}
+{# A connection's card: its name and state, kind and server; a click on it opens the rest in the consultation modal.
+   Its colour, on the pill and the side, tells the state: green allowed, red blocked; sent again out of band
+   after a change made in its details. #}
+{% macro card(c, test, oob=False) -%}
+<article id="connection-{{ c.id }}" hx-get="/database/form?details={{ c.id }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ c.name }}" class="connection-card {% if c.allowed %}allowed{% else %}blocked{% endif %}"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h3 title="{{ c.name }}">{{ ui.icon("database") }}<span class="connection-name">{{ c.name }}</span>
+    <span class="notes-pill {% if c.allowed %}connection-allowed{% else %}connection-blocked{% endif %}">{% if c.allowed %}allowed{% else %}blocked{% endif %}</span></h3>
+  <dl>
+    <dt>Kind</dt><dd>{{ c.kind_name }}</dd>
+    <dt>{% if c.kind == "sqlite" %}File{% else %}Server{% endif %}</dt>
+    <dd title="{{ c.host }}{% if c.port %}:{{ c.port }}{% endif %}"><code>{{ c.host or "—" }}{% if c.port %}:{{ c.port }}{% endif %}</code></dd>
+  </dl>
+</article>
+{%- endmacro %}
+{% macro post(action, confirm="", title="") -%}
+hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
+{%- endmacro %}
+
+<div class="notes-page database-page">
+  {{ ui.view_header("database", "DATABASE", "") }}
+  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"),), tab) }}
+  <p class="tab-description">The databases your project declares, and those you enter. Declared ones stay blocked until you allow them; doctracker only ever reads: the session is read only where the database allows it, every transaction is rolled back, and any statement that is not a read is aborted before it is sent.</p>
+  {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+
+  {% if locked %}
+  {# No vault on this system: the saved passwords open with a master password, typed once per start. #}
+  <form class="database-unlock" {{ post("unlock") }}>
+    <span>This system has no vault for the key of the saved passwords. Type the master password{% if not has_secrets %} you want to use{% endif %}:</span>
+    <input type="password" name="master_password" autocomplete="current-password" required>
+    <button type="submit" class="primary">Unlock</button>
+  </form>
+  {% endif %}
+
+  <div class="graph-toolbar">
+    <button type="button" class="notes-button primary" hx-get="/database/form" hx-target="#database-dialog-body">New connection</button>
+  </div>
+
+  {% if not connections %}<p class="empty">Nothing found in the project's files. Enter a connection with “New connection”.</p>{% endif %}
+  <div class="connection-cards">
+    {% for c in connections %}{{ card(c, tests.get(c.id)) }}{% endfor %}
+  </div>
+
+  <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
+</div>

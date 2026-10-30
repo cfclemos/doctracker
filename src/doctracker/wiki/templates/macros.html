@@ -304,6 +304,21 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {%- endmacro %}
 
 {# Tabs of a page (AGENT NOTES, DIAGRAMS): `(name, label, url)` for each; the current one is marked. #}
+{# The ? before a field or a name: on hover (or focus), a box explaining it in detail. #}
+{% macro help_hover(name, text) -%}
+<span class="help-hover" tabindex="0" aria-label="About {{ name }}"><i class="help-icon"></i><span class="help-box" role="tooltip">{{ text }}</span></span>
+{%- endmacro %}
+
+{# A field of any form of the wiki (the one way every form shows its fields): the ? explaining it, then a
+   Material-style outlined field whose name sits on the border, with * when it is required; the control
+   (input, select, textarea, checkbox) is given by the caller. `choice`: the control is a toggle group of
+   buttons, shown as they are, without the outline around them. #}
+{% macro form_field(label, help, required=False, wide=True, choice=False, extra="") -%}
+<div class="form-field{% if not wide %} narrow{% endif %}{% if extra %} {{ extra }}{% endif %}">{{ help_hover(label, help) }}
+{%- if choice %}<div class="field-choice" role="group" aria-label="{{ label }}">{{ caller() }}</div>
+{%- else %}<label class="field"><span class="field-label">{{ label }}{% if required %} *{% endif %}</span>{{ caller() }}</label>{% endif %}</div>
+{%- endmacro %}
+
 {% macro tabs(items, current) -%}
 <nav class="tabs">
   {% for name, label, url in items %}
