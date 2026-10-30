@@ -1,0 +1,414 @@
+<!doctype html><meta charset="utf-8"><title>Universe — sigma.js</title><link rel="stylesheet" href="common.css">
+<header>
+  <h1>Universe</h1><select id="db" title="Data"><option value="acme">acme (example)</option><option value="large">large (600 tables)</option></select><button id="back" title="Back one level">←</button><span class="crumbs" id="crumbs"></span>
+  <span class="themes" id="themes">Theme:</span>
+  <span class="themes" id="focus-box" hidden><label>Depth <select id="depth"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+    <label><input type="checkbox" id="others"> <span id="others-label">outside</span></label></span>
+  <span class="stats" id="stats">loading…</span>
+</header>
+<div id="stage"></div>
+<div class="legend" id="legend"></div>
+<div id="tip" hidden></div>
+<div id="hoverbox" hidden><div id="hover-body"></div><button id="hover-details">Details ›</button></div>
+<aside id="details" hidden><header><b>Details</b><button id="details-close" title="Close">×</button></header><div id="details-body"></div></aside>
+<script type="module">
+import Graph from "https://esm.sh/graphology@0.26.0";
+import Sigma from "https://esm.sh/sigma@3.0.2";
+import EdgeCurveProgram, { indexParallelEdgesIndex } from "https://esm.sh/@sigma/edge-curve@3.1.0?deps=sigma@3.0.2";
+import noverlap from "https://esm.sh/graphology-layout-noverlap@0.4.2";
+import { COLORS, LINKS, MASS, forces, forceAtlas2 } from "./layout.js";
+
+// Every node is a badge in the colour of its kind with its name; a column's badge has its
+// characteristics as symbols after the name, in the shapes database tools use: key primary key,
+// link foreign key (it points elsewhere), diamond unique, lines indexed, bolt computed by the database,
+// asterisk not null (required), crossed circle null allowed. Key, link and lines are Tabler's (MIT).
+const KEY = `<path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z"/><path d="M15 9h.01"/>`;
+const LINK = `<path d="M9 15l6 -6"/><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464"/><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"/>`;
+const SYMBOLS = {
+  pk: [KEY, "primary key"], fk: [LINK, "foreign key"],
+  unique: [`<path d="M12 3l9 9l-9 9l-9 -9z" fill="#000"/>`, "unique"],
+  index: [`<path d="M9 6h11M9 12h11M9 18h11M5 6v.01M5 12v.01M5 18v.01"/>`, "indexed"],
+  generated: [`<path d="M13 3v7h6l-8 11v-7h-6l8 -11" fill="#000"/>`, "computed by the database"],
+  notnull: [`<path d="M12 4v16M5 8l14 8M19 8l-14 8"/>`, "not null"],
+  null: [`<circle cx="12" cy="12" r="7"/><path d="M5 19l14 -14"/>`, "null allowed"],
+};
+const svg = (body, colour) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="${colour}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${body.replace(/#000/g, colour)}</svg>`)}`;
+// A colour mixed towards white: on a badge, the symbols take a light tint of the badge's own colour.
+const tint = (hex, k) => "#" + [1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - k) + 255 * k).toString(16).padStart(2, "0")).join("");
+const icons = new Map();
+const icon = (mark, colour) => { const key = mark + colour; if (!icons.has(key)) { const img = new Image(); img.onload = () => window.universe?.renderer.refresh(); img.src = svg(SYMBOLS[mark][0], colour); icons.set(key, img); } return icons.get(key); };
+const marksOf = (flags = []) => [...["pk", "fk", "unique", "index", "generated"].filter((f) => flags.includes(f)), flags.includes("null") ? "null" : "notnull"];
+// Badges by level: the server's largest, each level below smaller.
+const FONT = { server: 15, database: 14, schema: 13, table: 12, view: 12, column: 11 }, FAMILY = "system-ui, sans-serif", PAD = 5;
+const measure = document.createElement("canvas").getContext("2d");
+function badgeSize(label, kind, marks) {
+  const f = FONT[kind]; measure.font = `600 ${f}px ${FAMILY}`;
+  const symbols = marks ? marks.length * (f + 3) + 10 : 0;  // with the divider before them
+  return [Math.ceil(symbols + measure.measureText(label).width + 2 * PAD), f + 2 * PAD];
+}
+// Which data: our acme example (the four test servers) by default, ?db=large for the generated 600 tables.
+const source = new URLSearchParams(location.search).get("db") ?? "acme";
+const data = await (await fetch(`universe-${source}.json`)).json();
+const stage = document.getElementById("stage"), tip = document.getElementById("tip");
+if (!document.createElement("canvas").getContext("webgl")) { stage.innerHTML = "<p style='padding:2rem'>WebGL is not available in this browser.</p>"; throw new Error("no WebGL"); }
+
+// The SQL tree: server → database → schema → table or view → column; every node knows its parent.
+const LEVEL = { server: 0, database: 1, schema: 2, table: 3, view: 3, column: 4 };
+const NAMES = ["servers", "databases", "schemas", "tables", "columns"];
+const byId = new Map(data.nodes.map((n) => [n.id, n]));
+const children = new Map();
+for (const n of data.nodes) if (n.parent) { if (!children.has(n.parent)) children.set(n.parent, []); children.get(n.parent).push(n.id); }
+const level = (id) => LEVEL[byId.get(id).kind];
+const up = (id, at) => { let x = id; while (x && level(x) > at) x = byId.get(x).parent; return x; };  // the ancestor at a level
+const chain = (id) => { const c = []; for (let x = id; x; x = byId.get(x).parent) c.unshift(x); return c; };
+const relations = data.edges.filter((e) => e.kind !== "contains");
+// A column drawn with a foreign key line always carries the foreign key mark, whatever the source says.
+for (const e of relations) if (e.kind === "foreign key") { const c = byId.get(e.source); if (c?.kind === "column" && !(c.flags ??= []).includes("fk")) c.flags.push("fk"); }
+const OUTSIDE = "#9cc3f5";  // a node outside the one opened, drawn only because a link reaches it
+
+// The theme: which kinds of relation are drawn (and so which nodes take part).
+const themes = new Set();  // no theme at first: every kind of relation starts unticked
+let others = false, depth = 1;  // how far from the focus, and whether nodes outside it count
+document.getElementById("themes").insertAdjacentHTML("beforeend", Object.entries(LINKS).filter(([k]) => k !== "contains")
+  .map(([k, c]) => `<label><input type="checkbox" data-kind="${k}"${themes.has(k) ? " checked" : ""}><b style="border-color:${c}"></b>${k}</label>`).join(""));
+document.getElementById("themes").addEventListener("change", (e) => { const k = e.target.dataset.kind; e.target.checked ? themes.add(k) : themes.delete(k); show(path, true); });
+document.getElementById("db").value = source;
+document.getElementById("db").addEventListener("change", (e) => { location.search = `?db=${e.target.value}`; });
+document.getElementById("depth").addEventListener("change", (e) => { depth = +e.target.value; show(path, true); });
+document.getElementById("others").addEventListener("change", (e) => { others = e.target.checked; show(path, true); });
+
+// What one view holds. [] = the servers. A server, database or schema opened = that node in the middle
+// and its children; relations are drawn between children (each end lifted to the child holding it), and
+// nodes outside it reached by them, up to Depth steps, only when "outside" is on. A table opened = its
+// columns in a ring, each linked to the tables at the other end. "+n" = links to nodes not drawn.
+function build(path) {
+  const nodes = new Map(), links = new Map();
+  const node = (id, extra = {}) => { if (!nodes.has(id)) nodes.set(id, { id, kind: byId.get(id).kind, ...extra }); };
+  // One line per pair of nodes and kind of relation, both directions summed.
+  const link = (a, b, kind) => { if (a === b) return; const key = (a < b ? `${a}|${b}` : `${b}|${a}`) + `|${kind}`;
+    if (!links.has(key)) links.set(key, { a, b, kinds: {} }); const k = links.get(key).kinds; k[kind] = (k[kind] ?? 0) + 1; };
+  const chosen = relations.filter((e) => themes.has(e.kind));
+  const focus = path.at(-1), at = focus ? Math.min(level(focus) + 1, 3) : 0;  // the level drawn
+  const home = focus ? up(focus, Math.min(level(focus), 2)) : null;        // what counts as inside
+  const inside = (id) => !home || up(id, level(home)) === home;
+
+  // Nodes reached from the focus by the chosen relations, step by step (at the level drawn).
+  const near = new Map();
+  for (const e of chosen) { const a = up(e.source, at), b = up(e.target, at); if (a === b) continue;
+    for (const [x, y] of [[a, b], [b, a]]) { if (!near.has(x)) near.set(x, new Set()); near.get(x).add(y); } }
+  let ring = !focus ? data.nodes.filter((n) => n.kind === "server").map((n) => n.id)
+    : level(focus) === 3 ? [focus] : (children.get(focus) ?? []);
+  const reached = new Set(ring), via = new Map();  // via: the node each one was reached from
+  for (let step = 0; focus && step < depth; step++) {
+    const next = [];
+    for (const t of ring) for (const n of near.get(t) ?? []) if (!reached.has(n) && (others || inside(n))) { reached.add(n); via.set(n, t); next.push(n); }
+    ring = next;
+  }
+  if (focus && level(focus) < 3) node(focus);  // first, so it starts in the middle
+  if (focus && level(focus) === 3) node(focus);
+  for (const t of reached) node(t, inside(t) ? {} : { outside: true });
+  for (const e of chosen) {
+    const a = up(e.source, at), b = up(e.target, at);
+    if (!reached.has(a) || !reached.has(b)) { for (const t of [a, b]) if (reached.has(t)) nodes.get(t).away = (nodes.get(t).away ?? 0) + 1; continue; }
+    // The table opened links through its columns; everything else node to node.
+    const table = focus && level(focus) === 3 ? focus : null;
+    const from = a === table ? up(e.source, 4) : a, to = b === table ? up(e.target, 4) : b;
+    if (from !== a) node(from); if (to !== b) node(to);
+    link(from, to, e.kind);
+  }
+  if (focus && level(focus) === 3) for (const c of children.get(focus) ?? []) { node(c); link(focus, c, "contains"); }
+  else if (focus) for (const t of reached) if (byId.get(t).parent === focus) link(focus, t, "contains");
+  return { nodes, links, via };
+}
+
+// A name short enough to read: inside the one opened its own name; outside it, the path from where it differs.
+function name(id) {
+  const n = byId.get(id), focus = path.at(-1);
+  if (!focus || !nodes_outside.has(id)) return n.label;
+  const mine = chain(focus), its = chain(id); let i = 0; while (i < mine.length && mine[i] === its[i]) i++;
+  return its.slice(i).map((x) => byId.get(x).label).join(" › ");
+}
+let nodes_outside = new Set();
+
+const graph = new Graph({ multi: true });
+const saved = new Map();  // view → positions, so going back finds the drawing where it was
+let path = [];
+function show(next, keepPositions = false) {
+  if (graph.order) { const p = {}; graph.forEachNode((id, a) => (p[id] = [a.x, a.y])); saved.set(path.join("|"), p); }
+  const before = keepPositions ? saved.get(path.join("|")) : null;
+  path = next;
+  const { nodes, links, via } = build(path), memory = before ?? saved.get(path.join("|")) ?? {};
+  nodes_outside = new Set([...nodes.values()].filter((n) => n.outside).map((n) => n.id));
+  const degree = new Map();
+  for (const l of links.values()) for (const id of [l.a, l.b]) degree.set(id, (degree.get(id) ?? 0) + 1);
+  graph.clear();
+  // Nodes new to this view start in a spiral as wide as the drawing already there.
+  const known = Object.values(memory), wide = known.length ? Math.max(...known.map(([x, y]) => Math.hypot(x, y))) / Math.sqrt(nodes.size) : 10;
+  let i = 0, fresh = 0;
+  for (const n of nodes.values()) {
+    if (!memory[n.id]) fresh++;
+    const [x, y] = memory[n.id] ?? [Math.cos(i * 2.4) * wide * Math.sqrt(i + 1), Math.sin(i * 2.4) * wide * Math.sqrt(i + 1)]; i++;
+    const marks = n.kind === "column" ? marksOf(byId.get(n.id).flags) : null, label = name(n.id) + (n.away ? ` (+${n.away})` : "");
+    const [bw, bh] = badgeSize(label, n.kind, marks);
+    // The badge is the node: sigma's own dot stays transparent underneath.
+    graph.addNode(n.id, { x, y, kind: n.kind, outside: !!n.outside, marks, label, bw, bh, size: 3, color: "rgba(0,0,0,0)",
+      fill: n.outside ? (LEVEL[n.kind] >= 3 ? OUTSIDE : tint(COLORS[n.kind], 0.45)) : COLORS[n.kind] });
+    if (MASS[n.kind]) graph.addEdge(n.id, n.id, { kind: "mass", weight: MASS[n.kind] });
+  }
+  for (const l of links.values()) {
+    const [kind, total] = Object.entries(l.kinds)[0];
+    graph.addEdge(l.a, l.b, { kind, kinds: l.kinds, weight: kind === "contains" ? 3 : 1, color: LINKS[kind], size: kind === "contains" ? 0.5 : Math.min(1 + Math.log2(total) * 1.2, 9) });
+  }
+  // Two kinds between the same pair: the lines bend apart instead of covering each other.
+  indexParallelEdgesIndex(graph, { edgeIndexAttribute: "parallelIndex", edgeMaxIndexAttribute: "parallelMaxIndex" });
+  graph.forEachEdge((edge, a) => { if (a.kind !== "mass" && a.parallelIndex > 0) graph.mergeEdgeAttributes(edge, { type: "curved", curvature: 0.12 * a.parallelIndex }); });
+  // A new view opens already settled; a view seen before comes back as it was.
+  if (fresh) path.length && level(path.at(-1)) === 3 ? radial(path.at(-1), via) : forceAtlas2.assign(graph, { iterations: 300, settings: forces(graph) });
+  crumbs();
+  apart();
+  const lines = [...links.values()].filter((l) => !l.kinds.contains).length, byKind = {};
+  for (const l of links.values()) for (const [k, n] of Object.entries(l.kinds)) if (k !== "contains") byKind[k] = (byKind[k] ?? 0) + n;
+  document.getElementById("stats").textContent = `${graph.order} nodes · ${lines} lines` + (lines ? " (" + Object.entries(byKind).map(([k, n]) => `${n} ${k}`).join(" · ") + ")" : "");
+}
+// Layout units per screen pixel, chosen so that neighbours sit a gap apart that grows with the badges
+// (servers further apart than columns), whatever scale the layout produced. A table's rings are laid
+// out in pixels already.
+function unitOf() {
+  if (path.length && level(path.at(-1)) === 3) return 1;
+  const pts = []; graph.forEachNode((_, a) => pts.push([a.x, a.y, a.bw]));
+  const gaps = pts.map((p) => Math.min(...pts.filter((q) => q !== p).map((q) => Math.hypot(p[0] - q[0], p[1] - q[1])))).filter((g) => Number.isFinite(g) && g > 0).sort((a, b) => a - b);
+  const widths = pts.map((p) => p[2]).sort((a, b) => a - b);
+  return gaps.length ? gaps[gaps.length >> 1] / (widths[widths.length >> 1] + 40) : 1;
+}
+// No badge covers another: each node pushed out of its neighbours' way, by the size of its badge.
+function apart() {
+  const unit = unitOf();
+  noverlap.assign(graph, { maxIterations: 600, settings: { margin: 8 * unit, ratio: 1, expansion: 1.05, gridSize: 4 },
+    inputReducer: (_, a) => ({ x: a.x, y: a.y, size: (a.bw / 2) * unit }), outputReducer: (_, p) => ({ x: p.x, y: p.y }) });
+  baseUnit = unit; fit(unit);
+}
+// The camera at one pixel per unit/px: only a drawing larger than the screen is zoomed out.
+function fit(unit) {
+  if (!renderer || !graph.order) return;
+  const xs = [], ys = []; graph.forEachNode((_, a) => { xs.push(a.x); ys.push(a.y); });
+  const w = stage.clientWidth, h = stage.clientHeight, cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const side = Math.max(Math.max(...xs) - Math.min(...xs) + 260 * unit, Math.max(...ys) - Math.min(...ys) + 120 * unit, Math.min(w, h) * unit);
+  renderer.setCustomBBox({ x: [cx - side / 2, cx + side / 2], y: [cy - side / 2, cy + side / 2] });
+  renderer.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
+  renderer.refresh();
+}
+function crumbs() {
+  const parts = [["Universe", []], ...path.map((p, i) => [byId.get(p).label, path.slice(0, i + 1)])];
+  document.getElementById("crumbs").innerHTML = parts.map(([label], i) => (i === parts.length - 1 ? `<b>${label}</b>` : `<a data-i="${i}">${label}</a>`)).join(" › ");
+  document.getElementById("back").disabled = !path.length;
+  document.getElementById("focus-box").hidden = !path.length;
+  if (path.length) document.getElementById("others-label").textContent = `other ${NAMES[Math.min(level(path.at(-1)), 2)]}`;
+  // The bar may take two lines: the drawing starts below it.
+  const below = `${document.querySelector("header").offsetHeight}px`;
+  if (stage.style.top !== below) { stage.style.top = below; document.getElementById("details").style.top = `calc(${below} + 12px)`; renderer?.resize(); renderer?.refresh(); }
+}
+document.getElementById("crumbs").addEventListener("click", (e) => { if (e.target.dataset.i) show(path.slice(0, +e.target.dataset.i)); });
+document.getElementById("back").addEventListener("click", () => show(path.slice(0, -1)));
+
+// A table's view is drawn in rings, so lines do not cross: the table in the middle, its columns around
+// it, each table reached through a column straight out from that column, the next steps further out
+// from the table they were reached from. Each slice of the circle is as wide as what hangs on it.
+function radial(table, via) {
+  const columns = (children.get(table) ?? []).filter((c) => graph.hasNode(c)), place = new Map([[table, [0, 0]]]);
+  const hang = new Map();
+  for (const t of via.keys()) {
+    let parent = via.get(t);
+    if (parent === table) parent = graph.neighbors(t).find((n) => columns.includes(n)) ?? columns[0];
+    if (!hang.has(parent)) hang.set(parent, []); hang.get(parent).push(t);
+  }
+  const weight = new Map(), count = (n) => { const w = Math.max(1, (hang.get(n) ?? []).reduce((s, k) => s + count(k), 0)); weight.set(n, w); return w; };
+  // Columns with nothing hanging still get room enough to read their names.
+  const below = columns.reduce((s, c) => s + count(c), 0), room = Math.max(1, below / Math.max(columns.length, 1));
+  for (const c of columns) if (!hang.has(c)) weight.set(c, room);
+  const total = columns.reduce((s, c) => s + weight.get(c), 0);
+  // Distances in pixels: the columns' ring just wide enough for their names, the tables well beyond.
+  const inner = Math.max(80, columns.length * 16);
+  const out = (n, start, w, ring) => {
+    place.set(n, [start + w / 2, ring]);
+    let at = start;
+    for (const k of hang.get(n) ?? []) { const kw = (w * weight.get(k)) / weight.get(n); out(k, at, kw, ring === inner ? inner + 150 : ring + 140); at += kw; }
+  };
+  let at = 0;
+  for (const c of columns) { const w = (2 * Math.PI * weight.get(c)) / total; out(c, at, w, inner); at += w; }
+  graph.forEachNode((id) => { const p = place.get(id); if (!p) return; const [a, r] = p;
+    graph.mergeNodeAttributes(id, { x: Math.cos(a) * r, y: Math.sin(a) * r }); });
+  // Links that are not the way a table was reached cross the rings: drawn faint, so the tree reads.
+  graph.forEachEdge((e, a, s, t) => { if (a.kind === "mass" || a.kind === "contains") return;
+    const tree = via.get(s) === t || via.get(t) === s || columns.includes(s) || columns.includes(t);
+    if (!tree) graph.mergeEdgeAttributes(e, { color: a.color + "40", size: 0.6 }); });
+}
+
+// Live movement after a drag: a few steps of the forces per frame, then it rests (not in a table's rings).
+let steps = 0;
+function move(frames) { if (path.length && level(path.at(-1)) === 3) return; const idle = steps === 0; steps = Math.max(steps, frames); if (idle) requestAnimationFrame(step); }
+function step() {
+  if (steps <= 0) return;
+  forceAtlas2.assign(graph, { iterations: 1, settings: forces(graph, 8) });
+  if (--steps === 0) { const unit = unitOf(); noverlap.assign(graph, { maxIterations: 100, settings: { margin: 6 * unit }, inputReducer: (_, a) => ({ x: a.x, y: a.y, size: (a.bw / 2) * unit }), outputReducer: (_, p) => ({ x: p.x, y: p.y }) }); }
+  requestAnimationFrame(step);
+}
+
+const hiddenKinds = new Set();
+const legend = document.getElementById("legend");
+legend.innerHTML = Object.entries(COLORS).map(([k, c]) => `<label><input type="checkbox" checked data-kind="${k}"> <i class="swatch" style="background:${c}"></i>${k}</label>`).join("")
+  + `<label><i class="swatch" style="background:${OUTSIDE}"></i>outside the one opened</label>`
+  + `<p class="hint">column symbols</p>` + Object.entries(SYMBOLS).map(([m, [, label]]) => `<label><img src="${icon(m, COLORS.column).src}" style="width:12px;height:12px;margin-right:6px;vertical-align:-2px">${label}</label>`).join("")
+  + `<p class="hint">click: go into it<br>double click or hover › Details: its details<br>← or the path above: back<br>drag: the others follow</p>`;
+legend.addEventListener("change", (e) => { const k = e.target.dataset.kind; e.target.checked ? hiddenKinds.delete(k) : hiddenKinds.add(k); renderer.refresh(); });
+
+// The badge: opaque, in the colour of its kind, the name in white; a column's symbols on a second line,
+// in a light tint of the same colour. Faded when another node is hovered; outlined when it is the one.
+// Where each badge was drawn is kept, so the mouse finds nodes by their badge.
+const rects = new Map();
+// Badges follow the zoom: at the opening zoom they have their own size; zoomed out they shrink with the
+// distances, so they never cover each other; too small to read, only the coloured shape stays.
+let scale = 1, baseUnit = 1;
+function drawBadge(context, data, hover = false) {
+  // How many screen pixels one opening pixel takes in this frame (measured once the frame's view is set).
+  if (scale === null) { const a = renderer.graphToViewport({ x: 0, y: 0 }), b = renderer.graphToViewport({ x: baseUnit, y: 0 }); scale = Math.hypot(b.x - a.x, b.y - a.y) || 1; }
+  const k = Math.min(scale, 1), f = FONT[data.kind] * k, w = data.bw * k, h = data.bh * k, left = data.x - w / 2, top = data.y - h / 2;
+  rects.set(data.key, [left, top, w, h]);
+  context.globalAlpha = data.dim ? 0.18 : 1;
+  context.beginPath(); context.roundRect(left, top, w, h, 5 * k);
+  context.fillStyle = data.fill; context.fill();
+  if (hover) { context.strokeStyle = "#1f2328"; context.lineWidth = 2; context.stroke(); }
+  if (f >= 6) {
+    // One line, centred: the name, a divider, then a column's symbols.
+    const marks = data.marks ?? [], y0 = data.y - f / 2;
+    context.font = `600 ${f}px ${FAMILY}`;
+    const text = context.measureText(data.label).width, symbols = marks.length ? marks.length * (f + 3 * k) + 10 * k : 0;
+    const start = data.x - (text + symbols) / 2;
+    context.fillStyle = "#ffffff"; context.textBaseline = "top";
+    context.fillText(data.label, start, y0);
+    context.textBaseline = "alphabetic";
+    // A thin vertical divider between the name and the symbols.
+    if (marks.length) { context.strokeStyle = tint(data.fill, 0.55); context.lineWidth = 1; context.beginPath();
+      context.moveTo(start + text + 5 * k, top + 3 * k); context.lineTo(start + text + 5 * k, top + h - 3 * k); context.stroke(); }
+    let x = start + text + 10 * k;
+    for (const m of marks) { const img = icon(m, tint(data.fill, 0.8)); if (img.complete) context.drawImage(img, x, y0, f, f); x += f + 3 * k; }
+  }
+  context.globalAlpha = 1;
+}
+const hit = (x, y) => { let found = null; for (const [id, [l, t, w, h]] of rects) if (x >= l && x <= l + w && y >= t && y <= t + h && graph.hasNode(id)) found = id; return found; };
+
+let renderer = null, hovered = null, near = new Set(), dragged = null, moved = false, mouse = [0, 0];
+show([]);
+renderer = new Sigma(graph, stage, {
+  labelRenderedSizeThreshold: 0, enableEdgeEvents: true, edgeProgramClasses: { curved: EdgeCurveProgram },
+  defaultDrawNodeLabel: (context, data) => drawBadge(context, data), defaultDrawNodeHover: (context, data) => drawBadge(context, data, true),
+  nodeReducer: (id, a) => {
+    if (hiddenKinds.has(a.kind)) return { ...a, hidden: true };
+    return { ...a, key: id, forceLabel: true, highlighted: id === hovered, dim: !!hovered && id !== hovered && !near.has(id) };
+  },
+  edgeReducer: (id, a) => {
+    if (a.kind === "mass") return { ...a, hidden: true };
+    const s = graph.source(id), t = graph.target(id);
+    if (hiddenKinds.has(graph.getNodeAttribute(s, "kind")) || hiddenKinds.has(graph.getNodeAttribute(t, "kind"))) return { ...a, hidden: true };
+    if (hovered && s !== hovered && t !== hovered) return { ...a, hidden: true };
+    return a;
+  },
+});
+renderer.on("beforeRender", () => { rects.clear(); scale = null; });
+apart();
+document.addEventListener("mousemove", (e) => { mouse = [e.clientX, e.clientY]; });
+renderer.on("enterEdge", ({ edge }) => { const k = graph.getEdgeAttribute(edge, "kinds"); if (!k || k.contains) return;
+  tip.textContent = `${byId.get(graph.source(edge)).label} — ${byId.get(graph.target(edge)).label}: ` + Object.entries(k).map(([kind, n]) => `${n} ${kind}`).join(" · ");
+  tip.style.left = `${mouse[0] + 12}px`; tip.style.top = `${mouse[1] + 12}px`; tip.hidden = false; });
+renderer.on("leaveEdge", () => { tip.hidden = true; });
+
+// Hovering a node: its neighbours stand out, and a small box by its name offers the details.
+const box = document.getElementById("hoverbox");
+let boxNode = null, boxTimer = null;
+const hideBox = () => { boxTimer = setTimeout(() => { box.hidden = true; boxNode = null; }, 300); };
+box.addEventListener("mouseenter", () => clearTimeout(boxTimer));
+box.addEventListener("mouseleave", hideBox);
+document.getElementById("hover-details").addEventListener("click", () => { if (boxNode) details(boxNode); box.hidden = true; });
+function enter(node) {
+  hovered = node; near = new Set(graph.neighbors(node)); renderer.refresh();
+  clearTimeout(boxTimer); boxNode = node;
+  const [l, t, w, h] = rects.get(node) ?? [0, 0, 0, 0], r = stage.getBoundingClientRect();
+  document.getElementById("hover-body").innerHTML = characteristics(node);
+  box.style.left = `${r.left + l + w + 6}px`; box.style.top = `${r.top + t}px`; box.hidden = false;
+}
+function leave() { hovered = null; near = new Set(); renderer.refresh(); hideBox(); }
+// A node's characteristics, one under the other: name, kind and place; a column's type and symbols (a
+// foreign key with the column it points to); others what they hold and their relations by kind.
+function characteristics(id) {
+  const n = byId.get(id), esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  const row = (icon, text) => `<div class="row">${icon}<span>${esc(text)}</span></div>`;
+  const img = (m) => `<img src="${icon(m, COLORS.column).src}">`;
+  let rows = `<b>${esc(n.label)}</b><div class="where">${n.kind} · ${esc(chain(id).slice(0, -1).map((x) => byId.get(x).label).join(" › "))}</div>`;
+  if (n.kind === "column") {
+    if (n.type) rows += row("", n.type);
+    for (const m of marksOf(n.flags)) {
+      const to = m === "fk" ? relations.filter((e) => e.kind === "foreign key" && e.source === id).map((e) => chain(e.target).slice(2).map((x) => byId.get(x).label).join(".")) : [];
+      rows += row(img(m), SYMBOLS[m][1] + (to.length ? ` → ${to.join(", ")}` : ""));
+    }
+  } else {
+    const counts = {};
+    for (const k of children.get(id) ?? []) counts[byId.get(k).kind] = (counts[byId.get(k).kind] ?? 0) + 1;
+    for (const [k, c] of Object.entries(counts)) rows += row("", `${c} ${k}${c > 1 ? "s" : ""}`);
+    const mine = (end) => up(end, LEVEL[n.kind]) === id, rel = {};
+    for (const e of relations) if (mine(e.source) !== mine(e.target)) rel[e.kind] = (rel[e.kind] ?? 0) + 1;
+    for (const [k, c] of Object.entries(rel)) rows += row(`<i style="border-color:${LINKS[k]}"></i>`, `${c} ${k}`);
+  }
+  return rows;
+}
+const captor = renderer.getMouseCaptor();
+captor.on("mousemovebody", (e) => {
+  if (!dragged) { const node = hit(e.x, e.y); if (node !== hovered) { if (hovered) leave(); if (node) enter(node); } stage.style.cursor = node ? "pointer" : ""; return; }
+  const p = renderer.viewportToGraph(e);
+  graph.mergeNodeAttributes(dragged, { x: p.x, y: p.y }); moved = true; move(30);
+  e.preventSigmaDefault(); e.original.preventDefault(); e.original.stopPropagation();
+});
+captor.on("mousedown", (e) => { const node = hit(e.x, e.y); if (!node) return; dragged = node; moved = false; graph.setNodeAttribute(node, "fixed", true); e.preventSigmaDefault(); });
+captor.on("mouseup", () => { if (!dragged) return; graph.removeNodeAttribute(dragged, "fixed"); dragged = null; move(60); });
+
+// One click goes into the node (its place in the tree becomes the path); a second click on it within
+// half a second opens its details instead (counted here: sigma's own double click window is shorter
+// than a person's double click).
+let pending = null, pendingNode = null;
+captor.on("click", (e) => {
+  const node = hit(e.x, e.y);
+  if (!node || moved) return;
+  clearTimeout(pending);
+  if (pendingNode === node) { pendingNode = null; details(node); return; }
+  pendingNode = node;
+  pending = setTimeout(() => {
+    pendingNode = null; hovered = null; near = new Set(); box.hidden = true;
+    const target = level(node) === 4 ? byId.get(node).parent : node;
+    if (target !== path.at(-1)) show(chain(target));
+  }, 500);
+});
+for (const event of ["doubleClickNode", "doubleClickStage", "doubleClickEdge"]) renderer.on(event, (e) => e.preventSigmaDefault());
+document.getElementById("details-close").addEventListener("click", () => { document.getElementById("details").hidden = true; });
+
+// What the details tell: where the node sits, what it holds, and its relations by kind, in and out.
+function details(id) {
+  const n = byId.get(id), esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  const mine = (end) => up(end, LEVEL[n.kind]) === id, short = (x) => chain(x).slice(1).map((y) => byId.get(y).label).join(".");
+  const out = {}, inn = {};
+  for (const e of relations) {
+    if (mine(e.source) && !mine(e.target)) (out[e.kind] ??= []).push(e);
+    if (mine(e.target) && !mine(e.source)) (inn[e.kind] ??= []).push(e);
+  }
+  const rows = (group, arrow) => Object.entries(group).map(([kind, list]) => `<li><b style="color:${LINKS[kind]}">${kind}</b> ${arrow} ${list.length}`
+    + `<ul>${list.slice(0, 12).map((e) => `<li>${esc(`${short(e.source)} → ${short(e.target)}`)}</li>`).join("")}`
+    + (list.length > 12 ? `<li>… ${list.length - 12} more</li>` : "") + "</ul></li>").join("");
+  const kids = children.get(id) ?? [], counts = {};
+  for (const k of kids) counts[byId.get(k).kind] = (counts[byId.get(k).kind] ?? 0) + 1;
+  const holds = n.kind === "table" || n.kind === "view"
+    ? `<p>Columns</p><ul>${kids.map((c) => `<li>${esc(byId.get(c).label)} <span class="kind">${esc(byId.get(c).type ?? "")} ${(byId.get(c).flags ?? []).filter((f) => f !== "null").join(" ")}</span></li>`).join("")}</ul>`
+    : kids.length ? `<p>${Object.entries(counts).map(([k, c]) => `${c} ${k}${c > 1 ? "s" : ""}`).join(" · ")}</p>` : "";
+  document.getElementById("details-body").innerHTML = `<h2>${esc(n.label)}</h2><p class="kind">${n.kind} · ${esc(chain(id).map((x) => byId.get(x).label).join(" › "))}</p>${holds}`
+    + (n.kind === "column" ? `<p>${esc(n.type ?? "")}</p><p class="kind">${(n.flags ?? []).join(" · ") || "no marks"}</p>` : "")
+    + `<p>Relations</p><ul>${rows(out, "→")}${rows(inn, "←")}</ul>` + (Object.keys(out).length + Object.keys(inn).length ? "" : "<p class='kind'>none</p>");
+  document.getElementById("details").hidden = false;
+}
+window.universe = { renderer, graph, show, chain, rects, unitOf, get base() { return baseUnit; } };
+</script>

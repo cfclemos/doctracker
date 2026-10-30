@@ -15,6 +15,7 @@ doctracker start
 | `monorepo` | members in `packages/`: two in Python sharing the namespace package `acme` (with JS, CSS and HTML), and one each in Java, C#, C, Go, Rust, TypeScript, PHP and SQL |
 | `frontend-only` | HTML, CSS and JavaScript, no Python |
 | `skipped` | folders doctracker never reads (`venv`, `node_modules`) next to a file it reads |
+| `database` | the acme shop on Postgres, MySQL, SQL Server (one `compose.yaml`) and SQLite, with every kind of object each catalog describes, for the DATABASE section; see its README |
 
 The Java, C#, C, Go, Rust, TypeScript, PHP and SQL members wait for those languages to be read.
 

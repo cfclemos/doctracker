@@ -1,0 +1,33 @@
+body { margin: 0; font: 14px system-ui, sans-serif; color: #1f2328; background: #f6f8fa; }
+header { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1rem; border-bottom: 1px solid #d0d7de; background: #fff; }
+header h1 { margin: 0; font-size: 1rem; } header a { color: #0969da; } header .stats { margin-left: auto; color: #57606a; font-variant-numeric: tabular-nums; }
+#stage { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; background: #fff; }
+.legend { position: absolute; left: 12px; bottom: 12px; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fffe; font-size: 12px; line-height: 1.7; z-index: 5; }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; vertical-align: -1px; }
+.legend b { display: inline-block; width: 18px; height: 0; margin-right: 6px; border-top: 2px solid; vertical-align: 3px; }
+.legend label { display: block; cursor: pointer; }
+#tip { position: absolute; z-index: 6; padding: 3px 7px; border-radius: 4px; background: #1f2328; color: #fff; font-size: 12px; pointer-events: none; }
+.legend .hint { margin: 6px 0 0; color: #57606a; line-height: 1.4; }
+header .crumbs { display: flex; gap: 0.35rem; align-items: center; color: #57606a; }
+header .crumbs a { cursor: pointer; } header .crumbs b { color: #1f2328; }
+header button { font: inherit; padding: 1px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; cursor: pointer; }
+header button:disabled { opacity: 0.4; cursor: default; }
+.themes { display: flex; gap: 0.8rem; align-items: center; padding-left: 1rem; border-left: 1px solid #d0d7de; font-size: 13px; }
+.themes b { display: inline-block; width: 16px; height: 0; margin: 0 4px 0 2px; border-top: 3px solid; vertical-align: 3px; }
+#details { position: absolute; top: 58px; right: 12px; bottom: 12px; width: 320px; z-index: 6; display: flex; flex-direction: column;
+  border: 1px solid #d0d7de; border-radius: 8px; background: #fff; box-shadow: 0 4px 16px #1f232822; font-size: 13px; }
+#details[hidden] { display: none; }
+#details header { display: flex; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #d0d7de; background: #f6f8fa; border-radius: 8px 8px 0 0; }
+#details-body { padding: 8px 12px; overflow: auto; } #details h2 { margin: 0 0 2px; font-size: 15px; }
+#details .kind { margin: 0 0 8px; color: #57606a; word-break: break-all; } #details ul { margin: 2px 0 6px; padding-left: 18px; } #details p { margin: 8px 0 2px; font-weight: 600; }
+.themes[hidden] { display: none; }
+#hoverbox { position: absolute; z-index: 7; display: flex; flex-direction: column; gap: 2px; max-width: 240px; padding: 8px 10px; border: 1px solid #d0d7de;
+  border-radius: 6px; background: #fff; box-shadow: 0 2px 8px #1f232822; font-size: 12px; line-height: 1.4; }
+#hoverbox[hidden] { display: none; }
+#hoverbox .where { color: #57606a; margin-bottom: 4px; }
+#hoverbox .row { display: flex; gap: 6px; align-items: center; }
+#hoverbox .row img { width: 12px; height: 12px; }
+#hoverbox .row i { display: inline-block; width: 12px; border-top: 2px solid; }
+#hoverbox button { align-self: flex-start; margin-top: 6px; font: inherit; padding: 1px 8px; border: 1px solid #d0d7de; border-radius: 4px; background: #f6f8fa; cursor: pointer; }
+header { flex-wrap: wrap; row-gap: 4px; } .themes label { white-space: nowrap; }
+.legend i.swatch { width: 14px; height: 9px; border-radius: 3px; }

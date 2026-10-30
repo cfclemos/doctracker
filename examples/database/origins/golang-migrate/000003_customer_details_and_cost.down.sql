@@ -1,0 +1,3 @@
+ALTER TABLE products DROP COLUMN cost;
+ALTER TABLE customers DROP COLUMN phone;
+ALTER TABLE customers DROP COLUMN cpf;
