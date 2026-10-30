@@ -67,7 +67,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false) -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="") -%}
 <div class="graph-area">
   {# Bar on top of the drawing: highlight; then icon buttons in groups, each named by a floating label
      (data-tip): the layout (layers or forces), the colours, hide unconnected / rearrange / fit, zoom,
@@ -107,6 +107,10 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
       </span>
     </span>
     {% endif %}
+    {% if panel %}
+    <button type="button" class="graph-icon graph-panel-toggle" aria-expanded="true" aria-label="Details"
+            data-tip="Open or close the details"><i class="bar-icon bar-icon-panel"></i></button>
+    {% endif %}
   </div>
   {% if evolution %}
   {# Architecture evolution: a slider through the commits; each file appears at the commit that added it
@@ -122,8 +126,10 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   {% endif %}
   <p class="graph-warning" hidden></p>
   <div class="graph-groups" hidden></div>
-  {# The drawing, with zoom and fit floating in its top right corner, and the legend in a column on its
-     right that folds into a thin strip (kept per browser, static/live.js). #}
+  {# The drawing, with zoom and fit floating in its top right corner and the Legend button in its top
+     left one: the legend opens in a box under it, as the info panel (open or closed, kept per browser).
+     A page may give a side panel (`panel`, e.g. the planner's details): a column beside the drawing,
+     inside its area, that the bar's button opens and closes and ⇄ moves to the other side. #}
   <div class="graph-stage">
   <div class="graph-canvas-box">
     <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
@@ -139,15 +145,25 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     </div>
     {# What a click chose: under the zoom and fit, in the drawing's right side. #}
     <aside class="graph-info" hidden></aside>
-  </div>
-  {% if caller is defined %}
-  <aside class="graph-legend-panel">
-    <button type="button" class="graph-legend-toggle" aria-expanded="true" title="Fold or open the legend">
-      <span class="graph-legend-title">Legend</span><i class="graph-legend-chevron" aria-hidden="true">›</i>
-    </button>
-    <div class="graph-legend">
+    {% if caller is defined %}
+    <button type="button" class="graph-icon graph-legend-open" aria-expanded="false" aria-label="Legend" data-tip="Legend">
+      <i class="bar-icon bar-icon-legend"></i></button>
+    {# The legend opens in the info panel's own box (.graph-info), on the left side; static/graph.js
+       puts these items in it, under the same head as the info panel's. #}
+    <aside class="graph-info graph-legend-box" hidden></aside>
+    <template class="graph-legend-items">
       {{ caller() }}
-    </div>
+    </template>
+    {% endif %}
+  </div>
+  {% if panel %}
+  <aside class="graph-side-panel">
+    <header class="graph-side-head">
+      <h2>Details</h2>
+      <button type="button" class="graph-panel-side" aria-label="Move to the other side" title="Move to the other side">⇄</button>
+      <button type="button" class="graph-close graph-panel-close" aria-label="Close" title="Close">×</button>
+    </header>
+    {{ panel }}
   </aside>
   {% endif %}
   </div>

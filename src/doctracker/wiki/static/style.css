@@ -910,32 +910,40 @@ td p { margin: 0; }
 .graph-evolution .graph-evolution-commit strong { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; }
 .evolution-later { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
 .uml-box, .arch-frame, .uml-line { transition: opacity 0.12s; }
-/* The legend, in a column on the drawing's right: its name on top, one item per line, small; folded,
-   a thin strip with its name upright. */
+/* A drawing's side panel (the planner's details): a column beside the drawing, inside its area, on the
+   right or the left (.panel-left), closed with .panel-closed; the drawing takes the room it leaves. */
 .graph-stage { display: flex; align-items: stretch; }
 .graph-stage > .graph-canvas-box { flex: 1; min-width: 0; }
-.graph-legend-panel { flex: none; display: flex; flex-direction: column; width: 11rem; border: 1px solid var(--border);
-  border-left: 0; border-bottom-right-radius: 8px; background: var(--panel); overflow: hidden; }
-.graph-stage:has(.graph-legend-panel) .graph-canvas { border-bottom-right-radius: 0; }
-.graph-legend-toggle { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; width: 100%;
-  padding: 0.45rem 0.6rem; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; }
-.graph-legend-toggle:hover { color: var(--fg); }
-.graph-legend-title { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-.graph-legend-chevron { font-style: normal; font-size: 0.9rem; line-height: 1; }
-.graph-legend-panel .graph-legend { flex-direction: column; flex-wrap: nowrap; gap: 0.2rem; padding: 0.5rem 0.6rem;
-  overflow: auto; font-size: 0.68rem; line-height: 1.3; }
-.graph-legend-panel .graph-legend span, .graph-legend-panel .graph-kind { gap: 0.35rem; }
-.graph-legend-panel .graph-legend .box { flex: none; width: 0.7rem; height: 0.55rem; }
-.graph-legend-panel .graph-legend .box.closed { width: auto; height: auto; padding: 0 0.2rem; font-size: 0.62rem; line-height: 1.1; }
-.graph-legend-panel .graph-legend .line { flex: none; width: 1rem; }
-.graph-legend-panel .graph-kind { justify-content: flex-start; padding: 0 0.25rem; margin-left: -0.25rem; font-size: inherit; text-align: left; }
-.graph-legend-panel.folded { width: 1.8rem; }
-.graph-legend-panel.folded .graph-legend { display: none; }
-.graph-legend-panel.folded .graph-legend-toggle { flex-direction: column-reverse; justify-content: flex-end; height: 100%;
-  padding: 0.5rem 0; border-bottom: 0; }
-.graph-legend-panel.folded .graph-legend-title { writing-mode: vertical-rl; }
-.graph-legend-panel.folded .graph-legend-chevron { transform: rotate(180deg); }
-@media (max-width: 720px) { .graph-legend-panel:not(.folded) { width: 9rem; } }
+.graph-side-panel { flex: none; display: flex; flex-direction: column; width: min(28rem, 45%); border: 1px solid var(--border);
+  background: var(--bg); }
+.graph-stage.panel-left { flex-direction: row-reverse; }
+.graph-stage.panel-left .graph-side-panel { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+.graph-stage.panel-closed .graph-side-panel { display: none; }
+.graph-side-head { display: flex; align-items: center; gap: 0.3rem; padding: 0.45rem 0.6rem 0.45rem 1rem;
+  border-bottom: 1px solid var(--border); background: var(--bg); }
+.graph-side-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
+.graph-side-head .graph-panel-side, .graph-side-head .graph-close { position: static; width: 1.7rem; height: 1.7rem; padding: 0;
+  border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }
+.graph-side-head .graph-panel-side:hover, .graph-side-head .graph-close:hover { background: var(--panel); color: var(--fg); }
+.graph-canvas-bar .graph-panel-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 720px) { .graph-stage { flex-direction: column; } .graph-side-panel { width: auto; border-left: 1px solid var(--border); } }
+/* The Legend button, floating in the drawing's top left corner, and the legend it opens under it in the
+   info panel's box (.graph-info): its name on top with the close button, one item per line, small. */
+.graph-canvas-box .graph-legend-open { position: absolute; top: 0.5rem; left: 0.5rem; z-index: 5; display: inline-flex; align-items: center;
+  justify-content: center; width: 1.9rem; height: 1.8rem; padding: 0; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); cursor: pointer; }
+.graph-legend-open:hover, .graph-legend-open[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.graph-info.graph-legend-box { left: 0.6rem; right: auto; width: 15rem; }
+.graph-legend-box .graph-legend { flex-direction: column; flex-wrap: nowrap; gap: 0.2rem; padding-top: 0.6rem;
+  font-size: 0.8rem; line-height: 1.3; }
+.graph-legend-box .graph-legend span, .graph-legend-box .graph-kind { gap: 0.4rem; }
+.graph-legend-box .graph-legend .box { flex: none; width: 0.75rem; height: 0.6rem; }
+.graph-legend-box .graph-legend .box.closed { width: auto; height: auto; padding: 0 0.2rem; font-size: 0.62rem; line-height: 1.1; }
+.graph-legend-box .graph-legend .line { flex: none; width: 1.1rem; }
+.graph-legend-box .graph-kind { justify-content: flex-start; padding: 0 0.25rem; margin-left: -0.25rem; font-size: inherit; text-align: left; }
+.graph-legend-box .notes-swatch { flex: none; width: 0.75rem; height: 0.6rem; }
+.graph-legend-box .level-icon { flex: none; width: 0.85rem; height: 0.85rem; }
+.graph-legend-box .legend-gap { width: auto; height: 0.3rem; }
 /* The import cycles of the drawing, under the bar: each one a list of links. */
 .graph-cycles { margin: 0.4rem 0 0; font-size: 0.85rem; }
 .graph-cycles summary { cursor: pointer; color: var(--raises); font-weight: 600; }
@@ -964,7 +972,7 @@ td p { margin: 0; }
   box-shadow: 0 4px 14px rgb(0 0 0 / 15%);
   font-size: 0.88rem;
 }
-.graph-close {
+.graph-close, .graph-info .graph-close {  /* the second wins over the buttons of a page, e.g. AGENT NOTES' */
   position: absolute;
   top: 0.35rem;
   right: 0.35rem;
@@ -978,7 +986,7 @@ td p { margin: 0; }
   line-height: 1;
   cursor: pointer;
 }
-.graph-close:hover { background: var(--panel); color: var(--fg); }
+.graph-close:hover, .graph-info .graph-close:hover { background: var(--panel); color: var(--fg); }
 /* The info panel's head (name, path, close) stays on top while the rest scrolls under it. */
 .graph-info-head { position: sticky; top: -0.8rem; z-index: 1; margin: -0.8rem -1rem 0; padding: 0.8rem 1rem 0.4rem;
   background: var(--bg); border-bottom: 1px solid var(--border); }
@@ -1339,7 +1347,8 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 /* Planner: plan cards on top; the chosen plans on the left, the clicked item on the right. */
 /* The cards scroll on one row (like the Git page timeline); New plan stays beside the row, on the right, as
    tall as the cards: the row's scrollbar, measured by live.js into --plan-scrollbar, is left out under it. */
-.plan-cards { display: flex; gap: 0.5rem; align-items: stretch; margin: 0.4rem 0 0.6rem; }
+.plan-cards { display: flex; gap: 0.5rem; align-items: stretch; margin: 0 0 0.8rem; padding: 0.7rem 0 0.4rem;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }  /* lines above and below, as the diagrams' bars */
 .plan-cards-row { display: flex; gap: 0.5rem; flex: 1 1 auto; min-width: 0; overflow-x: auto; padding-bottom: 0.3rem; }
 .plan-card {
   flex: 0 0 auto; display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.45rem; align-items: center; min-width: 13rem; max-width: 20rem;
@@ -1355,24 +1364,28 @@ h1 .dead-badge { margin-left: 0.5rem; vertical-align: middle; }
 .plan-card-bar { grid-column: 1 / -1; height: 4px; margin-top: 0.25rem; border-radius: 2px; background: var(--panel); overflow: hidden; }
 .plan-card-bar i { display: block; height: 100%; background: #2da44e; }
 .notes-page .plan-card-new { flex: 0 0 auto; margin-bottom: calc(var(--plan-scrollbar, 0px) + 0.3rem); }
-/* Left and right start as halves; the splitter between them (see live.js) sets --split, the left share. */
-.planner-layout { display: grid; grid-template-columns: minmax(0, calc(var(--split, 50%) - 0.6rem)) 1.2rem minmax(0, 1fr);
-  margin-top: 0.8rem; }
-.planner-splitter { align-self: stretch; cursor: col-resize; position: relative; }
-.planner-splitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; margin-left: -1.5px;
+.planner-layout { margin-top: 0.8rem; }
+/* Guidelines and Memory: the tree and the note clicked start as halves; the splitter between them (see
+   live.js) sets --split, the left share. */
+.notes-layout { display: grid; grid-template-columns: minmax(0, calc(var(--split, 50%) - 0.6rem)) 1.2rem minmax(0, 1fr);
+  align-items: start; margin-top: 0.8rem; }
+.notes-splitter { align-self: stretch; cursor: col-resize; position: relative; }
+.notes-splitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; margin-left: -1.5px;
   border-radius: 2px; background: var(--border); }
-.planner-splitter:hover::before, body.splitting .planner-splitter::before { background: var(--accent); }
+.notes-splitter:hover::before, body.splitting .notes-splitter::before { background: var(--accent); }
 body.splitting { cursor: col-resize; user-select: none; }
+.notes-layout .planner-detail { position: sticky; top: calc(var(--topbar-height) + 0.6rem); height: calc(100vh - var(--topbar-height) - 1.5rem);
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .planner-layout .graph-area { min-width: 0; margin-top: 0; }
 .planner-layout .graph-canvas { height: calc(100vh - var(--topbar-height) - 20rem); min-height: 26rem; }
-.planner-detail { overflow: auto; padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.planner-detail { flex: 1; min-height: 0; overflow: auto; padding: 0.8rem 1rem; }
 .planner-detail .dialog-head h2 { font-size: 0.98rem; }
 /* Narrower screens: the panel goes under the drawing; phones: one card per line, form rows wrap. */
 @media (max-width: 1100px) {
-  .planner-layout { grid-template-columns: minmax(0, 1fr); row-gap: 0.8rem; }
-  .planner-splitter { display: none; }
   .planner-layout .graph-canvas { height: 60vh; min-height: 20rem; }
-  .planner-detail { height: auto; min-height: 0; }
+  .notes-layout { grid-template-columns: minmax(0, 1fr); row-gap: 0.8rem; }
+  .notes-splitter { display: none; }
+  .notes-layout .planner-detail { position: static; height: auto; }
 }
 @media (max-width: 720px) {
   .tab { padding: 0.4rem 0.7rem; }
@@ -1395,9 +1408,6 @@ body.splitting { cursor: col-resize; user-select: none; }
 .planner-waits .planner-state { padding: 0 0.35rem; border-radius: 999px; background: var(--tint); color: var(--on-tint); font-size: 0.6rem; }
 /* The planner's drawing fills the screen's height (wheel zooms, dragging moves); the panel stays in view. */
 .planner-layout .graph-canvas[data-view="planner"] { height: calc(100vh - var(--topbar-height) - 15rem); min-height: 20rem; }
-.planner-layout { align-items: start; }
-.planner-detail { position: sticky; top: calc(var(--topbar-height) + 0.6rem); height: calc(100vh - var(--topbar-height) - 1.5rem); }
-@media (max-width: 1100px) { .planner-detail { position: static; height: auto; max-height: none; } }
 /* Bar on top of the drawing (zoom, fit), joined to it. */
 .graph-canvas-bar {
   display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.4rem 0.6rem; padding: 0.3rem 0.5rem;
@@ -1405,6 +1415,7 @@ body.splitting { cursor: col-resize; user-select: none; }
   font-size: 0.82rem; color: var(--muted);
 }
 .graph-canvas-bar ~ .graph-stage .graph-canvas { border-top-left-radius: 0; border-top-right-radius: 0; }
+.graph-stage:has(.graph-side-panel:not([hidden])):not(.panel-closed) .graph-canvas { border-radius: 0; }
 .graph-canvas-bar button {
   height: 1.7rem; min-width: 2rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
@@ -1424,6 +1435,8 @@ body.splitting { cursor: col-resize; user-select: none; }
 .bar-icon-hide { --icon: url("icons/eye-off.svg"); }
 .bar-icon-rearrange { --icon: url("icons/refresh.svg"); }
 .bar-icon-fit { --icon: url("icons/arrows-maximize.svg"); }
+.bar-icon-legend { --icon: url("icons/list-details.svg"); }
+.bar-icon-panel { --icon: url("icons/layout-sidebar-right.svg"); }
 .bar-icon-export { --icon: url("icons/download.svg"); }
 [data-tip] { position: relative; }
 [data-tip]:hover::after {
@@ -1448,6 +1461,7 @@ body.splitting { cursor: col-resize; user-select: none; }
 .uml-box.grouped { border-color: var(--group); box-shadow: inset 5px 0 0 var(--group); }
 .graph-groups { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-bottom: 0;
   background: var(--panel); }
+.graph-groups[hidden] { display: none; }
 .graph-group { padding: 0.1rem 0.55rem; border: 2px solid var(--group); border-radius: 10px; background: var(--bg); color: var(--fg);
   font-size: 0.75rem; cursor: pointer; }
 .graph-group[aria-pressed="true"] { background: color-mix(in srgb, var(--group) 22%, var(--bg)); }

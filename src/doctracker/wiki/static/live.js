@@ -246,23 +246,24 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// The legend column of the diagrams folds into a thin strip and opens again; kept per browser, for
-// every diagram. The drawing refits by itself to the room it gets.
-const LEGEND_FOLDED = "doctracker-legend-folded";
+// The Legend button of the drawings opens the legend in a box under it; × or the button again closes it.
+// Open or closed is kept per browser, for every drawing.
+const LEGEND_OPEN = "doctracker-legend-open";
 function placeLegends() {
-  let folded = false;
-  try { folded = localStorage.getItem(LEGEND_FOLDED) === "1"; } catch {}
-  for (const panel of document.querySelectorAll(".graph-legend-panel")) {
-    panel.classList.toggle("folded", folded);
-    panel.querySelector(".graph-legend-toggle").setAttribute("aria-expanded", String(!folded));
+  let open = false;
+  try { open = localStorage.getItem(LEGEND_OPEN) === "1"; } catch {}
+  for (const box of document.querySelectorAll(".graph-legend-box")) {
+    box.hidden = !open;
+    box.parentElement.querySelector(".graph-legend-open").setAttribute("aria-expanded", String(open));
   }
 }
 document.addEventListener("DOMContentLoaded", placeLegends);
 document.addEventListener("htmx:afterSettle", placeLegends);
 document.addEventListener("click", (event) => {
-  if (!event.target.closest(".graph-legend-toggle")) return;
-  const folded = !event.target.closest(".graph-legend-panel").classList.contains("folded");
-  try { localStorage.setItem(LEGEND_FOLDED, folded ? "1" : "0"); } catch {}
+  const button = event.target.closest(".graph-legend-open, .graph-legend-box .graph-close");
+  if (!button) return;
+  const open = button.matches(".graph-legend-open") && button.getAttribute("aria-expanded") !== "true";
+  try { localStorage.setItem(LEGEND_OPEN, open ? "1" : "0"); } catch {}
   placeLegends();
 });
 
@@ -439,23 +440,53 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// Planner page: the bar between the drawing and the panel sets how much of the width the drawing
+// The side panel of a drawing (the planner's details): open or closed, on the right or the left, kept
+// in the browser; the bar's button opens and closes it, ⇄ moves it, a click on an item opens it.
+const PANEL_OPEN = "doctracker-panel-open";
+const PANEL_SIDE = "doctracker-panel-side";
+function placePanels() {
+  const open = load(localStorage, PANEL_OPEN, true);
+  const left = load(localStorage, PANEL_SIDE, "right") === "left";
+  for (const stage of document.querySelectorAll(".graph-stage:has(.graph-side-panel)")) {
+    stage.classList.toggle("panel-closed", !open);
+    stage.classList.toggle("panel-left", left);
+    stage.closest(".graph-area").querySelector(".graph-panel-toggle")?.setAttribute("aria-expanded", String(open));
+  }
+}
+document.addEventListener("DOMContentLoaded", placePanels);
+document.addEventListener("htmx:afterSettle", placePanels);
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".graph-panel-toggle")) save(localStorage, PANEL_OPEN, !load(localStorage, PANEL_OPEN, true));
+  else if (event.target.closest(".graph-panel-close")) save(localStorage, PANEL_OPEN, false);
+  else if (event.target.closest(".graph-panel-side")) {
+    save(localStorage, PANEL_SIDE, load(localStorage, PANEL_SIDE, "right") === "left" ? "right" : "left");
+  } else return;
+  placePanels();
+});
+document.addEventListener("htmx:beforeRequest", (event) => {  // an item clicked in the drawing: its details show
+  if (event.detail.target?.id === "planner-detail" && !load(localStorage, PANEL_OPEN, true)) {
+    save(localStorage, PANEL_OPEN, true);
+    placePanels();
+  }
+});
+
+// Guidelines and Memory: the bar between the tree and the note sets how much of the width the tree
 // takes (25% to 75%, half at first), remembered in the browser.
 const SPLIT_KEY = "doctracker-planner-split";
 
-function applyPlannerSplit() {
-  const layout = document.querySelector(".planner-layout");
+function applyNotesSplit() {
+  const layout = document.querySelector(".notes-layout");
   const share = load(localStorage, SPLIT_KEY, null);
   if (layout && share) layout.style.setProperty("--split", `${share}%`);
 }
-document.addEventListener("DOMContentLoaded", applyPlannerSplit);
-document.addEventListener("htmx:afterSettle", applyPlannerSplit);
+document.addEventListener("DOMContentLoaded", applyNotesSplit);
+document.addEventListener("htmx:afterSettle", applyNotesSplit);
 
 document.addEventListener("pointerdown", (event) => {
-  const splitter = event.target.closest(".planner-splitter");
+  const splitter = event.target.closest(".notes-splitter");
   if (!splitter) return;
   event.preventDefault();
-  const layout = splitter.closest(".planner-layout");
+  const layout = splitter.closest(".notes-layout");
   document.body.classList.add("splitting");
   let share = null;
   const move = (moveEvent) => {
