@@ -14,6 +14,17 @@ function wikiLink(id, label) {
   return `<a href="${url}" hx-get="${url}" hx-target="#content" hx-push-url="true">${escapeHtml(label)}</a>`;
 }
 
+// The head of the boxes floating over a drawing (the info panel, the legend): what it is if any, its
+// name (HTML), its path if any, and × to close it.
+function infoHead(role, title, path = "") {
+  return `<header class="graph-info-head">
+    <button type="button" class="graph-close" aria-label="Close" title="Close">×</button>
+    ${role ? `<p class="graph-info-role">${escapeHtml(role)}</p>` : ""}
+    <h2>${title}</h2>
+    ${path ? `<code class="path">${escapeHtml(path)}</code>` : ""}
+  </header>`;
+}
+
 // Box diagrams (CLASSES and ARCHITECTURE): HTML boxes over SVG lines, in the style of database
 // diagrams (DBeaver). Each page gives its boxes, layout and lines (DIAGRAMS); drawDiagram does the
 // rest: it measures the boxes, places them, draws frames around grouped boxes and the lines, and
@@ -655,6 +666,12 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   page.diagramListeners?.abort();
   page.diagramListeners = new AbortController();
   const signal = page.diagramListeners.signal;
+  // The legend of the page (its items in a template) goes into its box once, with the info panel's head.
+  const legendBox = canvas.closest(".graph-area").querySelector(".graph-legend-box");
+  const legendItems = canvas.closest(".graph-area").querySelector("template.graph-legend-items");
+  if (legendBox && legendItems && !legendBox.childElementCount) {
+    legendBox.innerHTML = `${infoHead("", "Legend")}<div class="graph-legend">${legendItems.innerHTML}</div>`;
+  }
   // The legend's relation kinds filter the drawing: a kind turned off leaves out its lines and, in
   // a drawing reached from a focus (calls, local graph), what only that kind led to. With every
   // kind off, nothing is drawn. Kept per diagram and browser tab.
@@ -879,13 +896,13 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     canvas.classList.toggle("far", scale < 0.55);  // zoomed out: the details fade, the names stay
     if (zoomLevel) zoomLevel.textContent = `${Math.round(scale * 100)}%`;
   };
-  // With `fitWidth`, only the width is fitted and the drawing starts at its top, so a tall column stays
-  // readable; dragging moves through it.
+  // With `fitWidth`, only the width is fitted, so a tall column stays readable (dragging moves through
+  // it): it starts at its top, or in the middle when it is shorter than the area. Fit always centres.
   const fit = () => {
     if (view.fitWidth) {
       scale = Math.min(1, (canvas.clientWidth - 20) / (size.width + 160));
-      panX = Math.max(10, (canvas.clientWidth - (size.width + 160) * scale) / 2);
-      panY = 10;
+      panX = Math.max(10, (canvas.clientWidth - size.width * scale) / 2);
+      panY = Math.max(10, (canvas.clientHeight - size.height * scale) / 2);
     } else {
       scale = Math.min(1, (canvas.clientWidth - 20) / size.width, (canvas.clientHeight - 20) / size.height);
       panX = (canvas.clientWidth - size.width * scale) / 2;
@@ -1114,7 +1131,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     return true;
   };
   // With `info`, a click also opens the panel of the box: what it is and its relations, each a link.
-  const info = view.info && canvas.closest(".graph-area").querySelector(".graph-info");
+  const info = view.info && canvas.closest(".graph-area").querySelector(".graph-info:not(.graph-legend-box)");
   const showInfo = (id) => {
     if (!info) return;
     const node = data.nodes.find((item) => item.id === id);
@@ -1131,12 +1148,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     }
     const page = node.page || node.id;
     info.innerHTML = `
-      <header class="graph-info-head">
-        <button type="button" class="graph-close" aria-label="Close" title="Close">×</button>
-        <p class="graph-info-role">${escapeHtml(node.role || "")}</p>
-        <h2>${wikiLink(page, node.label)}</h2>
-        <code class="path">${escapeHtml(page)}</code>
-      </header>
+      ${infoHead(node.role || "", wikiLink(page, node.label), page)}
       ${node.summary ? `<p>${escapeHtml(node.summary)}</p>` : ""}
       ${Object.entries(relations).map(([key, others]) => `
         <h3>${escapeHtml(key)} <span class="count">${others.length}</span></h3>

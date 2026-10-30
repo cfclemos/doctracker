@@ -8,33 +8,32 @@
 {%- endmacro %}
 
 <div class="notes-page">
-  {{ ui.view_header("notes", "AGENT NOTES",
-     "Plan the work and keep what the project knows. Agents do it through the MCP tools; you can do it here, with the same functions.") }}
+  {{ ui.view_header("notes", "AGENT NOTES", "") }}
   {{ ui.tabs((("planner", "Planner", "/notes?tab=planner"), ("guidelines", "Guidelines", "/notes?tab=guidelines"),
               ("memory", "Memory", "/notes?tab=memory")), tab) }}
+  <p class="tab-description">Plan the work and keep what the project knows. Agents do it through the MCP tools; you can do it here, with the same functions.</p>
   {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
 
   {% if tab == "planner" %}
   {# Plans on top: a click adds a plan to the chosen ones or takes it out. #}
   {% include "notes_cards.html" %}
-  <div class="graph-toolbar">
-    <div class="graph-legend">
+  {# The chosen plans; beside them, inside the drawing's area, the plan, feature or task clicked (the
+     first chosen plan at first). #}
+  {% set details %}
+    <div id="planner-detail" class="planner-detail"
+         {% if selected %}hx-get="/notes/form?item={{ selected }}&panel=1&tab=planner&plans={{ plans }}" hx-trigger="load"{% endif %}>
+      <p class="empty">{% if selected %}Loading…{% else %}Choose a plan above.{% endif %}</p>
+    </div>
+  {% endset %}
+  <div class="planner-layout">
+    {% call ui.view_canvas("planner", data_url, panel=details) %}
       {% for level in ("plan", "feature", "task") %}<span><i class="level-icon level-{{ level }}"></i>{{ level }}</span>{% endfor %}
       <span class="legend-gap"></span>
       {% for state, label in (("todo", "to do"), ("doing", "in progress"), ("blocked", "blocked"), ("late", "late"), ("done", "done")) %}
       <span><i class="notes-swatch state-{{ state }}"></i>{{ label }}</span>
       {% endfor %}
       <span><i class="line imports"></i>waits for (hover: why)</span>
-    </div>
-  </div>
-  {# Left: the chosen plans; right: the plan, feature or task clicked (the first chosen plan at first). #}
-  <div class="planner-layout">
-    {{ ui.view_canvas("planner", data_url) }}
-    <div class="planner-splitter" role="separator" aria-orientation="vertical" title="Drag to make one side wider"></div>
-    <aside id="planner-detail" class="planner-detail"
-           {% if selected %}hx-get="/notes/form?item={{ selected }}&panel=1&tab=planner&plans={{ plans }}" hx-trigger="load"{% endif %}>
-      <p class="empty">{% if selected %}Loading…{% else %}Choose a plan above.{% endif %}</p>
-    </aside>
+    {% endcall %}
   </div>
 
   {% else %}
@@ -72,9 +71,9 @@
     <strong>{{ note_group_texts[tab][0] }}</strong> {{ note_group_texts[tab][1] }}
   </div>
   {# Left: the notes of the group as a tree (types, then their notes); right: the note clicked. #}
-  <div class="planner-layout">
+  <div class="notes-layout">
     {% include "notes_tree.html" %}
-    <div class="planner-splitter" role="separator" aria-orientation="vertical" title="Drag to make one side wider"></div>
+    <div class="notes-splitter" role="separator" aria-orientation="vertical" title="Drag to make one side wider"></div>
     <aside id="planner-detail" class="planner-detail"
            {% if selected %}hx-get="/notes/form?note={{ selected[5:] }}&panel=1&tab={{ tab }}&selected={{ selected }}" hx-trigger="load"{% endif %}>
       <p class="empty">{% if selected %}Loading…{% else %}Click a note to read and change it.{% endif %}</p>
