@@ -126,7 +126,7 @@ document.addEventListener("click", (event) => {
   setViewSetting("tree-layout", button.dataset.layout);
 });
 document.addEventListener("change", (event) => {
-  if (event.target.id === "language-filter") setViewSetting("languages", event.target.value);
+  if (event.target.classList.contains("language-filter")) setViewSetting("languages", event.target.value);
 });
 
 // Tree width (drag the resizer) and visibility (toggle button), kept per browser.
@@ -158,9 +158,12 @@ function showGitFile(panel, index) {
 }
 
 // A × inside a text field (.field-clearable) empties it; it shows only while the field has text.
+// A field emptied, by the × or by erasing it, counts as changed at once: what it filtered is redone.
 document.addEventListener("input", (event) => {
   const clear = event.target.closest(".field-clearable")?.querySelector(".field-clear");
-  if (clear) clear.hidden = !event.target.value;
+  if (!clear) return;
+  clear.hidden = !event.target.value;
+  if (!event.target.value) event.target.dispatchEvent(new Event("change", { bubbles: true }));
 });
 document.addEventListener("click", (event) => {
   const clear = event.target.closest(".field-clear");
@@ -170,6 +173,97 @@ document.addEventListener("click", (event) => {
   input.value = "";
   clear.hidden = true;
   input.focus();
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
+// The Focus fields of the diagrams: an autocomplete under the field, from the choices of its
+// data-options (a datalist kept out of the browser's own list): what has the text typed in its name or
+// path, names that start with it first, each with its kind's icon, its name and its path.
+// ↑ ↓ move, Enter or a click chooses (the form then draws again), Escape closes.
+const FOCUS_CHOICES = 50;
+function focusMenu(input) {
+  let menu = input.parentElement.querySelector(".focus-menu");
+  if (!menu) {
+    menu = document.createElement("ul");
+    menu.className = "focus-menu";
+    menu.setAttribute("role", "listbox");
+    input.after(menu);
+  }
+  return menu;
+}
+function showFocusChoices(input) {
+  const text = input.value.trim().toLowerCase();
+  const options = [...(document.getElementById(input.dataset.options)?.options || [])];
+  const found = options.filter((option) => !text || option.value.toLowerCase().includes(text))
+    .sort((a, b) => Number(!a.dataset.name.toLowerCase().startsWith(text)) - Number(!b.dataset.name.toLowerCase().startsWith(text)))
+    .slice(0, FOCUS_CHOICES);
+  const menu = focusMenu(input);
+  menu.innerHTML = found.map((option, index) => `<li role="option" data-value="${escapeHtml(option.value)}"${index === 0 ? ' class="active"' : ""}>
+    <span class="icon icon-${escapeHtml(option.dataset.role)}">${escapeHtml(option.dataset.symbol)}</span>
+    <strong>${escapeHtml(option.dataset.name)}</strong><span class="focus-menu-path">${escapeHtml(option.value)}</span></li>`).join("")
+    || '<li class="focus-menu-empty">Nothing has that name</li>';
+  menu.hidden = false;
+}
+function chooseFocus(input, value) {
+  input.value = value;
+  focusMenu(input).hidden = true;
+  const clear = input.closest(".field-clearable")?.querySelector(".field-clear");
+  if (clear) clear.hidden = !value;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches("input[data-options]")) showFocusChoices(event.target);
+});
+document.addEventListener("input", (event) => {
+  if (event.target.matches("input[data-options]")) showFocusChoices(event.target);
+});
+document.addEventListener("focusout", (event) => {
+  if (event.target.matches("input[data-options]")) focusMenu(event.target).hidden = true;
+});
+document.addEventListener("mousedown", (event) => {  // before the field loses the focus
+  const item = event.target.closest(".focus-menu li[data-value]");
+  if (!item) return;
+  event.preventDefault();
+  chooseFocus(item.closest(".field-clearable").querySelector("input[data-options]"), item.dataset.value);
+});
+document.addEventListener("keydown", (event) => {
+  const input = event.target;
+  if (!input.matches?.("input[data-options]")) return;
+  const menu = focusMenu(input);
+  const items = [...menu.querySelectorAll("li[data-value]")];
+  const at = items.findIndex((item) => item.classList.contains("active"));
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (menu.hidden) return showFocusChoices(input);
+    const next = items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
+    items.forEach((item) => item.classList.toggle("active", item === next));
+    next?.scrollIntoView({ block: "nearest" });
+  } else if (event.key === "Enter" && !menu.hidden && items[at]) {
+    event.preventDefault();
+    chooseFocus(input, items[at].dataset.value);
+  } else if (event.key === "Escape") {
+    menu.hidden = true;
+  }
+});
+
+// The legend column of the diagrams folds into a thin strip and opens again; kept per browser, for
+// every diagram. The drawing refits by itself to the room it gets.
+const LEGEND_FOLDED = "doctracker-legend-folded";
+function placeLegends() {
+  let folded = false;
+  try { folded = localStorage.getItem(LEGEND_FOLDED) === "1"; } catch {}
+  for (const panel of document.querySelectorAll(".graph-legend-panel")) {
+    panel.classList.toggle("folded", folded);
+    panel.querySelector(".graph-legend-toggle").setAttribute("aria-expanded", String(!folded));
+  }
+}
+document.addEventListener("DOMContentLoaded", placeLegends);
+document.addEventListener("htmx:afterSettle", placeLegends);
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".graph-legend-toggle")) return;
+  const folded = !event.target.closest(".graph-legend-panel").classList.contains("folded");
+  try { localStorage.setItem(LEGEND_FOLDED, folded ? "1" : "0"); } catch {}
+  placeLegends();
 });
 
 // Mark a commit of the git page's list as selected (which opens its full message) and scroll

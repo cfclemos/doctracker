@@ -9,9 +9,10 @@
 import re
 from pathlib import Path
 
+from doctracker.extraction.languages import language_label
 from doctracker.history import read_history
 from doctracker.server.state import DocState
-from doctracker.wiki.pages import SYMBOLS, page_role, signature_details, summary
+from doctracker.wiki.pages import CLASS_KINDS, SYMBOLS, group_of, page_role, project_groups, signature_details, summary
 
 CALL_DIRECTIONS = ("both", "out", "in")
 """Directions of a call graph: callees and callers, callees only (`out`), callers only (`in`)."""
@@ -29,12 +30,14 @@ def _node(state: DocState, path: str, **extra: object) -> dict:
         **extra: More fields for the node (e.g. its parent box, its distance to the focus).
 
     Returns:
-        `id` (the path), `label`, `role`, `symbol`, `summary` and the extra fields.
+        `id` (the path), `label`, `role`, `symbol`, `summary`, `language` (and its name, `language_label`),
+        `filepath` (the file it is in) and the extra fields.
     """
     entity = state.entities[path]
     role = page_role(state, entity)
     return {"id": path, "label": entity["name"], "role": role, "symbol": SYMBOLS.get(role, ""),
-            "summary": summary(entity), **extra}
+            "summary": summary(entity), "language": entity["language"],
+            "language_label": language_label(entity["language"]), "filepath": entity["filepath"], **extra}
 
 
 def _edges_of(state: DocState, kind: str) -> list[dict]:
@@ -64,7 +67,56 @@ def _package_of(state: DocState, path: str) -> str:
     return path if entity.get("is_package") else (entity["parent"] or path)
 
 
-def architecture(state: DocState, level: str = "modules") -> dict:
+def _in_projects(state: DocState, nodes: list[dict], apart: str) -> list[dict]:
+    """Put the top-level nodes of a diagram in their projects (the tree's), as frames above them.
+
+    Args:
+        state: Extracted entities.
+        nodes: The diagram's nodes; those without a parent get their project as parent (in place).
+        apart: A folder whose projects go in a group of their own (see `project_groups`).
+
+    Returns:
+        The project frames (and the group of `apart`) that hold something, to add to the nodes.
+    """
+    groups = project_groups(state, apart)
+    # A namespace package spread over several members of a monorepo is split: what it holds goes into
+    # the member it lies in, and the namespace itself is not drawn.
+    for node in list(nodes):
+        entity = state.entities.get(node.get("page") or node["id"])
+        if not node.get("frame") or entity is None or len(entity.get("folders") or []) < 2:
+            continue
+        places = {group_of({**entity, "folders": [folder]}, groups) for folder in entity["folders"]}
+        if len(places) < 2:
+            continue
+        nodes.remove(node)
+        nodes[:] = [child for child in nodes if child["id"] != f"{node['id']}.__init__"]  # it has no file of its own
+        for child in nodes:
+            if child.get("parent") == node["id"]:
+                child["parent"] = None
+    used = set()
+    for node in nodes:
+        entity = state.entities.get(node.get("page") or node["id"])
+        if node.get("parent") or entity is None:
+            continue
+        node["parent"] = group_of(entity, groups)
+        used.add(node["parent"])
+    by_id = {group["id"]: group for group in groups}
+    for group in list(used):
+        while group and by_id.get(group, {}).get("parent"):
+            group = by_id[group]["parent"]
+            used.add(group)
+    return [{"id": group["id"], "label": group["label"], "role": group["role"], "symbol": "", "page": group["page"],
+             "summary": f"{group['label']}: {', '.join(group['folders'])}", "parent": group["parent"], "frame": True}
+            for group in groups if group["id"] in used]
+
+
+ARCHITECTURE_KINDS = ("imports", "uses", "calls", "refers", "inherits", "has")
+"""Relations drawn between files in the architecture, each its own line: what a file imports, the
+templates and CSS classes it uses, what its code calls, refers to, inherits from or holds."""
+
+
+def architecture(state: DocState, level: str = "modules", apart: str = "", project: str = "", focus: str = "",
+                 depth: int = MAX_CALL_DEPTH, kinds: tuple[str, ...] = ARCHITECTURE_KINDS) -> dict:
     """Build the architecture view: packages, subpackages and modules, linked by imports.
 
     At module level, packages and subpackages are frames (`frame` is true) and every
@@ -78,6 +130,12 @@ def architecture(state: DocState, level: str = "modules") -> dict:
     Args:
         state: Extracted entities and relations.
         level: `modules` (every module) or `packages` (modules merged into their package).
+        apart: At module level, a folder whose projects go in a group of their own (`examples` in
+            doctracker's own repository, as in the tree).
+        project: At module level, only this project (`project:<name>`, as in the nodes); empty for all.
+        focus: At module level, only this module (or file) and those `depth` relations away from it.
+        depth: How many relations away from `focus`.
+        kinds: The relations drawn, a part of `ARCHITECTURE_KINDS`.
 
     Returns:
         `nodes` (`role`: package, subpackage or module; `parent`: enclosing frame; `frame`;
@@ -112,6 +170,8 @@ def architecture(state: DocState, level: str = "modules") -> dict:
         source, target = owner.get(edge["source"]), owner.get(edge["target"])
         if source and target and source != target:
             weights[(source, target)] = weights.get((source, target), 0) + 1
+    if level != "packages":
+        return _file_relations(state, nodes, owner, weights, apart, project, focus, depth, kinds)
     if level == "packages":
         # One undirected link per pair of packages: how much they depend on each other, both ways.
         pairs: dict[tuple[str, str], dict[str, int]] = {}
@@ -123,23 +183,89 @@ def architecture(state: DocState, level: str = "modules") -> dict:
             for (a, b), counts in sorted(pairs.items())
         ]
         return {"nodes": nodes, "edges": edges}
-    in_cycle = _cycle_edges(set(weights))
+    return {"nodes": nodes, "edges": []}  # not reached: the module level returns above
+
+
+def _file_relations(state: DocState, nodes: list[dict], owner: dict[str, str], imports: dict[tuple[str, str], int],
+                    apart: str, project: str, focus: str, depth: int, kinds: tuple[str, ...]) -> dict:
+    """The module level of the architecture: every relation between files, the filters, the cycles.
+
+    Args:
+        state: Extracted entities and relations.
+        nodes: The packages (frames) and modules (boxes); put in their projects here.
+        owner: Box of each module (a package's own module is `<package>.__init__`).
+        imports: Imports between boxes, with how many.
+        apart, project, focus, depth, kinds: As in `architecture`.
+
+    Returns:
+        `nodes`, `edges` (one per pair of boxes and kind, with `weight`; imports also `cycle`) and
+        `cycles` (the boxes of each import cycle).
+    """
+    nodes += _in_projects(state, nodes, apart)
+    weights: dict[tuple[str, str, str], int] = {(s, t, "imports"): w for (s, t), w in imports.items()}
+
+    def box_of(path: str) -> str | None:  # the box of the file an entity is in
+        while path and path in state.entities and state.entities[path]["kind"] != "module":
+            path = state.entities[path]["parent"]
+        return owner.get(path)
+
+    for kind in ARCHITECTURE_KINDS[1:]:
+        for edge in _edges_of(state, kind):
+            source, target = box_of(edge["source"]), box_of(edge["target"])
+            if source and target and source != target:
+                weights[(source, target, kind)] = weights.get((source, target, kind), 0) + 1
+    in_cycle, cycles = _cycles(set(imports))
+    pairs = [(s, t) for s, t, kind in weights if kind in kinds]
+    nodes = _filtered(nodes, pairs, project, (owner.get(focus) or focus) if focus else "", depth)
+    keep = {node["id"] for node in nodes if not node["frame"]}
     edges = [
-        {"id": f"imports:{s}->{t}", "source": s, "target": t, "kind": "imports", "directed": True, "weight": w,
-         "cycle": (s, t) in in_cycle}
-        for (s, t), w in sorted(weights.items())
+        {"id": f"{kind}:{s}->{t}", "source": s, "target": t, "kind": kind, "directed": True, "weight": w,
+         "cycle": kind == "imports" and (s, t) in in_cycle}
+        for (s, t, kind), w in sorted(weights.items()) if kind in kinds and s in keep and t in keep
     ]
-    return {"nodes": nodes, "edges": edges}
+    return {"nodes": nodes, "edges": edges, "cycles": [members for members in cycles if set(members) <= keep]}
 
 
-def _cycle_edges(edges: set[tuple[str, str]]) -> set[tuple[str, str]]:
-    """Find the edges that are part of a cycle (both ends in the same strongly connected group).
+def _filtered(nodes: list[dict], pairs: list[tuple[str, str]], project: str, focus: str, depth: int) -> list[dict]:
+    """Keep the boxes of a diagram that pass its filters, and the frames that still hold one of them.
+
+    Args:
+        nodes: The diagram's boxes and frames, already in their projects.
+        pairs: The relations between boxes, to find the neighbours of `focus`.
+        project: Only the boxes inside this project (`project:<name>`); empty for all.
+        focus: Only this box and those `depth` relations away from it; empty for all.
+        depth: How many relations away from `focus`.
+
+    Returns:
+        The nodes kept, in their order.
+    """
+    by_id = {node["id"]: node for node in nodes}
+    ancestors = lambda node_id: [] if not by_id.get(node_id, {}).get("parent") else [by_id[node_id]["parent"], *ancestors(by_id[node_id]["parent"])]
+    keep = {node["id"] for node in nodes if not node["frame"]}
+    if project:
+        keep = {node_id for node_id in keep if project in ancestors(node_id)}
+    if focus:
+        neighbours: dict[str, set[str]] = {}
+        for source, target in pairs:
+            neighbours.setdefault(source, set()).add(target)
+            neighbours.setdefault(target, set()).add(source)
+        reached = frontier = {focus} if focus in by_id else set()
+        for _ in range(max(1, depth)):
+            frontier = {other for node_id in frontier for other in neighbours.get(node_id, ())} - reached
+            reached = reached | frontier
+        keep &= reached
+    holding = {ancestor for node_id in keep for ancestor in ancestors(node_id)}
+    return [node for node in nodes if node["id"] in keep or node["id"] in holding]
+
+
+def _cycles(edges: set[tuple[str, str]]) -> tuple[set[tuple[str, str]], list[list[str]]]:
+    """Find the cycles of a directed graph (its strongly connected groups of more than one node).
 
     Args:
         edges: Directed `(source, target)` pairs.
 
     Returns:
-        The pairs that belong to a cycle.
+        The pairs that belong to a cycle, and the nodes of each cycle (sorted, the biggest cycle first).
     """
     graph: dict[str, list[str]] = {}
     for source, target in edges:
@@ -185,7 +311,12 @@ def _cycle_edges(edges: set[tuple[str, str]]) -> set[tuple[str, str]]:
     for node in graph:
         if node not in index:
             visit(node)
-    return {(s, t) for s, t in edges if group[s][0] == group[t][0] and group[s][1] > 1}
+    members: dict[str, list[str]] = {}
+    for node, (root, size) in group.items():
+        if size > 1:
+            members.setdefault(root, []).append(node)
+    cycles = sorted((sorted(nodes) for nodes in members.values()), key=lambda nodes: (-len(nodes), nodes))
+    return {(s, t) for s, t in edges if group[s][0] == group[t][0] and group[s][1] > 1}, cycles
 
 
 TYPE_ICONS = {
@@ -239,6 +370,8 @@ def _stereotype(entity: dict) -> str:
     Returns:
         The stereotype name, or an empty string.
     """
+    if entity.get("kind_label") in CLASS_KINDS:  # another language's interface, struct, enum, trait, impl
+        return entity["kind_label"]
     if any(decorator.split("(")[0].rsplit(".", 1)[-1] == "dataclass" for decorator in entity["decorators"]):
         return "dataclass"
     for base in entity["bases"]:
@@ -250,25 +383,41 @@ def _stereotype(entity: dict) -> str:
     return ""
 
 
-def class_diagram(state: DocState, package: str = "") -> dict:
+CLASS_RELATIONS = ("inherits", "implements", "has", "uses", "refers")
+"""Relations drawn between classes, each its own line."""
+
+IMPLEMENTED = ("interface", "trait", "protocol")
+"""Stereotypes of a class that others implement instead of extending: a base with one is `implements`."""
+
+
+def class_diagram(state: DocState, package: str = "", apart: str = "", project: str = "", focus: str = "",
+                  depth: int = MAX_CALL_DEPTH) -> dict:
     """Build a UML class diagram.
 
     Each class lists its attributes (name, type and an icon for the type) and its methods
-    (name and full signature). Relations: inheritance, composition (an attribute holds
-    another class; `via` names the attribute) and use (a method calls another class or one
-    of its methods).
+    (name and full signature). Relations: inheritance, implementation (the base is an interface,
+    a trait or a protocol), composition (an attribute holds another class; `via` names the
+    attribute), use (a method calls another class or one of its methods) and reference (a class
+    named without being called, e.g. as a type). SQL tables are left out: they are not classes.
 
     Args:
         state: Extracted entities and relations.
         package: Only classes under this path (e.g. `pkg.server`); empty means all.
+        apart: A folder whose projects go in a group of their own (see `architecture`).
+        project: Only the classes of this project (`project:<name>`, as in the nodes); empty for all.
+        focus: Only this class and those `depth` relations away from it; empty for all.
+        depth: How many relations away from `focus`.
 
     Returns:
         `nodes` (class path, `stereotype`, `attributes`: name, type, icon, target class;
-        `methods`: name, signature, kind) and `edges` (`inherits`, `has` with `via`, `uses`).
+        `methods`: name, signature, kind; `parent`: the file it is in) plus the files and packages
+        above the classes as frames (`frame` true, `parent` the package above), and `edges`
+        (one of `CLASS_RELATIONS`; `has` with `via`).
     """
     classes = [
         path for path, entity in state.entities.items()
-        if entity["kind"] == "class" and (not package or path == package or path.startswith(package + "."))
+        if entity["kind"] == "class" and entity["language"] != "sql"
+        and (not package or path == package or path.startswith(package + "."))
     ]
     kept = set(classes)
     held = {edge["via"]: edge["target"] for edge in _edges_of(state, "has")}  # attribute path -> class it holds
@@ -296,24 +445,48 @@ def class_diagram(state: DocState, package: str = "") -> dict:
                     "signature": f"{entity['name']}{signature_details(entity)}",
                     "kind": next((kind for kind in METHOD_KINDS if kind in decorators), ""),
                 })
-        nodes.append(_node(state, path, stereotype=stereotype, attributes=attributes, methods=methods))
+        nodes.append(_node(state, path, stereotype=stereotype, attributes=attributes, methods=methods,
+                           parent=_module_of(state, path), frame=False))
+    # The levels above the classes, as frames: the file of each class, then its packages up to the top.
+    frames: dict[str, str | None] = {}
+    for node in list(nodes):
+        module = node["parent"]
+        while module and module not in frames:
+            parent = _module_of(state, module)
+            frames[module] = parent
+            module = parent
+    nodes.extend(_node(state, path, parent=parent, frame=True, page=path) for path, parent in frames.items())
+    nodes += _in_projects(state, nodes, apart)
+    stereotypes = {node["id"]: node["stereotype"] for node in nodes if not node["frame"]}
     edges, seen = [], set()
     for edge in _edges_of(state, "inherits"):
         if edge["source"] in kept and edge["target"] in kept:
-            edges.append({"id": f"inherits:{edge['source']}->{edge['target']}", **edge})
+            kind = "implements" if stereotypes[edge["target"]] in IMPLEMENTED else "inherits"
+            edges.append({"id": f"{kind}:{edge['source']}->{edge['target']}", **edge, "kind": kind})
             seen.add((edge["source"], edge["target"]))
     for edge in _edges_of(state, "has"):
         if edge["source"] in kept and edge["target"] in kept:
             via = state.entities[edge["via"]]["name"]
             edges.append({"id": f"has:{edge['source']}.{via}->{edge['target']}", **edge, "via": via})
             seen.add((edge["source"], edge["target"]))
-    for edge in _edges_of(state, "calls"):
-        source = _class_of(state, edge["source"])
-        target = _class_of(state, edge["target"])
-        if source in kept and target in kept and source != target and (source, target) not in seen:
-            seen.add((source, target))
-            edges.append({"id": f"uses:{source}->{target}", "source": source, "target": target, "kind": "uses"})
-    return {"nodes": nodes, "edges": edges}
+    for relation, kind in (("calls", "uses"), ("refers", "refers")):
+        for edge in _edges_of(state, relation):
+            source = _class_of(state, edge["source"])
+            target = _class_of(state, edge["target"])
+            if source in kept and target in kept and source != target and (source, target) not in seen:
+                seen.add((source, target))
+                edges.append({"id": f"{kind}:{source}->{target}", "source": source, "target": target, "kind": kind})
+    nodes = _filtered(nodes, [(edge["source"], edge["target"]) for edge in edges], project, focus, depth)
+    kept = {node["id"] for node in nodes if not node["frame"]}
+    return {"nodes": nodes, "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept]}
+
+
+def _module_of(state: DocState, path: str) -> str | None:
+    """The module (file or package) holding an entity, outside any class; `None` at the top."""
+    parent = state.entities[path]["parent"]
+    while parent and parent in state.entities and state.entities[parent]["kind"] != "module":
+        parent = state.entities[parent]["parent"]
+    return parent if parent in state.entities else None
 
 
 def _class_of(state: DocState, path: str) -> str | None:
@@ -333,49 +506,220 @@ def _class_of(state: DocState, path: str) -> str | None:
     return entity["parent"] if parent and parent["kind"] == "class" else None
 
 
-def call_graph(state: DocState, focus: str, depth: int = 1, direction: str = "both") -> dict:
+CALL_KINDS = ("calls", "refers", "template", "css-class", "route")
+"""Relations of the call graph, each its own line: calls, names used without a call (a callback, a
+type), templates included or rendered, CSS classes used and the routes a URL reaches."""
+
+LOCAL_KINDS = ("imports", "inherits", "has", "calls", "refers", "template", "css-class", "route")
+"""Relations of an entity's local graph (its page): every relation but containment."""
+
+_DRAWN_FROM = {"template": "uses", "css-class": "uses", "route": "refers"}
+"""The extracted relation each kind of the call graph is read from (the others are their own)."""
+
+
+def _call_kind(state: DocState, edge: dict) -> str:
+    """Tell the kind a relation is drawn as in the call graph: `uses` is a template or a CSS class, a
+    `refers` with a route (`via`) is a route."""
+    if edge["kind"] == "uses":
+        return "css-class" if state.entities[edge["target"]]["language"] == "css" else "template"
+    if edge["kind"] == "refers" and edge.get("via"):
+        return "route"
+    return edge["kind"]
+
+
+def find_callable(state: DocState, name: str) -> str | None:
+    """Find the function, method or class a call graph is centered on, by its path or by its name.
+
+    Args:
+        state: Extracted entities and relations.
+        name: An entity path, or a name as written in the code (`call_graph`, `NoteStore.add_task`).
+
+    Returns:
+        The path; among several of the same name, the one with the most calls in and out. `None`
+        when nothing has that path or name.
+    """
+    name = name.strip()
+    if name in state.entities:
+        return name
+    found = [path for path, entity in state.entities.items() if entity["kind"] in ("function", "class")
+             and (entity["name"] == name or path.endswith(("." + name, ":" + name)))]
+    if not found:
+        return None
+    degree: dict[str, int] = {}
+    for kind in CALL_KINDS:
+        for edge in _edges_of(state, kind):
+            for end in (edge["source"], edge["target"]):
+                degree[end] = degree.get(end, 0) + 1
+    return max(found, key=lambda path: (degree.get(path, 0), -len(path)))
+
+
+def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, direction: str = "both", to: str = "",
+               kinds: tuple[str, ...] = CALL_KINDS) -> dict:
     """Build the call neighborhood of one function, method or class.
 
     Args:
         state: Extracted entities and relations.
-        focus: Path of the entity in the center.
+        focus: Path or name of the entity in the center (see `find_callable`).
         depth: How many calls away to go (1 to `MAX_CALL_DEPTH`).
         direction: `out` (what it calls), `in` (what calls it) or `both`.
+        to: Path or name of another entity: instead of the neighborhood, the shortest call paths
+            from `focus` to it (or from it to `focus`, when there are none the other way).
+        kinds: The relations followed and drawn: `CALL_KINDS`, or `LOCAL_KINDS` for the local graph
+            of an entity's page.
 
     Returns:
-        `nodes` (with `distance` from the focus and `side`: `focus`, `callee` or `caller`)
-        and `edges` (`calls`, and `refers` and `uses`: a callback, a route, a template, a CSS class);
-        both empty when `focus` is unknown.
+        `focus` (the path found), `nodes` (with `distance` from the focus and `side`: `focus`,
+        `callee`, `caller` or `path`) and `edges` (one of `kinds`); `nodes` and `edges`
+        are empty, with an `error`, when `focus` or `to` is unknown or no path links them.
     """
-    if focus not in state.entities:
-        return {"nodes": [], "edges": []}
-    depth = max(1, min(depth, MAX_CALL_DEPTH))
-    calls = [edge for kind in ("calls", "refers", "uses") for edge in _edges_of(state, kind)]
+    read = sorted({_DRAWN_FROM.get(kind, kind) for kind in kinds})
+    calls = [{**edge, "kind": _call_kind(state, edge)} for base in read for edge in _edges_of(state, base)]
+    calls = [edge for edge in calls if edge["kind"] in kinds]
     callees: dict[str, list[str]] = {}
     callers: dict[str, list[str]] = {}
     for edge in calls:
         callees.setdefault(edge["source"], []).append(edge["target"])
         callers.setdefault(edge["target"], []).append(edge["source"])
-    found = {focus: (0, "focus")}
+    start = find_callable(state, focus)
+    if start is None:
+        return {"focus": "", "nodes": [], "edges": [], "error": f"Nothing is called {focus}."}
+    if to.strip():
+        end = find_callable(state, to)
+        if end is None:
+            return {"focus": start, "nodes": [], "edges": [], "error": f"Nothing is called {to}."}
+        found = _shortest_paths(start, end, callees) or _shortest_paths(end, start, callees)
+        if not found:
+            return {"focus": start, "nodes": [], "edges": [], "error": f"No calls lead from {focus} to {to}, nor back."}
+        nodes = [_node(state, path, distance=distance, side="focus" if path in (start, end) else "path")
+                 for path, distance in found.items()]
+        edges = [{"id": f"{e['kind']}:{e['source']}->{e['target']}", **e} for e in calls
+                 if e["source"] in found and e["target"] in found and found[e["target"]] == found[e["source"]] + 1]
+        return {"focus": start, "nodes": nodes, "edges": edges}
+    depth = max(1, min(depth, MAX_CALL_DEPTH))
+    reached_at = {start: (0, "focus")}
     walks = [("callee", callees)] if direction == "out" else [("caller", callers)] if direction == "in" else [
         ("callee", callees), ("caller", callers)]
     for side, neighbors in walks:
-        frontier = [focus]
+        frontier = [start]
         for distance in range(1, depth + 1):
             reached = []
             for path in frontier:
                 for neighbor in neighbors.get(path, []):
-                    if neighbor not in found:
-                        found[neighbor] = (distance, side)
+                    if neighbor not in reached_at:
+                        reached_at[neighbor] = (distance, side)
                         reached.append(neighbor)
             frontier = reached
-    nodes = [_node(state, path, distance=distance, side=side) for path, (distance, side) in found.items()]
+    nodes = [_node(state, path, distance=distance, side=side) for path, (distance, side) in reached_at.items()]
     edges = [
         {"id": f"{e['kind']}:{e['source']}->{e['target']}", **e}
         for e in calls
-        if e["source"] in found and e["target"] in found
+        if e["source"] in reached_at and e["target"] in reached_at
     ]
-    return {"nodes": nodes, "edges": edges}
+    return {"focus": start, "nodes": nodes, "edges": edges}
+
+
+def _shortest_paths(start: str, end: str, callees: dict[str, list[str]]) -> dict[str, int]:
+    """The entities on every shortest call path from `start` to `end`, with their distance from `start`.
+
+    Args:
+        start: Where the calls start.
+        end: Where they must arrive.
+        callees: What each entity calls.
+
+    Returns:
+        Path → calls from `start`; empty when no calls lead from `start` to `end`.
+    """
+    ahead = {start: 0}
+    frontier = [start]
+    while frontier and end not in ahead:
+        reached = []
+        for path in frontier:
+            for callee in callees.get(path, []):
+                if callee not in ahead:
+                    ahead[callee] = ahead[path] + 1
+                    reached.append(callee)
+        frontier = reached
+    if end not in ahead:
+        return {}
+    on_path = {end}
+    frontier = [end]
+    while frontier:  # back from the end: what is one call closer to the start and calls it
+        frontier = [path for path in ahead for target in frontier
+                    if ahead[path] == ahead[target] - 1 and target in callees.get(path, []) and path not in on_path]
+        on_path.update(frontier)
+    return {path: ahead[path] for path in on_path}
+
+
+MAX_BOXES = 500
+"""Most boxes a diagram given to an agent holds: over it, the most connected (as the wiki draws)."""
+
+
+def trim_view(graph: dict, kinds: list[str] | None = None, hide_unconnected: bool = False,
+              max_boxes: int = MAX_BOXES) -> dict:
+    """Apply the options of a diagram's bar to a diagram, for the MCP tools: what the wiki's bar does.
+
+    Args:
+        graph: A diagram (`nodes`, `edges`), as `architecture`, `class_diagram` or `call_graph` build it.
+        kinds: Only these relations; `None` keeps them all.
+        hide_unconnected: Leave out the boxes with no relation left.
+        max_boxes: Over this many boxes, only the most connected are kept.
+
+    Returns:
+        The diagram with the boxes and frames kept, plus `left_out`: how many boxes the limit left out.
+    """
+    edges = [edge for edge in graph["edges"] if kinds is None or edge["kind"] in kinds]
+    boxes = [node for node in graph["nodes"] if not node.get("frame")]
+    degree: dict[str, int] = {}
+    for edge in edges:
+        for end in (edge["source"], edge["target"]):
+            degree[end] = degree.get(end, 0) + edge.get("weight", 1)
+    if hide_unconnected:
+        boxes = [node for node in boxes if node["id"] in degree]
+    left_out = max(0, len(boxes) - max_boxes)
+    kept = {node["id"] for node in sorted(boxes, key=lambda node: (-degree.get(node["id"], 0), node["id"]))[:max_boxes]}
+    parent_of = {node["id"]: node.get("parent") for node in graph["nodes"]}
+    holding = set()
+    for node_id in kept:  # the frames above what is kept
+        at = parent_of.get(node_id)
+        while at and at not in holding:
+            holding.add(at)
+            at = parent_of.get(at)
+    return {**graph, "nodes": [node for node in graph["nodes"] if node["id"] in kept or node["id"] in holding],
+            "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept], "left_out": left_out}
+
+
+TIMELINE_COMMITS = 5000
+"""Most commits the timeline goes through, the newest."""
+
+
+async def file_timeline(project_root: Path) -> dict | None:
+    """Tell, for each file of the project, at which commit it appeared: the timeline of the diagrams.
+
+    Read from the git log only (the code of old commits is never read): a file appears at the commit
+    that added it, keeps that commit when it is renamed or moved, and starts again if it is deleted
+    and added back. A file not committed yet has no commit: it appears only at the end, "now".
+
+    Args:
+        project_root: Root of the documented project.
+
+    Returns:
+        `commits` (oldest first: `short`, `author`, `date`, `subject`) and `added` (file path, relative to the
+        project root → the index of its commit in `commits`); `None` when git or the repository is missing.
+    """
+    commits = await read_history(project_root, TIMELINE_COMMITS)
+    if commits is None:
+        return None
+    commits.reverse()
+    added: dict[str, int] = {}
+    for index, commit in enumerate(commits):
+        for path in commit.deleted:
+            added.pop(path, None)
+        for old, new in commit.renamed:
+            added[new] = added.pop(old, index)
+        for path in commit.added:
+            added.setdefault(path, index)
+    return {"commits": [{"short": c.short, "author": c.author, "date": c.date[:10], "subject": c.subject} for c in commits],
+            "added": added}
 
 
 async def entity_history(state: DocState, project_root: Path, path: str, limit: int = 20) -> list[dict] | None:

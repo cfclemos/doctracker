@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /** The quantity of each product in the warehouse. */
-public class Stock {
+public class Stock implements Inventory {
     private final Map<String, Integer> quantities = new HashMap<>();
 
     /** Add units of a product. */
@@ -13,6 +13,7 @@ public class Stock {
     }
 
     /** Units of a product left; zero when it was never added. */
+    @Override
     public int unitsOf(String product) {
         return quantities.getOrDefault(product, 0);
     }

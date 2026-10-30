@@ -10,11 +10,8 @@
 <div class="notes-page">
   {{ ui.view_header("notes", "AGENT NOTES",
      "Plan the work and keep what the project knows. Agents do it through the MCP tools; you can do it here, with the same functions.") }}
-  <nav class="notes-tabs">
-    {% for name, label in (("planner", "Planner"), ("guidelines", "Guidelines"), ("memory", "Memory")) %}
-    <a class="notes-tab{% if tab == name %} current{% endif %}" {{ ui.nav_url("/notes?tab=" ~ name) }}>{{ label }}</a>
-    {% endfor %}
-  </nav>
+  {{ ui.tabs((("planner", "Planner", "/notes?tab=planner"), ("guidelines", "Guidelines", "/notes?tab=guidelines"),
+              ("memory", "Memory", "/notes?tab=memory")), tab) }}
   {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
 
   {% if tab == "planner" %}

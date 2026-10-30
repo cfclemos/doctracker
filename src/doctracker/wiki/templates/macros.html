@@ -15,33 +15,142 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 <span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbol }}</span>
 {%- endmacro %}
 
+{# The choices of a Focus field (static/live.js shows them as an autocomplete under it): each with
+   its kind's icon, its name and its path. #}
+{% macro focus_options(id, targets) -%}
+<datalist id="{{ id }}">{% for row in targets %}<option value="{{ row.path }}" data-name="{{ row.name }}" data-role="{{ row.role | replace(' ', '-') }}" data-symbol="{{ row.symbol }}">{% endfor %}</datalist>
+{%- endmacro %}
+
 {# Header of a graph view page. #}
 {% macro view_header(view, title, text) -%}
 <header class="page-header">
   <h1>{{ icon(view) }}<span class="name">{{ title }}</span></h1>
-  <p class="meta">{{ text }}</p>
+  {% if text %}<p class="meta">{{ text }}</p>{% endif %}
 </header>
 {%- endmacro %}
 
 {# Drawing area of a graph view, with its bar on top (highlight, zoom, fit); static/graph.js draws
    data_url with the style of `view` and selects `focus` (an entity path) when given. #}
-{% macro view_canvas(view, data_url, focus="") -%}
+{# The legend's relation kinds, each a button that turns its lines off or on (static/graph.js). #}
+{% set RELATION_TIPS = {
+  "imports": ("imports", "What a file imports"),
+  "uses": ("uses", "Templates included, CSS classes used"),
+  "template": ("templates", "Templates included, extended or rendered"),
+  "css-class": ("CSS classes", "CSS classes used"),
+  "route": ("routes", "The route a URL reaches: its handler"),
+  "calls": ("calls", "Functions, methods, macros called"),
+  "refers": ("refers", "Named without being called: callbacks, routes, types, tables"),
+  "inherits": ("inherits", "A class built on another"),
+  "implements": ("implements", "A class that implements an interface, a trait or a protocol"),
+  "has": ("has", "An attribute holding another class"),
+} %}
+{% macro relation_kinds(kinds) -%}
+{% for kind in kinds %}
+<button type="button" class="graph-kind" data-kind="{{ kind }}" aria-pressed="true" title="{{ RELATION_TIPS[kind][1] }} — click to hide or show"><i class="line {{ kind }}"></i>{{ RELATION_TIPS[kind][0] }}</button>
+{% endfor %}
+{%- endmacro %}
+
+{# An entity's page: the entity and what it relates to, a few steps away, drawn as the diagrams are. #}
+{% macro local_graph(path, role) -%}
+{% call section(role, "Local graph", name="local-graph", divider=true) %}
+<div class="graph-page local-graph">
+  <div class="graph-toolbar">
+    <label class="field"><span class="field-label">Depth</span> <select class="graph-local-depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if step == max_call_depth %} selected{% endif %}>{{ step }}</option>{% endfor %}</select></label>
+  </div>
+  {% call view_canvas("local", "/graph/local?focus=" ~ (path | urlencode) ~ "&depth=" ~ max_call_depth, path, layouts=true) %}
+    <span><i class="box call-focus"></i>this page</span>
+    <span><i class="box call-callee"></i>what it uses</span>
+    <span><i class="box call-caller"></i>what uses it</span>
+    {{ relation_kinds(("imports", "inherits", "has", "calls", "refers", "template", "css-class", "route")) }}
+  {% endcall %}
+</div>
+{% endcall %}
+{%- endmacro %}
+
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false) -%}
 <div class="graph-area">
-  {# Bar on top of the drawing: highlight, zoom and fit. #}
+  {# Bar on top of the drawing: highlight; then icon buttons in groups, each named by a floating label
+     (data-tip): the layout (layers or forces), the colours, hide unconnected / rearrange / fit, zoom,
+     export (SVG or PNG). Layout, colours, hide unconnected, rearrange and export are for the diagrams. #}
   <div class="graph-canvas-bar">
     <input class="graph-find" type="search" placeholder="Highlight…" autocomplete="off">
-    <span class="graph-zoom" hidden>
-      <button type="button" class="graph-zoom-out" title="Zoom out">−</button>
-      <span class="graph-zoom-level" title="Zoom">100%</span>
-      <button type="button" class="graph-zoom-in" title="Zoom in">+</button>
-      <button type="button" class="graph-zoom-reset" title="Real size">100%</button>
+    {% if layouts %}
+    <span class="graph-buttons graph-layouts" role="radiogroup" aria-label="Layout">
+      <button type="button" role="radio" class="graph-icon graph-layout" data-layout="layers" aria-label="Layers"
+              data-tip="Layers: what uses above what it uses"><i class="bar-icon bar-icon-layers"></i></button>
+      <button type="button" role="radio" class="graph-icon graph-layout" data-layout="forces" aria-label="Forces"
+              data-tip="Forces: related boxes pull together"><i class="bar-icon bar-icon-forces"></i></button>
     </span>
-    <button type="button" class="graph-fit" title="Fit the graph to the screen">Fit</button>
+    <span class="graph-buttons graph-colours" role="radiogroup" aria-label="Colour">
+      {% for name, tip in (("kind", "Colour by kind"), ("language", "Colour by language: a chip per language shows or hides it"),
+                           ("project", "Colour by project: a chip per project shows or hides it")) %}
+      <button type="button" role="radio" class="graph-icon graph-colour-by" data-colour="{{ name }}" aria-label="{{ tip }}"
+              data-tip="{{ tip }}"><i class="bar-icon bar-icon-colour-{{ name }}"></i></button>
+      {% endfor %}
+    </span>
+    {% endif %}
+    {% if layouts %}
+    <span class="graph-buttons">
+      <button type="button" class="graph-icon graph-hide-loose" aria-pressed="false" aria-label="Hide unconnected"
+              data-tip="Hide unconnected"><i class="bar-icon bar-icon-hide"></i></button>
+      <button type="button" class="graph-icon graph-rearrange" aria-label="Rearrange"
+              data-tip="Rearrange what is on screen"><i class="bar-icon bar-icon-rearrange"></i></button>
+    </span>
+    {% endif %}
+    {% if layouts %}
+    <span class="graph-export-menu">
+      <button type="button" class="graph-icon graph-export-toggle" aria-label="Export" aria-expanded="false"
+              data-tip="Export"><i class="bar-icon bar-icon-export"></i></button>
+      <span class="graph-export-items" hidden>
+        <button type="button" class="graph-export" data-format="svg">SVG file</button>
+        <button type="button" class="graph-export" data-format="png">PNG image</button>
+      </span>
+    </span>
+    {% endif %}
   </div>
-  <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
-    <p class="empty">Loading…</p>
+  {% if evolution %}
+  {# Architecture evolution: a slider through the commits; each file appears at the commit that added it
+     (from the git log), the relations when both their files are there. While the handle is held, the
+     commit shows under it, in the same box as the commits of the GIT page. #}
+  <div class="graph-evolution" hidden>
+    <span class="graph-evolution-title">Architecture evolution</span>
+    <div class="graph-evolution-track">
+      <input type="range" class="graph-evolution-range" min="0" max="0" value="0" aria-label="Architecture evolution: the commit shown">
+      <div class="graph-evolution-commit" hidden></div>
+    </div>
   </div>
-  <aside class="graph-info" hidden></aside>
+  {% endif %}
+  <p class="graph-warning" hidden></p>
+  <div class="graph-groups" hidden></div>
+  {# The drawing, with zoom and fit floating in its top right corner, and the legend in a column on its
+     right that folds into a thin strip (kept per browser, static/live.js). #}
+  <div class="graph-stage">
+  <div class="graph-canvas-box">
+    <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
+      <p class="empty">Loading…</p>
+    </div>
+    <div class="graph-view-tools">
+      <span class="graph-buttons graph-zoom" hidden>
+        <button type="button" class="graph-icon graph-zoom-out" data-tip="Zoom out" aria-label="Zoom out">−</button>
+        <span class="graph-zoom-level">100%</span>
+        <button type="button" class="graph-icon graph-zoom-in" data-tip="Zoom in" aria-label="Zoom in">+</button>
+      </span>
+      <button type="button" class="graph-icon graph-fit" aria-label="Fit" data-tip="Fit to the screen"><i class="bar-icon bar-icon-fit"></i></button>
+    </div>
+    {# What a click chose: under the zoom and fit, in the drawing's right side. #}
+    <aside class="graph-info" hidden></aside>
+  </div>
+  {% if caller is defined %}
+  <aside class="graph-legend-panel">
+    <button type="button" class="graph-legend-toggle" aria-expanded="true" title="Fold or open the legend">
+      <span class="graph-legend-title">Legend</span><i class="graph-legend-chevron" aria-hidden="true">›</i>
+    </button>
+    <div class="graph-legend">
+      {{ caller() }}
+    </div>
+  </aside>
+  {% endif %}
+  </div>
   <div class="graph-tooltip" role="tooltip" hidden></div>
 </div>
 {%- endmacro %}
@@ -152,4 +261,24 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   </button>
   {% endif %}
 </span>
+{%- endmacro %}
+
+{# Tabs of a page (AGENT NOTES, DIAGRAMS): `(name, label, url)` for each; the current one is marked. #}
+{% macro tabs(items, current) -%}
+<nav class="tabs">
+  {% for name, label, url in items %}
+  <a class="tab{% if name == current %} current{% endif %}" {{ nav_url(url) }}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{%- endmacro %}
+
+{# The language filter of the whole wiki (static/live.js keeps it in a cookie): in the search bar and
+   in the bar of the diagrams, always showing the languages in use. #}
+{% macro language_select(found, shown, languages, id="") -%}
+<select {% if id %}id="{{ id }}" {% endif %}class="language-filter" title="Languages shown in the wiki" aria-label="Languages shown">
+  <option value="">All languages</option>
+  {% for name in found %}
+  <option value="{{ name }}"{% if shown | list == [name] and found | length > 1 %} selected{% endif %}>{{ languages[name].label }}</option>
+  {% endfor %}
+</select>
 {%- endmacro %}

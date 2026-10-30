@@ -139,6 +139,8 @@ main { grid-area: main; }
 }
 
 /* Languages shown in the whole wiki, before the search modes. */
+.graph-language { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+.graph-language .language-filter { height: 2.3rem; }
 .language-filter { flex: none; height: 2.4rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: 0.85rem; }
 
 /* Search mode: joined toggle buttons (MUI ToggleButtonGroup style). */
@@ -295,7 +297,10 @@ main { grid-area: main; }
 #tree .role-language { font-weight: 700; font-size: 0.9rem; }
 #tree li:has(> details > summary > .role-project) + li { margin-top: 0.5rem; }
 /* CODE, with the switch of the tree's format beside it. */
-#tree .tree-examples { margin-top: 0.8rem; }
+#tree .tree-examples, #tree .tree-section { margin-top: 0.8rem; }
+/* DEAD CODE: a heading like CODE and EXAMPLES, that opens its page. */
+#tree .tree-section .tree-group { display: flex; color: var(--fg); border-radius: 0; background: none; }
+#tree .tree-section .tree-group:hover, #tree .tree-section .tree-group.current { text-decoration: none; color: var(--accent); }
 #tree .tree-code { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 #tree .tree-layouts { display: inline-flex; gap: 0.1rem; }
 #tree .tree-layout { border: 1px solid transparent; background: none; color: var(--muted); border-radius: 4px; padding: 0.05rem 0.1rem; cursor: pointer; }
@@ -322,7 +327,7 @@ main { grid-area: main; }
 /* Drawn icons (Tabler Icons, MIT, in static/icons/): the SVG is a mask painted with the
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
-.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before,
+.icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before, .icon-diagrams::before,
 .icon-dead-code::before, .icon-folder::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
 .icon-layout-folders::before, .icon-layout-languages::before {
@@ -344,7 +349,7 @@ main { grid-area: main; }
 .icon-file::before { -webkit-mask-image: url("icons/file.svg"); mask-image: url("icons/file.svg"); }
 .icon-folder::before, .icon-layout-folders::before { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
 .icon-language::before, .icon-layout-languages::before { -webkit-mask-image: url("icons/braces.svg"); mask-image: url("icons/braces.svg"); }
-.icon-architecture::before { -webkit-mask-image: url("icons/sitemap.svg"); mask-image: url("icons/sitemap.svg"); }
+.icon-architecture::before, .icon-diagrams::before { -webkit-mask-image: url("icons/sitemap.svg"); mask-image: url("icons/sitemap.svg"); }
 .icon-classes::before { -webkit-mask-image: url("icons/binary-tree.svg"); mask-image: url("icons/binary-tree.svg"); }
 .icon-calls::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
@@ -352,7 +357,7 @@ main { grid-area: main; }
 .icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
-.icon-architecture { --tint: var(--method); }
+.icon-architecture, .icon-diagrams { --tint: var(--method); }
 .icon-classes { --tint: var(--class); }
 .icon-calls { --tint: var(--function); }
 .icon-git { --tint: var(--raises); }
@@ -444,7 +449,9 @@ details.block:not([open]) {
 }
 /* Color of each kind, set once as --tint: icons use it as text color, badges as background,
    blocks for their light background and border. */
-.icon-class, .badge-class, .block-class { --tint: var(--class); }
+.icon-class, .badge-class, .block-class,
+.icon-interface, .icon-struct, .icon-enum, .icon-trait, .icon-impl, .badge-interface, .badge-struct, .badge-enum, .badge-trait,
+.badge-impl, .block-interface, .block-struct, .block-enum, .block-trait, .block-impl { --tint: var(--class); }
 .icon-function, .badge-function, .block-function { --tint: var(--function); }
 .icon-method, .badge-method, .block-method { --tint: var(--method); }
 .icon-attribute, .icon-type-alias, .badge-attribute, .badge-type-alias, .badge-attributes,
@@ -638,6 +645,9 @@ td p { margin: 0; }
 }
 .graph-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1rem; font-size: 0.85rem; color: var(--muted); }
 .graph-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
+/* A bar whose Focus has a line of its own: the other fields, the language filter included, share the next. */
+.graph-toolbar.focus-apart .graph-filter { display: contents; }
+.graph-toolbar.focus-apart .graph-focus { flex-basis: 100%; order: -1; }
 .graph-filter .focus-input { width: 26rem; max-width: 60vw; }
 /* A text field with a × to empty it (see live.js). */
 .field-clearable { position: relative; display: inline-flex; align-items: center; }
@@ -657,7 +667,7 @@ td p { margin: 0; }
 }
 .field-clear:hover { background: var(--panel); color: var(--fg); }
 .field-clear[hidden] { display: none; }
-.graph-filter select, .graph-filter input {
+.graph-filter select, .graph-filter input, .field select, .field input {
   height: 2rem;
   padding: 0 0.5rem;
   border: 1px solid var(--border);
@@ -667,6 +677,24 @@ td p { margin: 0; }
   font: inherit;
 }
 .field-clearable input { padding-right: 1.9rem; }
+/* The fields of the diagrams' bars, as Material's outlined text fields: the name sits on the border,
+   in the top left corner, and turns to the accent while the field is in use. */
+.field { position: relative; display: inline-flex; align-items: center; margin-top: 0.35rem; }
+.field-label { position: absolute; top: 0; left: 0.45rem; z-index: 1; padding: 0 0.25rem; transform: translateY(-50%);
+  background: var(--bg); color: var(--muted); font-size: 0.68rem; line-height: 1; white-space: nowrap; pointer-events: none; }
+.field:focus-within .field-label { color: var(--accent); }
+.field select, .field input { height: 2.3rem; }
+/* The autocomplete of a Focus field: under it, each choice with its kind's icon, name and path. */
+.focus-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; box-sizing: border-box; max-height: 20rem;
+  margin: 0; padding: 0.3rem 0; overflow: auto; list-style: none; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); box-shadow: 0 6px 18px rgb(0 0 0 / 16%); font-size: 0.85rem; }
+.focus-menu[hidden] { display: none; }
+.focus-menu li { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.7rem; cursor: pointer; color: var(--fg); }
+.focus-menu li.active, .focus-menu li[data-value]:hover { background: var(--panel); }
+.focus-menu strong { font-weight: 600; white-space: nowrap; }
+.focus-menu-path { overflow: hidden; color: var(--muted); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+.focus-menu-empty { color: var(--muted); cursor: default; }
+.field select:focus, .field input:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.8rem; color: var(--muted); }
 .graph-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .graph-legend .line { display: inline-block; width: 1.4rem; height: 0; border-top: 2px solid; }
@@ -675,10 +703,17 @@ td p { margin: 0; }
 .graph-legend .line.inherits { border-color: var(--class); }
 .graph-legend .line.has { border-color: var(--method); }
 .graph-legend .line.uses { border-color: var(--muted); border-top-style: dashed; }
-.graph-legend .dot { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 50%; border: 2px solid; }
-.graph-legend .dot.focus { border-color: var(--fg); background: var(--fg); }
-.graph-legend .dot.callee { border-color: var(--function); }
-.graph-legend .dot.caller { border-color: var(--note); }
+.graph-legend .box.project { background: var(--attribute); }
+.graph-legend .box.member { background: color-mix(in srgb, var(--attribute) 60%, var(--bg)); }
+.graph-legend .box.class { background: var(--class); }
+.graph-legend .box.closed { width: auto; height: auto; padding: 0 0.3rem; border: 2px solid var(--accent); color: var(--fg);
+  font: 600 0.62rem system-ui, sans-serif; font-style: normal; line-height: 1.2; }
+.graph-legend .box.call-focus, .graph-legend .box.call-callee, .graph-legend .box.call-caller { background: var(--panel); border: 2px solid; }
+.graph-legend .box.call-focus { border-color: var(--fg); }
+.graph-legend .box.call-callee { border-color: var(--function); }
+.graph-legend .box.call-caller { border-color: var(--note); }
+.graph-legend .box.call-path { background: var(--panel); border: 2px solid var(--accent); }
+.graph-legend .line.lifted { border-color: var(--accent); border-top-style: dashed; }
 .graph-hint { padding: 2rem 0; }
 .graph-area { position: relative; margin-top: 0.8rem; }
 .graph-canvas {
@@ -689,6 +724,7 @@ td p { margin: 0; }
   background: var(--block);
 }
 .graph-canvas > .empty { padding: 1rem; }
+.local-graph .graph-canvas { height: 26rem; min-height: 0; }  /* an entity page: one block among others */
 
 /* CLASSES and ARCHITECTURE: boxes in the style of database diagrams (DBeaver), over SVG lines. */
 .uml-canvas { position: relative; overflow: hidden; cursor: grab; touch-action: none; }
@@ -759,6 +795,7 @@ td p { margin: 0; }
 .uml-line.has { stroke: var(--accent); }
 .uml-line.inherits { stroke: var(--fg); }
 .uml-line.uses { stroke: var(--muted); stroke-dasharray: 5 4; }
+.uml-line.implements { stroke: var(--fg); stroke-dasharray: 6 4; }  /* UML realization: dashed, hollow triangle */
 .uml-line.near { stroke-width: 2.6; }
 .uml-marker-hollow { fill: var(--bg); stroke: currentColor; stroke-width: 1.4; }
 .uml-marker-filled { fill: var(--accent); }
@@ -770,7 +807,24 @@ td p { margin: 0; }
   --arch-subpackage: var(--accent); --arch-module: color-mix(in srgb, var(--accent) 45%, var(--bg)); }
 .arch-package { --arch: var(--arch-package); }
 .arch-subpackage { --arch: var(--arch-subpackage); }
-.arch-module { --arch: var(--arch-module); }
+.arch-module, .arch-script, .arch-stylesheet, .arch-template, .arch-file { --arch: var(--arch-module); }
+/* Projects (and doctracker's EXAMPLES group) hold the packages: the colours of the tree's icons. */
+.arch-project { --arch: var(--attribute); }
+.arch-examples { --arch: var(--exports); }
+.arch-member { --arch: color-mix(in srgb, var(--attribute) 60%, var(--bg)); }
+.arch-icon-member { --icon: url("icons/folder.svg"); }
+.arch-frame.arch-member .arch-frame-head, .arch-box.arch-member .uml-head { color: var(--fg); }
+.arch-icon-project { --icon: url("icons/box.svg"); }
+.arch-icon-examples { --icon: url("icons/puzzle.svg"); }
+/* The UNCONNECTED group of each level: amber, apart from the blues of the packages. */
+.arch-unconnected { --arch: var(--note); }
+.arch-box.arch-unconnected .uml-head, .arch-frame.arch-unconnected .arch-frame-head { color: #ffffff; }
+/* A closed level: its box tells how many items it holds and opens with a click. */
+.closed-box { cursor: pointer; border-width: 2px; }
+.closed-box .uml-head { display: flex; align-items: center; gap: 0.4rem; }
+.closed-count { margin-left: auto; padding: 0 0.4rem; border-radius: 8px; background: rgb(255 255 255 / 25%); font-size: 0.72rem; }
+.closed-open { font-size: 0.75rem; opacity: 0.8; }
+.uml-line.lifted { stroke-dasharray: 5 3; }
 .arch-box { border-color: var(--arch); }
 .arch-box .uml-head { background: var(--arch); color: #ffffff; }
 .arch-box.arch-module .uml-head { color: var(--fg); }
@@ -797,9 +851,10 @@ td p { margin: 0; }
   color: #ffffff;
   font-size: 0.78rem;
   white-space: nowrap;
-  cursor: move;
+  cursor: pointer;  /* a click closes the level (in the diagrams with levels); dragging moves it */
 }
-.arch-frame.inner { cursor: move; }
+.arch-frame.inner { cursor: grab; }  /* dragging its body pans (moves it in the planner) */
+.graph-canvas[data-view="planner"] .arch-frame.inner { cursor: move; }
 .arch-frame-role { font-size: 0.66rem; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.85; }
 .arch-icon {
   flex: none;
@@ -809,25 +864,98 @@ td p { margin: 0; }
   -webkit-mask: var(--icon) center / contain no-repeat;
   mask: var(--icon) center / contain no-repeat;
 }
-.arch-icon-package { --icon: url("icons/brand-python.svg"); }
+.arch-icon-package { --icon: url("icons/package.svg"); }
+.arch-icon-unconnected { --icon: url("icons/puzzle.svg"); }
+.arch-icon-script, .arch-icon-stylesheet, .arch-icon-template, .arch-icon-file { --icon: url("icons/file.svg"); }
 .arch-icon-subpackage { --icon: url("icons/folder.svg"); }
 .arch-icon-module { --icon: url("icons/file-code.svg"); }
 .uml-line.imports { stroke: var(--arch-subpackage); }
 .uml-line.imports.cycle { stroke: var(--raises); stroke-width: 2.2; }
+/* The other relations between files, each its own line; the legend's buttons filter by kind (graph.js). */
+.uml-canvas[data-view="architecture"] .uml-line.uses { stroke: var(--attribute); stroke-dasharray: 2 3; }
+.uml-line.calls { stroke: var(--function); }
+.uml-line.refers { stroke: var(--muted); stroke-dasharray: 6 3; }
+.uml-canvas[data-view="architecture"] .uml-line.inherits { stroke: var(--class); }
+.uml-canvas[data-view="architecture"] .uml-line.has { stroke: var(--method); }
+.graph-legend .graph-kind { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.05rem 0.4rem; border: 1px solid transparent;
+  border-radius: 4px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.graph-legend .graph-kind:hover { border-color: var(--border); }
+.graph-legend .graph-kind[aria-pressed="false"] { opacity: 0.4; text-decoration: line-through; }
+.graph-legend .line.calls { border-color: var(--function); }
+.graph-legend .line.refers { border-color: var(--muted); border-top-style: dashed; }
+.uml-line.template { stroke: var(--note); stroke-dasharray: 8 3; }
+.uml-line.css-class { stroke: var(--attribute); stroke-dasharray: 2 3; }
+.uml-line.route { stroke: var(--accent); stroke-dasharray: 10 3 2 3; }
+.graph-legend .line.template { border-color: var(--note); border-top-style: dashed; }
+.graph-legend .line.css-class { border-color: var(--attribute); border-top-style: dotted; }
+.graph-legend .line.route { border-color: var(--accent); border-top-style: dashed; }
+.graph-legend .line.implements { border-color: var(--class); border-top-style: dashed; }
+/* Architecture evolution, under the drawing's bar: its name in the corner, the slider, and, while the
+   handle is held, the commit under it over the drawing (the GIT page's commit box). --at is 0 to 1.
+   What was not there yet at the commit fades out of the drawing, which keeps its place. */
+.graph-evolution { position: relative; z-index: 30; padding: 1.25rem 1rem 0.55rem; border: 1px solid var(--border); border-bottom: 0;
+  background: var(--panel); }
+.graph-evolution-title { position: absolute; top: 0.35rem; left: 0.75rem; font-size: 0.62rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.graph-evolution-track { position: relative; }
+.graph-evolution-range { display: block; width: 100%; margin: 0; cursor: pointer; accent-color: var(--accent); }
+.graph-evolution .graph-evolution-commit { top: calc(100% + 0.5rem); left: calc(var(--at) * (100% - 16px) + 8px);
+  transform: translateX(calc(var(--at) * -100%)); z-index: 30; gap: 0; padding: 0.3rem 0.5rem; white-space: nowrap;
+  max-width: none; font-size: 0.72rem; line-height: 1.35; }
+.graph-evolution-head { margin: -0.3rem -0.5rem 0.25rem; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; background: var(--panel); color: var(--muted); font-size: 0.66rem; font-weight: 600; }
+.graph-evolution-head code { color: var(--fg); font-size: 0.66rem; }
+.graph-evolution-dot { margin: 0 0.2rem; color: var(--accent); font-weight: 900; }
+.graph-evolution .graph-evolution-commit[hidden] { display: none; }
+.graph-evolution .graph-evolution-commit strong { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; }
+.evolution-later { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.uml-box, .arch-frame, .uml-line { transition: opacity 0.12s; }
+/* The legend, in a column on the drawing's right: its name on top, one item per line, small; folded,
+   a thin strip with its name upright. */
+.graph-stage { display: flex; align-items: stretch; }
+.graph-stage > .graph-canvas-box { flex: 1; min-width: 0; }
+.graph-legend-panel { flex: none; display: flex; flex-direction: column; width: 11rem; border: 1px solid var(--border);
+  border-left: 0; border-bottom-right-radius: 8px; background: var(--panel); overflow: hidden; }
+.graph-stage:has(.graph-legend-panel) .graph-canvas { border-bottom-right-radius: 0; }
+.graph-legend-toggle { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; width: 100%;
+  padding: 0.45rem 0.6rem; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; }
+.graph-legend-toggle:hover { color: var(--fg); }
+.graph-legend-title { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.graph-legend-chevron { font-style: normal; font-size: 0.9rem; line-height: 1; }
+.graph-legend-panel .graph-legend { flex-direction: column; flex-wrap: nowrap; gap: 0.2rem; padding: 0.5rem 0.6rem;
+  overflow: auto; font-size: 0.68rem; line-height: 1.3; }
+.graph-legend-panel .graph-legend span, .graph-legend-panel .graph-kind { gap: 0.35rem; }
+.graph-legend-panel .graph-legend .box { flex: none; width: 0.7rem; height: 0.55rem; }
+.graph-legend-panel .graph-legend .box.closed { width: auto; height: auto; padding: 0 0.2rem; font-size: 0.62rem; line-height: 1.1; }
+.graph-legend-panel .graph-legend .line { flex: none; width: 1rem; }
+.graph-legend-panel .graph-kind { justify-content: flex-start; padding: 0 0.25rem; margin-left: -0.25rem; font-size: inherit; text-align: left; }
+.graph-legend-panel.folded { width: 1.8rem; }
+.graph-legend-panel.folded .graph-legend { display: none; }
+.graph-legend-panel.folded .graph-legend-toggle { flex-direction: column-reverse; justify-content: flex-end; height: 100%;
+  padding: 0.5rem 0; border-bottom: 0; }
+.graph-legend-panel.folded .graph-legend-title { writing-mode: vertical-rl; }
+.graph-legend-panel.folded .graph-legend-chevron { transform: rotate(180deg); }
+@media (max-width: 720px) { .graph-legend-panel:not(.folded) { width: 9rem; } }
+/* The import cycles of the drawing, under the bar: each one a list of links. */
+.graph-cycles { margin: 0.4rem 0 0; font-size: 0.85rem; }
+.graph-cycles summary { cursor: pointer; color: var(--raises); font-weight: 600; }
+.graph-cycles ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+.graph-cycles li { margin: 0.15rem 0; }
 .arch-marker { fill: var(--accent); }
 .arch-marker-cycle { fill: var(--raises); }
 .graph-legend .box { display: inline-block; width: 0.95rem; height: 0.7rem; border-radius: 2px; }
 .graph-legend .box.package { background: color-mix(in srgb, var(--accent) 55%, var(--fg)); }
 .graph-legend .box.subpackage { background: var(--accent); }
+.graph-legend .box.unconnected { background: var(--note); }
 .graph-legend .box.module { background: color-mix(in srgb, var(--accent) 45%, var(--bg)); border: 1px solid var(--border); }
 
 /* Side panel with the selected node and its relations. */
 .graph-info {
   position: absolute;
-  top: 0.6rem;
+  top: 2.9rem;  /* under the zoom and fit, which float in the drawing's top right corner */
   right: 0.6rem;
   width: 18rem;
-  max-height: calc(100% - 1.2rem);
+  max-height: calc(100% - 3.5rem);
   overflow: auto;
   padding: 0.8rem 1rem;
   border: 1px solid var(--border);
@@ -851,13 +979,16 @@ td p { margin: 0; }
   cursor: pointer;
 }
 .graph-close:hover { background: var(--panel); color: var(--fg); }
+/* The info panel's head (name, path, close) stays on top while the rest scrolls under it. */
+.graph-info-head { position: sticky; top: -0.8rem; z-index: 1; margin: -0.8rem -1rem 0; padding: 0.8rem 1rem 0.4rem;
+  background: var(--bg); border-bottom: 1px solid var(--border); }
 .graph-info h2 { margin: 0.1rem 0; padding: 0 1.6rem 0 0; font-size: 1.05rem; border: 0; }
 .graph-info h3 { margin: 0.8rem 0 0.2rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .graph-info .count { color: var(--muted); font-weight: 400; }
 .graph-info .path { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
 .graph-info ul { margin: 0; padding-left: 1rem; }
 /* Tooltip shown when hovering a node: what the entity is for. */
-.graph-tooltip {
+.graph-tooltip, .graph-evolution-commit {  /* the commit box of Architecture evolution looks the same */
   position: absolute;
   z-index: 5;
   display: flex;
@@ -1061,11 +1192,12 @@ text.git-ref { font: 700 9px system-ui, sans-serif; fill: var(--lane); text-anch
 rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: var(--lane); }
 
 /* AGENT NOTES: three tabs, the planner (a graph of plans, features and tasks) and the notes (guidelines, memory). */
-.notes-tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 0.8rem; border-bottom: 1px solid var(--border); }
-.notes-tab { padding: 0.4rem 1rem; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
+.tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 0.8rem; border-bottom: 1px solid var(--border); }
+.tab { padding: 0.4rem 1rem; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
   color: var(--muted); font-weight: 600; margin-bottom: -1px; }
-.notes-tab:hover { color: var(--fg); text-decoration: none; }
-.notes-tab.current { border-color: var(--border); background: var(--bg); color: var(--fg); }
+.tab-description { margin: 0 0 0.8rem; color: var(--muted); font-size: 0.9rem; }
+.tab:hover { color: var(--fg); text-decoration: none; }
+.tab.current { border-color: var(--border); background: var(--bg); color: var(--fg); }
 .notes-error { padding: 0.5rem 0.8rem; border: 1px solid var(--raises); border-radius: 6px;
   background: color-mix(in srgb, var(--raises) 8%, var(--bg)); color: var(--raises); }
 .notes-help { display: flex; align-items: center; gap: 0.45rem; margin: 0.3rem 0 0.8rem; color: var(--muted); font-size: 0.85rem; }
@@ -1243,7 +1375,7 @@ body.splitting { cursor: col-resize; user-select: none; }
   .planner-detail { height: auto; min-height: 0; }
 }
 @media (max-width: 720px) {
-  .notes-tab { padding: 0.4rem 0.7rem; }
+  .tab { padding: 0.4rem 0.7rem; }
   .notes-filter { flex-wrap: wrap; gap: 0.4rem 1rem; }
 }
 .planner-external { display: grid; gap: 0.1rem; padding: 0.3rem 0.55rem; border: 1.5px dashed var(--tint); background: var(--panel);
@@ -1268,17 +1400,91 @@ body.splitting { cursor: col-resize; user-select: none; }
 @media (max-width: 1100px) { .planner-detail { position: static; height: auto; max-height: none; } }
 /* Bar on top of the drawing (zoom, fit), joined to it. */
 .graph-canvas-bar {
-  display: flex; justify-content: flex-end; align-items: center; gap: 0.6rem; padding: 0.3rem 0.5rem;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.4rem 0.6rem; padding: 0.3rem 0.5rem;
   border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--panel);
   font-size: 0.82rem; color: var(--muted);
 }
-.graph-canvas-bar + .graph-canvas { border-top-left-radius: 0; border-top-right-radius: 0; }
+.graph-canvas-bar ~ .graph-stage .graph-canvas { border-top-left-radius: 0; border-top-right-radius: 0; }
 .graph-canvas-bar button {
   height: 1.7rem; min-width: 2rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 4px;
   background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
 }
 .graph-canvas-bar button:hover { border-color: var(--accent); color: var(--accent); }
-.graph-zoom { display: inline-flex; align-items: center; gap: 0.25rem; }
+/* The bar's buttons: icons in joined groups, each named by a floating label (data-tip) on hover. */
+.graph-buttons { display: inline-flex; }
+.graph-buttons > button + button { margin-left: -1px; }
+.graph-buttons > button { border-radius: 0; }
+.graph-buttons > button:first-child { border-radius: 4px 0 0 4px; }
+.graph-buttons > button:last-child { border-radius: 0 4px 4px 0; }
+.graph-buttons > button:only-child { border-radius: 4px; }
+.graph-canvas-bar .graph-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.9rem; height: 1.7rem; padding: 0; }
+.bar-icon { width: 1rem; height: 1rem; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.bar-icon-layers { --icon: url("icons/stack-2.svg"); }
+.bar-icon-forces { --icon: url("icons/affiliate.svg"); }
+.bar-icon-hide { --icon: url("icons/eye-off.svg"); }
+.bar-icon-rearrange { --icon: url("icons/refresh.svg"); }
+.bar-icon-fit { --icon: url("icons/arrows-maximize.svg"); }
+.bar-icon-export { --icon: url("icons/download.svg"); }
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip); position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 60;
+  padding: 0.2rem 0.5rem; border-radius: 4px; background: var(--fg); color: var(--bg); font: 500 0.72rem system-ui, sans-serif;
+  white-space: nowrap; pointer-events: none;
+}
+/* Export: one button, opening a small menu with the formats. */
+.graph-export-menu { position: relative; display: inline-flex; }
+.graph-export-items { position: absolute; top: calc(100% + 4px); right: 0; z-index: 61; display: flex; flex-direction: column;
+  padding: 0.25rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
+.graph-export-items[hidden] { display: none; }
+.graph-canvas-bar .graph-export-items button { border: 0; text-align: left; white-space: nowrap; }
+/* Layers / Forces: joined buttons, the chosen one filled. */
+.graph-layouts { display: inline-flex; }
+.graph-canvas-bar .graph-hide-loose[aria-pressed="true"] { background: var(--note); border-color: var(--note); color: #ffffff; }
+.graph-colours .graph-colour-by[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.bar-icon-colour-kind { --icon: url("icons/category.svg"); }
+.bar-icon-colour-language { --icon: url("icons/braces.svg"); }
+.bar-icon-colour-project { --icon: url("icons/box.svg"); }
+/* Colour by language or project: a strip and border of the group's colour, and a chip per group. */
+.uml-box.grouped { border-color: var(--group); box-shadow: inset 5px 0 0 var(--group); }
+.graph-groups { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-bottom: 0;
+  background: var(--panel); }
+.graph-group { padding: 0.1rem 0.55rem; border: 2px solid var(--group); border-radius: 10px; background: var(--bg); color: var(--fg);
+  font-size: 0.75rem; cursor: pointer; }
+.graph-group[aria-pressed="true"] { background: color-mix(in srgb, var(--group) 22%, var(--bg)); }
+.graph-group[aria-pressed="false"] { opacity: 0.45; text-decoration: line-through; }
+/* Over 500 boxes: what is left out and how to see it. */
+.graph-warning { margin: 0; padding: 0.4rem 0.7rem; border: 1px solid var(--note); border-bottom: 0;
+  background: color-mix(in srgb, var(--note) 12%, var(--bg)); color: var(--fg); font-size: 0.82rem; }
+/* Zoomed out: the rows of the boxes fade away, their names stay. */
+.uml-canvas.far .uml-section, .uml-canvas.far .closed-count, .uml-canvas.far .arch-frame-role { opacity: 0.15; }
+@media (max-width: 720px) {
+  .graph-canvas { height: 70vh; min-height: 18rem; }
+  .graph-canvas-bar .graph-find { width: 100%; max-width: none; margin-right: 0; }
+  .graph-filter .focus-input { width: 100%; max-width: none; }
+}
+.graph-layouts .graph-layout[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+/* CALLS: a box per function, its border telling its side. */
+.call-box { border-width: 2px; }
+.call-box .uml-head { display: flex; align-items: center; gap: 0.35rem; background: var(--panel); color: var(--fg); }
+.call-focus { border-color: var(--fg); }
+.call-focus .uml-head { font-size: 1.05em; }
+.call-callee { border-color: var(--function); }
+.call-caller { border-color: var(--note); }
+.call-path { border-color: var(--accent); }
+.graph-zoom { display: inline-flex; align-items: center; }
+.graph-zoom[hidden] { display: none; }
+/* Zoom and fit float in the drawing's top right corner, over it. */
+.graph-canvas-box { position: relative; }
+.graph-view-tools { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 5; display: flex; align-items: center; gap: 0.4rem; }
+.graph-view-tools button, .graph-view-tools .graph-zoom-level { height: 1.8rem; border: 1px solid var(--border); background: var(--bg);
+  color: var(--fg); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); }
+.graph-view-tools button { display: inline-flex; align-items: center; justify-content: center; width: 1.9rem; padding: 0; cursor: pointer; font-size: 1rem; }
+.graph-view-tools button:hover { border-color: var(--accent); color: var(--accent); }
+.graph-view-tools .graph-zoom-level { display: inline-flex; align-items: center; justify-content: center; margin-left: -1px;
+  margin-right: -1px; font-size: 0.78rem; }
+.graph-view-tools .graph-zoom button:first-child { border-radius: 4px 0 0 4px; }
+.graph-view-tools .graph-zoom button:last-child { border-radius: 0 4px 4px 0; }
+.graph-view-tools .graph-fit { border-radius: 4px; }
 .graph-zoom-level { min-width: 3.2rem; text-align: center; font-variant-numeric: tabular-nums; }
 .graph-area .graph-info { top: 2.9rem; max-height: calc(100% - 3.5rem); }
 .graph-canvas-bar .graph-find { margin-right: auto; width: 14rem; max-width: 40%; height: 1.7rem; padding: 0 0.5rem;

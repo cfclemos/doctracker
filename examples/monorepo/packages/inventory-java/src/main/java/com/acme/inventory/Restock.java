@@ -5,7 +5,7 @@ public final class Restock {
     private Restock() {}
 
     /** Whether the stock of a product fell below the minimum. */
-    public static boolean needed(Stock stock, String product, int minimum) {
+    public static boolean needed(Inventory stock, String product, int minimum) {
         return stock.unitsOf(product) < minimum;
     }
 }

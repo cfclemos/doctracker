@@ -26,8 +26,11 @@ context at the right moments, and serves a live wiki of the project in your brow
   above), signature, source, the same pages and the same relations (calls, references,
   inheritance, imports, CSS classes used, rendered templates, routes). Any other file the
   pack recognises (YAML, JSON, TOML, Markdown...) has a page with its source.
-- **Code graphs** — architecture (modules and imports, cycles marked), class
-  diagram and call graph of any function, with callbacks, templates and CSS classes.
+- **Diagrams** — architecture (projects, packages and files of every language, with every
+  relation between files and the import cycles), classes (classes, interfaces, structs and
+  enums, with inheritance, implementation, composition and use) and calls
+  (around any function, or the path between two), drawn in layers or by forces, with a
+  timeline through the git history and a local graph on every page.
 - **Dead code** — what nothing uses, from the code graph and
   [vulture](https://github.com/jendrikseipp/vulture) together (each errs where
   the other does not) for Python, and from the code graph alone for the other
@@ -174,7 +177,7 @@ tool.
 | Code | `list_entities`, `get_entity`, `status`, `documentation_guide` (also the `doctracker://guide` resource) |
 | Dead code | `dead_code` (the same findings and filters as the wiki's DEAD CODE section) |
 | Search | `recall`, `hybrid_search`, `bm25_search`, `semantic_search` |
-| Graphs | `architecture_view`, `class_diagram_view`, `call_graph_view` |
+| Diagrams | `architecture_view`, `class_diagram_view`, `call_graph_view` (the options of the wiki's tabs: project, focus, depth, path to, relation kinds, hide unconnected; at most 500 boxes) |
 | Git | `git_history`, `git_branches`, `git_commit` |
 | Notes | `create_note`, `update_note`, `supersede_note`, `delete_note`, `list_notes` |
 | Planner | `work_context`, `create_plan`, `update_plan`, `add_feature`, `update_feature`, `add_task`, `update_task`, `check_criterion`, `annotate_task`, `add_task_evidence`, `add_dependency`, `remove_dependency`, `delete_item`, and the tools to change or delete annotations and evidence |
@@ -254,8 +257,7 @@ to llama.cpp.
 
 ## The wiki
 
-- **Tree** — AGENT NOTES, the views (architecture, classes, calls, dead code, git), and
-  the code (with [Tabler](https://tabler.io/icons) icons): classes (**C**), functions
+- **Tree** — AGENT NOTES, DIAGRAMS and GIT on top; then CODE, DEAD CODE and the code (with [Tabler](https://tabler.io/icons) icons): classes (**C**), functions
   (**f**), methods (**m**), JS files, stylesheets and templates. The buttons beside CODE
   show it **by language** (Python by packages and modules, the others by folder) or **by
   folder** (the repository's folders and files). Branches collapse; the tree can be
@@ -266,7 +268,25 @@ to llama.cpp.
 - **Entity pages** — description, signature, parameters table, returns, raises,
   examples, notes, members (for classes) and the source code with syntax
   highlighting. Every section can be collapsed from its badge.
-- **Graphs** — architecture, class diagram and call graph, with a focus on any entity.
+- **DIAGRAMS** — one page with three tabs, each at its own URL; the menu opens the tab used last.
+  Above every drawing, the filters say what is drawn; the legend's relations turn each kind on
+  and off (with none, nothing is drawn).
+  - **Architecture** — projects, packages and files, closed at first: a click opens a level.
+    Filters: project, focus with depth (3 by default). Relations: imports, uses,
+    calls, refers, inherits, has. The import cycles are listed; a timeline goes through the
+    commits, each file appearing at the commit that added it.
+  - **Classes** — classes of any language with their attributes and methods, in their files and
+    packages (SQL tables are not classes: they are left out). Filters: project, focus with depth.
+    Relations: inherits, implements, has, uses, refers.
+  - **Calls** — a function by its name or path: what it calls and what calls it (depth and
+    direction), or, with Path to, the shortest calls from it to another. Relations: calls,
+    refers, templates, CSS classes, routes. It opens on the last
+    choice; with no focus, nothing is drawn.
+  - **Every drawing** — layers or forces, colour by kind, language or project (a chip per
+    group hides it), hide unconnected, rearrange, highlight, zoom and fit, export as SVG or
+    PNG; over 500 boxes, the most connected ones, with a warning.
+- **Local graph** — on every entity and module page: what it uses and what uses it, up to
+  three steps away, drawn like the diagrams.
 - **Git** — the branch graph, the history (also of one file) and each commit with
   its message, files and diffs.
 - **AGENT NOTES** — the Planner as cards and a dependency drawing, and the notes;
@@ -371,8 +391,8 @@ change only what the task needs, and work toward a result that can be checked.
 
 [MIT](LICENSE). The bundled [htmx](https://htmx.org) is distributed under the
 Zero-Clause BSD license (`src/doctracker/wiki/static/htmx-LICENSE.txt`), the bundled
-[Cytoscape.js](https://js.cytoscape.org), [dagre](https://github.com/dagrejs/dagre) and
-[Tabler Icons](https://tabler.io/icons) under MIT (`cytoscape-LICENSE.txt`, `dagre-LICENSE.txt`,
+[dagre](https://github.com/dagrejs/dagre), [WebCola](https://github.com/tgdwyer/WebCola) and
+[Tabler Icons](https://tabler.io/icons) under MIT (`dagre-LICENSE.txt`, `cola-LICENSE.txt`,
 `icons/tabler-icons-LICENSE.txt`). The
 embedding model and llama.cpp are downloaded on use and keep their own licenses
 (Apache-2.0 and MIT).
