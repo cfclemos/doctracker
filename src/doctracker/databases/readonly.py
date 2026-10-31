@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import multiprocessing
+import re
 import select
 import socket
 import sqlite3
@@ -55,6 +56,16 @@ _WRITES = (exp.Insert, exp.Update, exp.Delete, exp.Merge, exp.Create, exp.Drop, 
 _READ_COMMANDS = ("SHOW", "EXPLAIN", "DESCRIBE", "DESC")
 """Statements sqlglot keeps as raw commands that only read."""
 
+_READ_PRAGMAS = {"table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo",
+                 "foreign_key_list", "database_list", "collation_list", "function_list", "pragma_list"}
+"""SQLite pragmas that take an argument and only read (a pragma given a value otherwise changes a setting)."""
+
+_PRAGMA = re.compile(r"\bPRAGMA\s+(?:[\w\"\[\]`]+\.)?[\"`\[]?(?P<name>\w+)[\"`\]]?\s*(?P<sets>[=(])?", re.IGNORECASE)
+"""A SQLite pragma: its name, and `=` or `(` when it is given a value."""
+
+_PARAMETER = re.compile(r"%\(\w+\)s")
+"""A named parameter marker (`%(name)s`, used by python-tds), which sqlglot cannot read."""
+
 _SESSION = {"postgresql": "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
             "mysql": "SET SESSION TRANSACTION READ ONLY", "sqlite": "PRAGMA query_only = 1"}
 """What makes a new session read only, per kind; sent by doctracker itself, before any other statement."""
@@ -87,8 +98,11 @@ def is_read_only(sql: str, kind: str) -> bool:
         `SHOW` / `EXPLAIN` / `DESCRIBE` / reading `PRAGMA`, and none holds a write anywhere inside;
         False for anything else, and for SQL that cannot be read.
     """
+    for pragma in _PRAGMA.finditer(sql):  # read from the text: sqlglot writes `name(value)` as `name = value`
+        if pragma["sets"] == "=" or (pragma["sets"] == "(" and pragma["name"].lower() not in _READ_PRAGMAS):
+            return False
     try:
-        statements = [s for s in sqlglot.parse(sql, read=DIALECTS.get(kind)) if s is not None]
+        statements = [s for s in sqlglot.parse(_PARAMETER.sub("NULL", sql), read=DIALECTS.get(kind)) if s is not None]
     except sqlglot.errors.SqlglotError:
         return False
     if not statements:
@@ -97,10 +111,7 @@ def is_read_only(sql: str, kind: str) -> bool:
         if isinstance(statement, exp.Command):
             if str(statement.this).upper() not in _READ_COMMANDS:
                 return False
-        elif isinstance(statement, exp.Pragma):
-            if "=" in statement.sql() or "(" in statement.sql():
-                return False
-        elif not isinstance(statement, (exp.Query, exp.Show, exp.Describe)) or statement.find(*_WRITES):
+        elif not isinstance(statement, (exp.Query, exp.Show, exp.Describe, exp.Pragma)) or statement.find(*_WRITES):
             return False
     return True
 

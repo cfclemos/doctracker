@@ -25,6 +25,9 @@ NOTES_DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "notes.db"
 """Local database with the plans, tasks and notes, relative to the project root. Kept apart from the
 search indexes, which can be rebuilt from the code at any time; the notes cannot."""
 
+CATALOG_DATABASE_PATH = Path(DOC_DIR) / "sqlite" / "databases.db"
+"""Local database with every collection of the project's live databases, relative to the project root."""
+
 GRAMMARS_DIR = Path(DOC_DIR) / "grammars"
 """Where the grammars of tree-sitter-language-pack are fetched to, relative to the project root."""
 

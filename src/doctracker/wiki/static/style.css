@@ -1518,8 +1518,9 @@ body.splitting { cursor: col-resize; user-select: none; }
 .bar-icon-info { --icon: url("icons/info-circle.svg"); }
 .bar-icon-filters { --icon: url("icons/filter.svg"); }
 .bar-icon-timeline { --icon: url("icons/timeline.svg"); }
-.bar-icon-test { --icon: url("icons/refresh.svg"); }
+.bar-icon-test { --icon: url("icons/square-check.svg"); }
 .bar-icon-allow { --icon: url("icons/check.svg"); }
+.bar-icon-refresh { --icon: url("icons/refresh.svg"); }
 .bar-icon-block { --icon: url("icons/eye-off.svg"); }
 .bar-icon-edit { --icon: url("icons/pencil.svg"); }
 .bar-icon-remove { --icon: url("icons/trash.svg"); }
@@ -1801,6 +1802,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .page-dialog-foot button.see-in-link:disabled { opacity: 0.45; cursor: not-allowed; border-color: var(--border); color: var(--fg); }
 .connection-details dd { margin: 0; overflow-wrap: anywhere; }
 .connection-details .connection-test { display: block; }
+.connection-collection .failed { color: var(--raises); }
+.connection-collection ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.connection-collection .unavailable { color: var(--muted); }
 .page-dialog-foot form { display: contents; }
 .page-dialog-foot button.see-in-link { gap: 0.35rem; padding-left: 0.45rem; background: none; font: inherit; font-weight: 600; cursor: pointer; }
 .page-dialog-foot .see-in-link .bar-icon { color: var(--accent); }

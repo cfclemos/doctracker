@@ -1,23 +1,25 @@
 """MCP tools over the project's database connections: thin wrappers over `ConnectionStore`, the same the wiki uses.
 
-Agents can list the connections and test them; allowing a declared connection, entering one and
-removing one are the user's decisions, made only in the wiki.
+Agents can list the connections, test them, read what the server last read from each allowed
+connection's database (it reads them by itself, read only) and ask for a database to be read again now; allowing a declared connection, entering one and removing one
+are the user's decisions, made only in the wiki.
 """
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from doctracker.databases import ConnectionStore, Locked
+from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.readonly import run_test
 from doctracker.server.note_tools import refusals_reported
 
 
-def register_database_tools(mcp: MCPServer, connections: ConnectionStore) -> None:
-    """Add the tools that list and test the project's database connections.
+def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalog: CatalogStore) -> None:
+    """Add the tools over the project's database connections and what was collected from them.
 
     Args:
         mcp: Server to register the tools on.
         connections: Store of the connections (the same one the wiki uses).
+        catalog: What was last read from each database (the same store the wiki uses).
     """
 
     @mcp.tool()
@@ -56,3 +58,65 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore) -> Non
         except Locked as locked:
             raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASE › Connections).") from locked
         return await run_test(spec)
+
+    @mcp.tool()
+    @refusals_reported
+    async def refresh_database(connection_id: str) -> dict:
+        """Read an allowed connection's database again now, from its catalog, read only.
+
+        The server already reads every allowed connection by itself (when allowed, at start and every
+        minute); this is for a change just made in the database.
+
+        Reads every schema of the connection's database: tables, views, materialized views, foreign
+        tables, columns (type, null, default, comment, marks), keys, constraints, indexes, sequences,
+        types, functions, procedures, triggers, comments, row estimates and sizes; and the relations
+        (foreign key, implied, view reads, foreign table, partition of, inherits, trigger calls).
+        Only the state last read is kept; the other tools give it.
+
+        Args:
+            connection_id: The connection, from `list_connections`.
+
+        Returns:
+            The database's state: `started` (when read), `seconds`, `version`, `server`, `database`,
+            `databases` (the other databases on the server, not read), `counts` (objects and relations
+            by kind), `unavailable` (what could not be read, and why) and `failure` (`started`, `error`)
+            when reading it again failed (the state read before is kept).
+        """
+        try:
+            return await collect_connection(connections, catalog, connection_id)
+        except Locked as locked:
+            raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASE › Connections).") from locked
+
+    @mcp.tool()
+    @refusals_reported
+    def database_objects(connection_id: str = "", kind: str = "", schema: str = "") -> list[dict]:
+        """List the objects of the databases as last read: every connection's, or one's.
+
+        Args:
+            connection_id: Only this connection's; empty for all.
+            kind: Only this kind: `schema`, `table`, `view`, `materialized view`, `foreign table`, `column`,
+                `sequence`, `enum`, `domain`, `function`, `procedure`, `aggregate`, `trigger`, `synonym`.
+            schema: Only what is inside this schema.
+
+        Returns:
+            Each object's `path` (`db:<server>/<database>/<schema>.<name>`), `kind`, `parent`, `name`,
+            `connection` and `data` (type, comment, keys, indexes, row estimate... as it applies).
+        """
+        return catalog.objects(connection_id, kind, schema)
+
+    @mcp.tool()
+    @refusals_reported
+    def database_object(path: str) -> dict:
+        """Give one object of the databases as last read, with what it holds and its relations.
+
+        Args:
+            path: The object's path, from `database_objects` or a search.
+
+        Returns:
+            The object (see `database_objects`) with `children` (path and kind) and `relations`
+            (`source`, `target`, `kind`; both directions).
+        """
+        found = catalog.object(path)
+        if found is None:
+            raise ToolError(f"No object {path} in the databases read. List them with database_objects.")
+        return found

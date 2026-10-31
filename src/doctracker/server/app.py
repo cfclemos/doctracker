@@ -10,8 +10,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 
 from doctracker import __version__
-from doctracker.config import NOTES_DATABASE_PATH, Config
-from doctracker.databases import ConnectionStore
+from doctracker.config import CATALOG_DATABASE_PATH, NOTES_DATABASE_PATH, Config
+from doctracker.databases import CatalogStore, ConnectionStore, keep_collected
 from doctracker.embeddings.service import EmbeddingService
 from doctracker.notes import NoteStore
 from doctracker.search import SearchEngine
@@ -36,7 +36,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
 
     MCP endpoint at `/mcp`, the wiki routes, the hook routes (`/hooks/...`), the file watcher, the embedding
     service (prepared on demand, stopped with the server), and the search engine, the notes store
-    and the database connections, all shared by the MCP tools and the wiki.
+    and the database connections with their collections, all shared by the MCP tools and the wiki.
 
     Args:
         project_root: Root of the documented project.
@@ -50,14 +50,18 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     notes = NoteStore(project_root / NOTES_DATABASE_PATH, lambda path: not state.ready or path in state.entities,
                       state.notify)
 
+    catalog = CatalogStore(project_root / CATALOG_DATABASE_PATH, state.notify)
+
     def documents() -> dict[str, tuple[str, str]]:
-        """Everything searchable: the code's entities and the planner items and notes."""
+        """Everything searchable: the code's entities, the planner items and notes, and the objects of the
+        collected databases."""
         found = entity_documents(state.entities)
         found.update({key: (document["title"], document["text"]) for key, document in notes.searchable().items()})
+        found.update({key: (document["title"], document["text"]) for key, document in catalog.searchable().items()})
         return found
 
     embeddings = EmbeddingService(project_root, config, documents)
-    search = SearchEngine(state, embeddings, notes)
+    search = SearchEngine(state, embeddings, notes, catalog)
     mcp = MCPServer(
         name="doctracker",
         version=__version__,
@@ -75,10 +79,10 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     register_tools(mcp, state, config, search)
     register_note_tools(mcp, notes, search)
     connections = ConnectionStore(project_root)
-    register_database_tools(mcp, connections)
+    register_database_tools(mcp, connections, catalog)
 
     app = mcp.streamable_http_app(host=config.host, transport_security=_transport_security(config))
-    app.router.routes.extend(web_routes(state, project_root, config, search, notes, connections))
+    app.router.routes.extend(web_routes(state, project_root, config, search, notes, connections, catalog))
     app.router.routes.extend(hook_routes(state, project_root, notes))
 
     mcp_lifespan = app.router.lifespan_context
@@ -88,6 +92,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
         async with mcp_lifespan(starlette_app) as lifespan_state:
             tasks = [
                 asyncio.create_task(watch(project_root, config, state, notes)),
+                asyncio.create_task(keep_collected(connections, catalog)),
                 asyncio.create_task(embeddings.stop_when_idle()),
             ]
             try:
