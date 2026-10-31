@@ -1,4 +1,5 @@
-"""Tests of `doctracker.databases`: discovery, the read-only check of statements, and the connection store.
+"""Tests of `doctracker.databases`: discovery, the read-only check of statements, the connection store,
+and the reading of a database's catalog with the store keeping its current state.
 
 They need no database server: SQLite files are made in a temporary folder, and the store runs
 without the system's vault (master password).
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from doctracker.databases import ConnectionStore, Locked, is_read_only
+from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect, is_read_only
 from doctracker.databases import test_connection as check_connection  # not collected as a test
 from doctracker.databases.discovery import HIDDEN, discover, resolve
 
@@ -92,6 +93,10 @@ def test_prisma_and_sqlite_files(tmp_path):
     ("PRAGMA query_only = 0", "sqlite", False),
     ("CALL p()", "mysql", False),
     ("not sql at all (", "postgresql", False),
+    ('PRAGMA main.table_xinfo("t")', "sqlite", True),
+    ("PRAGMA user_version(5)", "sqlite", False),
+    ("SELECT a FROM t WHERE b = %(b)s", "mssql", True),
+    ("DELETE FROM t WHERE b = %(b)s", "mssql", False),
 ])
 def test_only_reads_pass(sql, kind, reads):
     assert is_read_only(sql, kind) is reads
@@ -138,3 +143,53 @@ def test_store_keeps_passwords_encrypted_and_consent(tmp_path):
     again.unlock("master")
     again.remove(typed["id"])
     assert [c["name"] for c in again.connections() if c["source"] == "entered"] == ["b"]
+
+
+def shop(root: Path) -> Path:
+    """An SQLite database with a key, a foreign key, a column named like a key without one, a view and a trigger."""
+    database = root / "shop.sqlite"
+    sqlite3.connect(database).executescript("""
+        CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+        CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id), total REAL);
+        CREATE TABLE notes (id INTEGER PRIMARY KEY, order_id INTEGER, text TEXT);
+        CREATE VIEW big_orders AS SELECT * FROM orders WHERE total > 100;
+        CREATE TRIGGER orders_check AFTER INSERT ON orders BEGIN SELECT 1; END;
+    """).close()
+    return database
+
+
+def test_collect_reads_the_catalog_only(tmp_path):
+    result = collect({"kind": "sqlite", "host": str(shop(tmp_path))})
+    assert result["ok"] and result["server"] == "sqlite" and result["database"] == "shop.sqlite"
+    objects = {o["path"]: o for o in result["objects"]}
+    base = "db:sqlite/shop.sqlite/main"
+    assert objects[f"{base}.orders"]["kind"] == "table" and objects[f"{base}.big_orders"]["kind"] == "view"
+    assert objects[f"{base}.orders.id"]["data"]["marks"] == ["pk"]
+    assert "fk" in objects[f"{base}.orders.customer_id"]["data"]["marks"]
+    assert "unique" in objects[f"{base}.customers.email"]["data"]["marks"]
+    assert objects[f"{base}.orders:orders_check"]["kind"] == "trigger"
+    relations = {(r["source"], r["target"], r["kind"]) for r in result["relations"]}
+    assert (f"{base}.orders.customer_id", f"{base}.customers.id", "foreign key") in relations
+    assert (f"{base}.notes.order_id", f"{base}.orders.id", "implied") in relations
+    assert (f"{base}.big_orders", f"{base}.orders", "view reads") in relations
+    assert [u["what"] for u in result["unavailable"]] == ["row estimates and sizes"]
+
+
+def test_catalog_keeps_only_the_current_state(tmp_path):
+    database = shop(tmp_path)
+    catalog = CatalogStore(tmp_path / "databases.db", lambda: None)
+    first = catalog.save("c1", "shop", collect({"kind": "sqlite", "host": str(database)}))
+    sqlite3.connect(database).execute("CREATE TABLE refunds (id INTEGER PRIMARY KEY)").connection.commit()
+    second = catalog.save("c1", "shop", collect({"kind": "sqlite", "host": str(database)}))
+    assert second["counts"]["objects"]["table"] == first["counts"]["objects"]["table"] + 1 and second["failure"] is None
+    failed = catalog.save("c1", "shop", {**collect({"kind": "sqlite", "host": str(database)}), "ok": False, "error": "down"})
+    assert failed["failure"]["error"] == "down" and failed["started"] == second["started"]  # the state before stays
+    assert "db:sqlite/shop.sqlite/main.refunds" in {o["path"] for o in catalog.objects("c1", kind="table")}
+    order = catalog.object("db:sqlite/shop.sqlite/main.orders")
+    assert {c["kind"] for c in order["children"]} == {"column", "trigger"}
+    assert any(r["kind"] == "view reads" for r in order["relations"])
+    documents = catalog.searchable()
+    assert documents["db:sqlite/shop.sqlite/main.customers.email"]["kind"] == "column"
+    assert "db:sqlite/shop.sqlite/main" not in documents  # schemas are not searched
+    catalog.forget("c1")
+    assert catalog.collection("c1") is None and catalog.objects() == []

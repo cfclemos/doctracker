@@ -3,6 +3,8 @@
    fields. Its actions sit in the modal's footer (sent out of band, as an entity's page does); they answer
    in the modal, the card following; Delete asks first, over the modal, then the page comes back and the
    modal closes. Without `details`: a new connection, in the notes' modal, posted to /database/save.
+   The details also show what was last read from the connection's database: the server reads it by
+   itself while the connection is allowed; Refresh, in the footer, reads it again now.
    Every field is the wiki's form field (macros.form_field): ? with its explanation, outlined, * if required. #}
 {% import "macros.html" as ui %}
 {% from "database.html" import card %}
@@ -28,6 +30,7 @@
   "SSH": "An SSH server the connection goes through: doctracker logs in to it, with a key or a password, and reaches the database from there. A jump host is reached first. With ~/.ssh/config, what is not typed comes from your SSH settings.",
   "URL in": "The environment variable holding the whole connection URL, read when connecting.",
   "From": "Where the connection is declared (file and line), or that it was entered here.",
+  "Database read": "What doctracker read from the database's catalog, read only: every schema of the connection's database, with its tables, views, columns, keys, indexes, functions, triggers, comments and statistics, and the relations between them. Read by itself while the connection is allowed (when allowed, when doctracker starts, and every minute); Refresh reads it again now. Only this last reading is kept. What could not be read (permissions, statistics never gathered) is listed, never guessed. Other databases on the same server are only named: add a connection to one to read it.",
   "Last test": "The last test, read only: connect, read the server's version, try a write that must be aborted before it reaches the database; with when it ran and how long it took.",
 } %}
 {# A name in the details (not a form), with the ? explaining it. #}
@@ -106,6 +109,23 @@
     {% elif test.ok %}Read only: connected{% if test.version %} to {{ test.version }}{% endif %}; the write tried was aborted{% if test.read_only_session %}; the session is read only{% endif %}{% if test.can_write %}; this user may write, doctracker still only reads{% endif %}. · {{ test.tested_at | local_time(seconds=True) }} <small>({{ test.seconds }} s)</small>
     {% else %}Failed: {{ test.error }} · {{ test.tested_at | local_time(seconds=True) }} <small>({{ test.seconds }} s)</small>{% endif %}
   </dd>
+  {% set k = collection %}
+  {{ label("Database read") }}
+  <dd class="connection-collection">
+    {% if not k %}{% if c.allowed %}being read: it shows here in a moment{% else %}blocked: allow it to read it{% endif %}
+    {% else %}
+    {% if k.failure %}<span class="failed">Reading it again failed: {{ k.failure.error }} · {{ k.failure.started | local_time(seconds=True) }}</span>{% if k.started %}<br>Shown: the reading before.{% endif %}{% endif %}
+    {% if k.started %}
+    <code>{{ k.database }}</code> on <code>{{ k.server }}</code> · {{ k.started | local_time(seconds=True) }} <small>({{ k.seconds }} s)</small>
+    <ul>
+      <li><b>Objects</b>: {% for kind, n in k.counts.objects | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% endfor %}</li>
+      <li><b>Relations</b>: {% for kind, n in k.counts.relations | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% else %}none{% endfor %}</li>
+      {% for u in k.unavailable %}<li class="unavailable"><b>Data unavailable</b>: {{ u.what }} — {{ u.reason }}</li>{% endfor %}
+      {% if k.databases %}<li><b>Not read</b>, on the same server: {% for name in k.databases %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>{% endif %}
+    </ul>
+    {% endif %}
+    {% endif %}
+  </dd>
 </dl>
 {% endif %}
 <footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
@@ -125,6 +145,8 @@
   {% endif %}
   <form hx-post="/database/test" hx-target="#page-dialog-body"><input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1">
     <button type="submit" class="see-in-link"{% if not c.allowed %} disabled title="Allow the connection first"{% endif %}><i class="bar-icon bar-icon-test"></i>Test connection</button></form>
+  <form hx-post="/database/refresh" hx-target="#page-dialog-body" hx-disabled-elt="find button"><input type="hidden" name="id" value="{{ c.id }}"><input type="hidden" name="modal" value="1">
+    <button type="submit" class="see-in-link"{% if not c.allowed %} disabled title="Allow the connection first"{% else %} title="Read the database again now, read only"{% endif %}><i class="bar-icon bar-icon-refresh"></i>Refresh</button></form>
   {% endif %}
 </footer>
 {% if oob %}{{ card(c, test, oob=True) }}{% endif %}

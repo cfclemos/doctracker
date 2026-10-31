@@ -2,13 +2,15 @@
 
 All searches return `(path, score)` pairs, best first. Semantic and hybrid searches
 need the embedding backend; while it is being prepared they report its progress
-instead of results. The index also holds the notes and planner items: the search
-modes keep only the code's entities, `recall` returns everything.
+instead of results. The index also holds the notes and planner items, and the objects of the
+collected databases: the search modes keep the code's entities and, unless the languages are
+filtered, the database objects (`db:` paths); `recall` returns everything.
 """
 
 import re
 from dataclasses import dataclass, field
 
+from doctracker.databases.catalog import CatalogStore
 from doctracker.embeddings.service import EmbeddingService
 from doctracker.notes import NoteStore, document_text, note_group
 from doctracker.server.state import DocState
@@ -33,7 +35,7 @@ WIKI_WAIT_SECONDS = 10.0
 RECALL_WAIT_SECONDS = 5.0
 """How long `recall` waits for the embedding backend before answering with BM25 alone."""
 
-RECALL_GROUPS = ("planning", "guidelines", "memory", "code", "history")
+RECALL_GROUPS = ("planning", "guidelines", "memory", "code", "databases", "history")
 """Groups of `recall`, in the order they are given: the open planning comes first, the archived
 work of past commits last."""
 
@@ -117,17 +119,20 @@ class SearchEngine:
         state: Extracted entities.
         embeddings: Embedding service; its `index` holds the BM25 and vector indexes.
         notes: Plans and notes, also in the index.
+        catalog: Collections of the live databases, whose objects are in the index too.
 
     Attributes:
         state: Extracted entities.
         embeddings: Embedding service and search indexes.
         notes: Plans and notes.
+        catalog: Collections of the live databases.
     """
 
-    def __init__(self, state: DocState, embeddings: EmbeddingService, notes: NoteStore) -> None:
+    def __init__(self, state: DocState, embeddings: EmbeddingService, notes: NoteStore, catalog: CatalogStore) -> None:
         self.state = state
         self.embeddings = embeddings
         self.notes = notes
+        self.catalog = catalog
 
     async def run(self, mode: str, query: str, limit: int, wait: float, offset: int = 0,
                   languages: set[str] | None = None) -> SearchOutcome:
@@ -142,7 +147,8 @@ class SearchEngine:
             limit: Results per page.
             wait: Seconds to wait for the embedding backend (semantic and hybrid).
             offset: Results to skip, e.g. `limit * (page - 1)`.
-            languages: Keep only the entities of these languages (the wiki's filter); `None` keeps all.
+            languages: Keep only the entities of these languages (the wiki's filter); `None` keeps all,
+                the database objects too.
 
         Returns:
             The page and the total, or the backend progress when it is not ready yet.
@@ -154,8 +160,9 @@ class SearchEngine:
             ranked = await (self.semantic(query, wait) if mode == "semantic" else self.hybrid(query, wait))
             if ranked is None:
                 return SearchOutcome(ready=False, status=self.embeddings.status())
-        ranked = [(path, score) for path, score in ranked if path in self.state.entities
-                  and (languages is None or self.state.entities[path]["language"] in languages)]
+        objects = self.catalog.searchable() if languages is None else {}
+        ranked = [(path, score) for path, score in ranked if path in objects or (path in self.state.entities
+                  and (languages is None or self.state.entities[path]["language"] in languages))]
         offset = max(0, offset)
         return SearchOutcome(ranked[offset : offset + limit], total=len(ranked), offset=offset, renamed=renamed)
 
@@ -254,6 +261,7 @@ class SearchEngine:
         if ranked is None:
             ranked, mode = self.bm25(query), "bm25"
         documents = self.notes.searchable()
+        objects = self.catalog.searchable()
         groups: dict[str, list[dict]] = {group: [] for group in RECALL_GROUPS}
         for key, score in ranked:
             if key in documents:
@@ -267,6 +275,9 @@ class SearchEngine:
                 entity = self.state.entities[key]
                 groups["code"].append(
                     {"ref": key, "kind": entity["kind"], "title": summary(entity), "score": round(score, 4)})
+            elif key in objects:
+                groups["databases"].append({"ref": key, "kind": objects[key]["kind"], "title": objects[key]["summary"],
+                                            "score": round(score, 4)})
         groups["planning"].sort(key=lambda result: result.get("state") == "done")
         return {"mode": mode, **({"renamed": renamed} if renamed else {}),
                 **{group: results[:RECALL_LIMIT] for group, results in groups.items()}}
@@ -353,10 +364,13 @@ class SearchEngine:
         if not outcome.ready:
             return {"status": "preparing", **(outcome.status or {})}
         results = []
+        objects = self.catalog.searchable()
         for path, score in outcome.results:
             entity = self.state.entities.get(path)
-            if entity is None:
-                continue
-            results.append({"path": path, "kind": entity["kind"], "score": round(score, 4), "summary": summary(entity)})
+            if entity is not None:
+                results.append({"path": path, "kind": entity["kind"], "score": round(score, 4), "summary": summary(entity)})
+            elif path in objects:
+                results.append({"path": path, "kind": objects[path]["kind"], "score": round(score, 4),
+                                "summary": objects[path]["summary"]})
         return {"status": "ready", "total": outcome.total, "offset": outcome.offset, "results": results,
                 **({"renamed": outcome.renamed} if outcome.renamed else {})}

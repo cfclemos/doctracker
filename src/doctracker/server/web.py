@@ -14,7 +14,7 @@ from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
-from doctracker.databases import ConnectionStore, Locked
+from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.discovery import KINDS
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
@@ -78,7 +78,7 @@ def _develops_doctracker(project_root: Path) -> bool:
 
 
 def web_routes(state: DocState, project_root: Path, config: Config, search: SearchEngine,
-               notes: NoteStore, connections: ConnectionStore) -> list[BaseRoute]:
+               notes: NoteStore, connections: ConnectionStore, catalog: CatalogStore) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
 
     `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
@@ -95,6 +95,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         search: Search engine behind the search box (the same one the MCP tools use).
         notes: Store of the plans, tasks and notes (the same one the MCP tools use).
         connections: Store of the database connections (the same one the MCP tools use).
+        catalog: Store of the collections of the databases (the same one the MCP tools use).
 
     Returns:
         The routes, to add to the server app.
@@ -244,7 +245,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         listed = {c["id"]: c for c in connections.connections()}
         return templates.get_template("database_form.html").render(
             details=listed.get(details), test=connection_tests.get(details), editing=editing, kinds=KINDS, sign_ins=SIGN_INS,
-            oob=oob, error=error)
+            collection=catalog.collection(details) if details else None, oob=oob, error=error)
 
     async def database_form(request: Request) -> Response:
         """A modal of DATABASE (see `database_modal`): `?details=<id>`, `&edit=1` to change it, or a new one."""
@@ -252,7 +253,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return HTMLResponse(database_modal(query.get("details", ""), bool(query.get("edit"))))
 
     async def database_action(request: Request) -> Response:
-        """Allow, block, test, add, change or delete a connection, or unlock the saved passwords.
+        """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
+        or unlock the saved passwords.
 
         The same store the MCP tools use. Sent from a connection's details (`modal`), the details come
         back (a refusal shown in them) and its card follows; otherwise the page comes back redrawn,
@@ -270,16 +272,19 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             "edit": lambda: connections.edit(identifier, form, form.get("password", ""), form.get("ssh_password", "")),
             "unlock": lambda: connections.unlock(form.get("master_password", "")),
         }
-        if name not in actions and name != "test":
+        if name not in actions and name not in ("test", "refresh"):
             return Response("", status_code=404)
         error = ""
         try:
             if name == "test":
                 connection_tests[identifier] = await run_test(connections.spec(identifier))
+            elif name == "refresh":
+                await collect_connection(connections, catalog, identifier)
             else:
                 actions[name]()
-                if name in ("block", "remove", "edit"):
+                if name in ("block", "remove", "edit"):  # what was read from it no longer holds
                     connection_tests.pop(identifier, None)
+                    catalog.forget(identifier)
         except (ValueError, Locked) as refused:
             error = str(refused)
         if form.get("modal") and not (name == "remove" and not error):
