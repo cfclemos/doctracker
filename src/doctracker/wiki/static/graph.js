@@ -25,6 +25,17 @@ function infoHead(role, title, path = "") {
   </header>`;
 }
 
+// The legend of a drawing (its items in a template of the page) goes into its box once, with the info
+// panel's head.
+function fillLegend(canvas) {
+  const legendBox = canvas.closest(".graph-area").querySelector(".graph-legend-box");
+  const legendItems = canvas.closest(".graph-area").querySelector("template.graph-legend-items");
+  if (legendBox && legendItems && !legendBox.childElementCount) {
+    legendBox.innerHTML = `${infoHead("", "Legend")}<div class="graph-legend">${legendItems.innerHTML}</div>`;
+  }
+  return legendBox;
+}
+
 // Box diagrams (CLASSES and ARCHITECTURE): HTML boxes over SVG lines, in the style of database
 // diagrams (DBeaver). Each page gives its boxes, layout and lines (DIAGRAMS); drawDiagram does the
 // rest: it measures the boxes, places them, draws frames around grouped boxes and the lines, and
@@ -666,12 +677,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   page.diagramListeners?.abort();
   page.diagramListeners = new AbortController();
   const signal = page.diagramListeners.signal;
-  // The legend of the page (its items in a template) goes into its box once, with the info panel's head.
-  const legendBox = canvas.closest(".graph-area").querySelector(".graph-legend-box");
-  const legendItems = canvas.closest(".graph-area").querySelector("template.graph-legend-items");
-  if (legendBox && legendItems && !legendBox.childElementCount) {
-    legendBox.innerHTML = `${infoHead("", "Legend")}<div class="graph-legend">${legendItems.innerHTML}</div>`;
-  }
+  fillLegend(canvas);
   // The legend's relation kinds filter the drawing: a kind turned off leaves out its lines and, in
   // a drawing reached from a focus (calls, local graph), what only that kind led to. With every
   // kind off, nothing is drawn. Kept per diagram and browser tab.
@@ -1349,9 +1355,458 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   }
 }
 
+// DATABASE › Universe: the databases the server read, as SQL organises them (server → database → schema →
+// tables and views → columns), drawn with sigma.js on WebGL (sigma.min.js: sigma, graphology, ForceAtlas2,
+// noverlap, edge-curve; MIT). One click goes into a node, the path at the top goes back; the legend's
+// relation kinds choose what is linked (none at first), Depth and Outside how far; every node is a badge
+// in its kind's colour, a column's with its symbols. The view opened, the relations and the filters are
+// kept for the browser tab, so a redraw (a database read again and changed) comes back where it was.
+const UNIVERSE_COLORS = { server: "#24292f", database: "#bc4c00", schema: "#8250df", table: "#0969da", view: "#1a7f37", column: "#6e7781" };
+const UNIVERSE_LINKS = { contains: "#d8dee4", "foreign key": "#cf222e", implied: "#bf8700", "view reads": "#1a7f37", "foreign table": "#1b7c83" };
+const UNIVERSE_OUTSIDE = "#9cc3f5";  // a node outside the one opened, drawn only because a link reaches it
+// ForceAtlas2 pushes two nodes apart by the product of their masses (1 + the weight of their links); a
+// link from a node to itself adds mass without pulling anything, so schemas and tables push harder.
+const UNIVERSE_MASS = { server: 40, database: 40, schema: 40, table: 5, view: 2 };
+const UNIVERSE_LEVEL = { server: 0, database: 1, schema: 2, table: 3, view: 3, column: 4 };
+const UNIVERSE_NAMES = ["servers", "databases", "schemas", "tables", "columns"];
+const UNIVERSE_KEY = "doctracker-universe";
+// A column's characteristics, in the shapes database tools use: key primary key, link foreign key (it
+// points elsewhere), diamond unique, lines indexed, bolt computed by the database, asterisk not null,
+// crossed circle null allowed. Key, link and lines are Tabler's (MIT).
+const UNIVERSE_SYMBOLS = {
+  pk: [`<path d="M16.555 3.843l3.602 3.602a2.877 2.877 0 0 1 0 4.069l-2.643 2.643a2.877 2.877 0 0 1 -4.069 0l-.301 -.301l-6.558 6.558a2 2 0 0 1 -1.239 .578l-.175 .008h-1.172a1 1 0 0 1 -.993 -.883l-.007 -.117v-1.172a2 2 0 0 1 .467 -1.284l.119 -.13l.414 -.414h2v-2h2v-2l2.144 -2.144l-.301 -.301a2.877 2.877 0 0 1 0 -4.069l2.643 -2.643a2.877 2.877 0 0 1 4.069 0z"/><path d="M15 9h.01"/>`, "primary key"],
+  fk: [`<path d="M9 15l6 -6"/><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464"/><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463"/>`, "foreign key"],
+  unique: [`<path d="M12 3l9 9l-9 9l-9 -9z" fill="#000"/>`, "unique"],
+  index: [`<path d="M9 6h11M9 12h11M9 18h11M5 6v.01M5 12v.01M5 18v.01"/>`, "indexed"],
+  generated: [`<path d="M13 3v7h6l-8 11v-7h-6l8 -11" fill="#000"/>`, "computed by the database"],
+  notnull: [`<path d="M12 4v16M5 8l14 8M19 8l-14 8"/>`, "not null"],
+  null: [`<circle cx="12" cy="12" r="7"/><path d="M5 19l14 -14"/>`, "null allowed"],
+};
+const UNIVERSE_FONT = { server: 15, database: 14, schema: 13, table: 12, view: 12, column: 11 };
+const UNIVERSE_FAMILY = "system-ui, sans-serif";
+const UNIVERSE_PAD = 5;
+// A colour mixed towards white: on a badge, the symbols take a light tint of the badge's own colour.
+const universeTint = (hex, k) => "#" + [1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - k) + 255 * k).toString(16).padStart(2, "0")).join("");
+const universeIcons = new Map();
+function universeIcon(mark, colour, loaded = () => {}) {
+  const key = mark + colour;
+  if (!universeIcons.has(key)) {
+    const img = new Image();
+    img.onload = loaded;
+    img.src = `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="${colour}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${UNIVERSE_SYMBOLS[mark][0].replace(/#000/g, colour)}</svg>`)}`;
+    universeIcons.set(key, img);
+  }
+  return universeIcons.get(key);
+}
+const universeMarks = (flags = []) => [...["pk", "fk", "unique", "index", "generated"].filter((f) => flags.includes(f)), flags.includes("null") ? "null" : "notnull"];
+// The forces, the same for the first layout and for the live movement (slower, so it moves gently); strong
+// gravity keeps nodes without links near the others instead of drifting away.
+const universeForces = (graph, slowDown = 1) => ({ ...SigmaBundle.forceAtlas2.inferSettings(graph), barnesHutOptimize: true, strongGravityMode: true,
+  gravity: 0.3, scalingRatio: 40, edgeWeightInfluence: 1, linLogMode: true, outboundAttractionDistribution: true, slowDown });
+
+async function drawUniverse(canvas) {
+  const area = canvas.closest(".graph-area"), page = canvas.closest(".graph-page");
+  page.diagramListeners?.abort();
+  page.diagramListeners = new AbortController();
+  const signal = page.diagramListeners.signal;
+  if (typeof SigmaBundle === "undefined" || !document.createElement("canvas").getContext("webgl")) {
+    canvas.innerHTML = '<p class="empty">The Universe needs WebGL, which this browser does not offer (turn on hardware acceleration).</p>';
+    return;
+  }
+  const { Graph, Sigma, EdgeCurveProgram, indexParallelEdgesIndex, forceAtlas2, noverlap } = SigmaBundle;
+  const data = await (await fetch(canvas.dataset.url)).json();
+  if (!data.nodes.length) {
+    canvas.innerHTML = '<p class="empty">No database read yet: allow a connection in Connections.</p>';
+    return;
+  }
+  canvas.innerHTML = "";
+  const box = canvas.closest(".graph-canvas-box");
+  box.querySelectorAll(".universe-path, .universe-hover").forEach((element) => element.remove());
+  box.insertAdjacentHTML("beforeend", `<div class="universe-path"><button type="button" class="graph-icon universe-back" aria-label="Back" data-tip="Back one level">←</button>
+    <span class="universe-crumbs"></span><span class="universe-stats"></span></div>
+    <div class="universe-hover" hidden><div class="universe-hover-body"></div><button type="button" class="see-in-link universe-hover-details">Details ›</button></div>`);
+  const crumbsBox = box.querySelector(".universe-crumbs"), backButton = box.querySelector(".universe-back"), hoverBox = box.querySelector(".universe-hover");
+  const tooltip = area.querySelector(".graph-tooltip"), info = area.querySelector(".graph-details");
+  const pageButton = area.querySelector(".graph-panel-page");
+  if (pageButton) pageButton.hidden = true;  // the pages of tables and columns come later
+
+  // The SQL tree: every node knows its parent.
+  const byId = new Map(data.nodes.map((n) => [n.id, n]));
+  const children = new Map();
+  for (const n of data.nodes) if (n.parent && byId.has(n.parent)) { if (!children.has(n.parent)) children.set(n.parent, []); children.get(n.parent).push(n.id); }
+  const level = (id) => UNIVERSE_LEVEL[byId.get(id).kind];
+  const up = (id, at) => { let x = id; while (x && level(x) > at) x = byId.get(x).parent; return x; };  // the ancestor at a level
+  const chain = (id) => { const c = []; for (let x = id; x && byId.has(x); x = byId.get(x).parent) c.unshift(x); return c; };
+  const relations = data.edges;
+  // A column drawn with a foreign key line always carries the foreign key mark.
+  for (const e of relations) if (e.kind === "foreign key") { const c = byId.get(e.source); if (c?.kind === "column" && !(c.flags ??= []).includes("fk")) c.flags.push("fk"); }
+  const esc = escapeHtml;
+
+  // What the user chose, kept for the browser tab.
+  let saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem(UNIVERSE_KEY) || "{}"); } catch {}
+  const themes = new Set(saved.themes || []);
+  let depth = saved.depth || 1, others = Boolean(saved.others);
+  let path = (saved.path || []).filter((id) => byId.has(id));
+  const remember = () => { try { sessionStorage.setItem(UNIVERSE_KEY, JSON.stringify({ themes: [...themes], depth, others, path })); } catch {} };
+
+  // The legend: colours, the relation kinds (each turns its relations on or off), the column symbols.
+  const legend = fillLegend(canvas);
+  for (const swatch of legend?.querySelectorAll(".universe-swatch") ?? []) swatch.style.background = swatch.dataset.node === "outside" ? UNIVERSE_OUTSIDE : UNIVERSE_COLORS[swatch.dataset.node];
+  for (const line of legend?.querySelectorAll(".universe-line") ?? []) line.style.borderColor = UNIVERSE_LINKS[line.dataset.relation];
+  for (const img of legend?.querySelectorAll(".universe-mark") ?? []) img.src = universeIcon(img.dataset.mark, UNIVERSE_COLORS.column).src;
+  for (const button of legend?.querySelectorAll(".universe-kind") ?? []) {
+    button.setAttribute("aria-pressed", String(themes.has(button.dataset.kind)));
+    button.addEventListener("click", () => {
+      themes.has(button.dataset.kind) ? themes.delete(button.dataset.kind) : themes.add(button.dataset.kind);
+      button.setAttribute("aria-pressed", String(themes.has(button.dataset.kind)));
+      show(path, true);
+    }, { signal });
+  }
+  const depthField = area.querySelector('.universe-filters select[name="depth"]'), othersField = area.querySelector('.universe-filters input[name="others"]');
+  if (depthField) { depthField.value = String(depth); depthField.addEventListener("change", () => { depth = +depthField.value; show(path, true); }, { signal }); }
+  if (othersField) { othersField.checked = others; othersField.addEventListener("change", () => { others = othersField.checked; show(path, true); }, { signal }); }
+
+  // What one view holds. [] = the servers. A server, database or schema opened = that node in the middle
+  // and its children; relations are drawn between children (each end lifted to the child holding it), and
+  // nodes outside it reached by them, up to Depth steps, only with Outside. A table opened = its columns
+  // around it, each linked to the tables at the other end. "+n" = links to nodes not drawn.
+  function build(path) {
+    const nodes = new Map(), links = new Map();
+    const node = (id, extra = {}) => { if (!nodes.has(id)) nodes.set(id, { id, kind: byId.get(id).kind, ...extra }); };
+    // One line per pair of nodes and kind of relation, both directions summed.
+    const link = (a, b, kind) => { if (a === b) return; const key = (a < b ? `${a}|${b}` : `${b}|${a}`) + `|${kind}`;
+      if (!links.has(key)) links.set(key, { a, b, kinds: {} }); const k = links.get(key).kinds; k[kind] = (k[kind] ?? 0) + 1; };
+    const chosen = relations.filter((e) => themes.has(e.kind));
+    const focus = path.at(-1), at = focus ? Math.min(level(focus) + 1, 3) : 0;  // the level drawn
+    const home = focus ? up(focus, Math.min(level(focus), 2)) : null;        // what counts as inside
+    const inside = (id) => !home || up(id, level(home)) === home;
+    const near = new Map();
+    for (const e of chosen) { const a = up(e.source, at), b = up(e.target, at); if (!a || !b || a === b) continue;
+      for (const [x, y] of [[a, b], [b, a]]) { if (!near.has(x)) near.set(x, new Set()); near.get(x).add(y); } }
+    let ring = !focus ? data.nodes.filter((n) => n.kind === "server").map((n) => n.id) : level(focus) === 3 ? [focus] : (children.get(focus) ?? []);
+    const reached = new Set(ring), via = new Map();  // via: the node each one was reached from
+    for (let step = 0; focus && step < depth; step++) {
+      const next = [];
+      for (const t of ring) for (const n of near.get(t) ?? []) if (!reached.has(n) && (others || inside(n))) { reached.add(n); via.set(n, t); next.push(n); }
+      ring = next;
+    }
+    if (focus) node(focus);  // first, so it starts in the middle
+    for (const t of reached) node(t, inside(t) ? {} : { outside: true });
+    const table = focus && level(focus) === 3 ? focus : null;
+    for (const e of chosen) {
+      const a = up(e.source, at), b = up(e.target, at);
+      if (!reached.has(a) || !reached.has(b)) { for (const t of [a, b]) if (reached.has(t)) nodes.get(t).away = (nodes.get(t).away ?? 0) + 1; continue; }
+      // The table opened links through its columns; everything else node to node.
+      const from = a === table ? up(e.source, 4) : a, to = b === table ? up(e.target, 4) : b;
+      if (from !== a) node(from); if (to !== b) node(to);
+      link(from, to, e.kind);
+    }
+    if (table) for (const c of children.get(table) ?? []) { node(c); link(table, c, "contains"); }
+    else if (focus) for (const t of reached) if (byId.get(t).parent === focus) link(focus, t, "contains");
+    return { nodes, links, via };
+  }
+
+  // A name short enough to read: inside the one opened its own name; outside it, the path from where it differs.
+  let outsideNodes = new Set();
+  function name(id) {
+    const n = byId.get(id), focus = path.at(-1);
+    if (!focus || !outsideNodes.has(id)) return n.label;
+    const mine = chain(focus), its = chain(id); let i = 0; while (i < mine.length && mine[i] === its[i]) i++;
+    return its.slice(i).map((x) => byId.get(x).label).join(" › ");
+  }
+  const measure = document.createElement("canvas").getContext("2d");
+  function badgeSize(label, kind, marks) {
+    const f = UNIVERSE_FONT[kind]; measure.font = `600 ${f}px ${UNIVERSE_FAMILY}`;
+    const symbols = marks ? marks.length * (f + 3) + 10 : 0;  // with the divider before them
+    return [Math.ceil(symbols + measure.measureText(label).width + 2 * UNIVERSE_PAD), f + 2 * UNIVERSE_PAD];
+  }
+
+  const graph = new Graph({ multi: true });
+  const positions = new Map();  // view → positions, so going back finds the drawing where it was
+  let renderer = null;
+  function show(next, keepPositions = false) {
+    if (graph.order) { const p = {}; graph.forEachNode((id, a) => (p[id] = [a.x, a.y])); positions.set(path.join("|"), p); }
+    const before = keepPositions ? positions.get(path.join("|")) : null;
+    path = next;
+    remember();
+    const { nodes, links, via } = build(path), memory = before ?? positions.get(path.join("|")) ?? {};
+    outsideNodes = new Set([...nodes.values()].filter((n) => n.outside).map((n) => n.id));
+    graph.clear();
+    // Nodes new to this view start in a spiral as wide as the drawing already there.
+    const known = Object.values(memory), wide = known.length ? Math.max(...known.map(([x, y]) => Math.hypot(x, y))) / Math.sqrt(nodes.size) : 10;
+    let i = 0, fresh = 0;
+    for (const n of nodes.values()) {
+      if (!memory[n.id]) fresh++;
+      const [x, y] = memory[n.id] ?? [Math.cos(i * 2.4) * wide * Math.sqrt(i + 1), Math.sin(i * 2.4) * wide * Math.sqrt(i + 1)]; i++;
+      const marks = n.kind === "column" ? universeMarks(byId.get(n.id).flags) : null, label = name(n.id) + (n.away ? ` (+${n.away})` : "");
+      const [bw, bh] = badgeSize(label, n.kind, marks);
+      // The badge is the node: sigma's own dot stays transparent underneath.
+      graph.addNode(n.id, { x, y, kind: n.kind, outside: !!n.outside, marks, label, bw, bh, size: 3, color: "rgba(0,0,0,0)",
+        fill: n.outside ? (UNIVERSE_LEVEL[n.kind] >= 3 ? UNIVERSE_OUTSIDE : universeTint(UNIVERSE_COLORS[n.kind], 0.45)) : UNIVERSE_COLORS[n.kind] });
+      if (UNIVERSE_MASS[n.kind]) graph.addEdge(n.id, n.id, { kind: "mass", weight: UNIVERSE_MASS[n.kind] });
+    }
+    for (const l of links.values()) {
+      const [kind, total] = Object.entries(l.kinds)[0];
+      graph.addEdge(l.a, l.b, { kind, kinds: l.kinds, weight: kind === "contains" ? 3 : 1, color: UNIVERSE_LINKS[kind],
+        size: kind === "contains" ? 0.5 : Math.min(1 + Math.log2(total) * 1.2, 9) });
+    }
+    // Two kinds between the same pair: the lines bend apart instead of covering each other.
+    indexParallelEdgesIndex(graph, { edgeIndexAttribute: "parallelIndex", edgeMaxIndexAttribute: "parallelMaxIndex" });
+    graph.forEachEdge((edge, a) => { if (a.kind !== "mass" && a.parallelIndex > 0) graph.mergeEdgeAttributes(edge, { type: "curved", curvature: 0.12 * a.parallelIndex }); });
+    // A new view opens already settled; a view seen before comes back as it was.
+    if (fresh) path.length && level(path.at(-1)) === 3 ? radial(path.at(-1), via) : forceAtlas2.assign(graph, { iterations: 300, settings: universeForces(graph) });
+    crumbs();
+    apart();
+    const lines = [...links.values()].filter((l) => !l.kinds.contains).length;
+    box.querySelector(".universe-stats").textContent = `${graph.order} nodes · ${lines} lines`;
+  }
+  // Layout units per screen pixel, chosen so that neighbours sit a gap apart that grows with the badges
+  // (servers further apart than columns), whatever scale the layout produced. A table's rings are laid
+  // out in pixels already.
+  function unitOf() {
+    if (path.length && level(path.at(-1)) === 3) return 1;
+    const pts = []; graph.forEachNode((_, a) => pts.push([a.x, a.y, a.bw]));
+    const gaps = pts.map((p) => Math.min(...pts.filter((q) => q !== p).map((q) => Math.hypot(p[0] - q[0], p[1] - q[1])))).filter((g) => Number.isFinite(g) && g > 0).sort((a, b) => a - b);
+    const widths = pts.map((p) => p[2]).sort((a, b) => a - b);
+    return gaps.length ? gaps[gaps.length >> 1] / (widths[widths.length >> 1] + 40) : 1;
+  }
+  // No badge covers another: each node pushed out of its neighbours' way, by the size of its badge.
+  let baseUnit = 1;
+  function apart() {
+    const unit = unitOf();
+    noverlap.assign(graph, { maxIterations: 600, settings: { margin: 8 * unit, ratio: 1, expansion: 1.05, gridSize: 4 },
+      inputReducer: (_, a) => ({ x: a.x, y: a.y, size: (a.bw / 2) * unit }), outputReducer: (_, p) => ({ x: p.x, y: p.y }) });
+    baseUnit = unit; fit();
+  }
+  // The camera at one pixel per unit: only a drawing larger than the screen is zoomed out.
+  function fit() {
+    if (!renderer || !graph.order) return;
+    const unit = baseUnit, xs = [], ys = []; graph.forEachNode((_, a) => { xs.push(a.x); ys.push(a.y); });
+    const w = canvas.clientWidth, h = canvas.clientHeight, cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const side = Math.max(Math.max(...xs) - Math.min(...xs) + 260 * unit, Math.max(...ys) - Math.min(...ys) + 120 * unit, Math.min(w, h) * unit);
+    renderer.setCustomBBox({ x: [cx - side / 2, cx + side / 2], y: [cy - side / 2, cy + side / 2] });
+    renderer.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
+    renderer.refresh();
+  }
+  function crumbs() {
+    const parts = [["Universe", []], ...path.map((p, i) => [byId.get(p).label, path.slice(0, i + 1)])];
+    crumbsBox.innerHTML = parts.map(([label], i) => (i === parts.length - 1 ? `<b>${esc(label)}</b>` : `<a data-i="${i}">${esc(label)}</a>`)).join(" › ");
+    backButton.disabled = !path.length;
+    const label = area.querySelector(".universe-others");
+    if (label) label.textContent = `other ${UNIVERSE_NAMES[Math.min(path.length ? level(path.at(-1)) : 2, 2)]}`;
+  }
+  crumbsBox.addEventListener("click", (e) => { if (e.target.dataset.i) show(path.slice(0, +e.target.dataset.i)); }, { signal });
+  backButton.addEventListener("click", () => show(path.slice(0, -1)), { signal });
+
+  // A table's view is drawn in rings, so lines do not cross: the table in the middle, its columns around
+  // it, each table reached through a column straight out from that column, the next steps further out
+  // from the table they were reached from. Each slice of the circle is as wide as what hangs on it.
+  function radial(table, via) {
+    const columns = (children.get(table) ?? []).filter((c) => graph.hasNode(c)), place = new Map([[table, [0, 0]]]);
+    const hang = new Map();
+    for (const t of via.keys()) {
+      let parent = via.get(t);
+      if (parent === table) parent = graph.neighbors(t).find((n) => columns.includes(n)) ?? columns[0];
+      if (!hang.has(parent)) hang.set(parent, []); hang.get(parent).push(t);
+    }
+    const weight = new Map(), count = (n) => { const w = Math.max(1, (hang.get(n) ?? []).reduce((s, k) => s + count(k), 0)); weight.set(n, w); return w; };
+    // Columns with nothing hanging still get room enough to read their names.
+    const below = columns.reduce((s, c) => s + count(c), 0), room = Math.max(1, below / Math.max(columns.length, 1));
+    for (const c of columns) if (!hang.has(c)) weight.set(c, room);
+    const total = columns.reduce((s, c) => s + weight.get(c), 0);
+    // Distances in pixels: the columns' ring just wide enough for their names, the tables well beyond.
+    const inner = Math.max(80, columns.length * 16);
+    const out = (n, start, w, ring) => {
+      place.set(n, [start + w / 2, ring]);
+      let at = start;
+      for (const k of hang.get(n) ?? []) { const kw = (w * weight.get(k)) / weight.get(n); out(k, at, kw, ring === inner ? inner + 150 : ring + 140); at += kw; }
+    };
+    let at = 0;
+    for (const c of columns) { const w = (2 * Math.PI * weight.get(c)) / total; out(c, at, w, inner); at += w; }
+    graph.forEachNode((id) => { const p = place.get(id); if (!p) return; const [a, r] = p; graph.mergeNodeAttributes(id, { x: Math.cos(a) * r, y: Math.sin(a) * r }); });
+    // Links that are not the way a table was reached cross the rings: drawn faint, so the tree reads.
+    graph.forEachEdge((e, a, s, t) => { if (a.kind === "mass" || a.kind === "contains") return;
+      const tree = via.get(s) === t || via.get(t) === s || columns.includes(s) || columns.includes(t);
+      if (!tree) graph.mergeEdgeAttributes(e, { color: a.color + "40", size: 0.6 }); });
+  }
+
+  // Live movement after a drag: a few steps of the forces per frame, then it rests (not in a table's rings).
+  let steps = 0;
+  function move(frames) { if (path.length && level(path.at(-1)) === 3) return; const idle = steps === 0; steps = Math.max(steps, frames); if (idle) requestAnimationFrame(step); }
+  function step() {
+    if (steps <= 0 || signal.aborted) return;
+    forceAtlas2.assign(graph, { iterations: 1, settings: universeForces(graph, 8) });
+    if (--steps === 0) { const unit = unitOf(); noverlap.assign(graph, { maxIterations: 100, settings: { margin: 6 * unit }, inputReducer: (_, a) => ({ x: a.x, y: a.y, size: (a.bw / 2) * unit }), outputReducer: (_, p) => ({ x: p.x, y: p.y }) }); }
+    requestAnimationFrame(step);
+  }
+
+  // The badge: opaque, in the colour of its kind, the name in white, then a column's symbols after a thin
+  // divider, in a light tint of the same colour. Faded when another node is hovered, or when it does not
+  // hold the text of Highlight; outlined when it is the one hovered or holds that text. Where each badge
+  // was drawn is kept, so the mouse finds nodes by their badge. Badges follow the zoom: at the opening
+  // zoom they have their own size; zoomed out they shrink with the distances; too small to read, only
+  // the coloured shape stays.
+  const rects = new Map();
+  let scale = 1, hovered = null, near = new Set(), dragged = null, moved = false, find = "";
+  function drawBadge(context, d, hover = false) {
+    if (scale === null) { const a = renderer.graphToViewport({ x: 0, y: 0 }), b = renderer.graphToViewport({ x: baseUnit, y: 0 }); scale = Math.hypot(b.x - a.x, b.y - a.y) || 1; }
+    const k = Math.min(scale, 1), f = UNIVERSE_FONT[d.kind] * k, w = d.bw * k, h = d.bh * k, left = d.x - w / 2, top = d.y - h / 2;
+    rects.set(d.key, [left, top, w, h]);
+    context.globalAlpha = d.dim ? 0.18 : 1;
+    context.beginPath(); context.roundRect(left, top, w, h, 5 * k);
+    context.fillStyle = d.fill; context.fill();
+    if (hover || d.found) { context.strokeStyle = d.found ? "#d4a72c" : "#1f2328"; context.lineWidth = d.found ? 3 : 2; context.stroke(); }
+    if (f >= 6) {
+      const marks = d.marks ?? [], y0 = d.y - f / 2;
+      context.font = `600 ${f}px ${UNIVERSE_FAMILY}`;
+      const text = context.measureText(d.label).width, symbols = marks.length ? marks.length * (f + 3 * k) + 10 * k : 0;
+      const start = d.x - (text + symbols) / 2;
+      context.fillStyle = "#ffffff"; context.textBaseline = "top";
+      context.fillText(d.label, start, y0);
+      context.textBaseline = "alphabetic";
+      if (marks.length) { context.strokeStyle = universeTint(d.fill, 0.55); context.lineWidth = 1; context.beginPath();
+        context.moveTo(start + text + 5 * k, top + 3 * k); context.lineTo(start + text + 5 * k, top + h - 3 * k); context.stroke(); }
+      let x = start + text + 10 * k;
+      for (const m of marks) { const img = universeIcon(m, universeTint(d.fill, 0.8), () => renderer?.refresh()); if (img.complete) context.drawImage(img, x, y0, f, f); x += f + 3 * k; }
+    }
+    context.globalAlpha = 1;
+  }
+  const hit = (x, y) => { let found = null; for (const [id, [l, t, w, h]] of rects) if (x >= l && x <= l + w && y >= t && y <= t + h && graph.hasNode(id)) found = id; return found; };
+
+  show(path);
+  renderer = new Sigma(graph, canvas, {
+    labelRenderedSizeThreshold: 0, enableEdgeEvents: true, edgeProgramClasses: { curved: EdgeCurveProgram },
+    defaultDrawNodeLabel: (context, d) => drawBadge(context, d), defaultDrawNodeHover: (context, d) => drawBadge(context, d, true),
+    nodeReducer: (id, a) => {
+      const found = Boolean(find) && a.label.toLowerCase().includes(find);
+      return { ...a, key: id, forceLabel: true, highlighted: id === hovered, found,
+               dim: (!!hovered && id !== hovered && !near.has(id)) || (Boolean(find) && !found) };
+    },
+    edgeReducer: (id, a) => {
+      if (a.kind === "mass") return { ...a, hidden: true };
+      const s = graph.source(id), t = graph.target(id);
+      if (hovered && s !== hovered && t !== hovered) return { ...a, hidden: true };
+      return a;
+    },
+  });
+  renderer.on("beforeRender", () => { rects.clear(); scale = null; });
+  apart();
+  signal.addEventListener("abort", () => renderer.kill());
+  const resized = new ResizeObserver(() => { renderer.resize(); renderer.refresh(); });
+  resized.observe(canvas);
+  signal.addEventListener("abort", () => resized.disconnect());
+  area.querySelector(".graph-fit")?.addEventListener("click", fit, { signal });
+  area.querySelector(".graph-find")?.addEventListener("input", (event) => { find = event.target.value.trim().toLowerCase(); renderer.refresh(); }, { signal });
+
+  // A line under the mouse: its two ends and how many relations of each kind it stands for.
+  let mouse = [0, 0];
+  document.addEventListener("mousemove", (e) => { mouse = [e.clientX, e.clientY]; }, { signal });
+  renderer.on("enterEdge", ({ edge }) => {
+    const k = graph.getEdgeAttribute(edge, "kinds"); if (!k || k.contains || !tooltip) return;
+    const bounds = area.getBoundingClientRect();
+    tooltip.innerHTML = `<span>${esc(byId.get(graph.source(edge)).label)} — ${esc(byId.get(graph.target(edge)).label)}</span><span>${Object.entries(k).map(([kind, n]) => `${n} ${esc(kind)}`).join(" · ")}</span>`;
+    tooltip.style.left = `${mouse[0] - bounds.left + 12}px`; tooltip.style.top = `${mouse[1] - bounds.top + 12}px`; tooltip.hidden = false;
+  });
+  renderer.on("leaveEdge", () => { if (tooltip) tooltip.hidden = true; });
+
+  // Hovering a node: its neighbours stand out, and a tall box by its badge lists what it is, with Details.
+  let boxNode = null, boxTimer = null;
+  const hideBox = () => { boxTimer = setTimeout(() => { hoverBox.hidden = true; boxNode = null; }, 300); };
+  hoverBox.addEventListener("mouseenter", () => clearTimeout(boxTimer), { signal });
+  hoverBox.addEventListener("mouseleave", hideBox, { signal });
+  hoverBox.querySelector(".universe-hover-details").addEventListener("click", () => { if (boxNode) details(boxNode); hoverBox.hidden = true; }, { signal });
+  function enter(node) {
+    hovered = node; near = new Set(graph.neighbors(node)); renderer.refresh();
+    clearTimeout(boxTimer); boxNode = node;
+    const [l, t, w] = rects.get(node) ?? [0, 0, 0], at = canvas.getBoundingClientRect(), outer = box.getBoundingClientRect();
+    hoverBox.querySelector(".universe-hover-body").innerHTML = characteristics(node);
+    hoverBox.style.left = `${at.left - outer.left + l + w + 6}px`; hoverBox.style.top = `${at.top - outer.top + t}px`; hoverBox.hidden = false;
+  }
+  function leave() { hovered = null; near = new Set(); renderer.refresh(); hideBox(); }
+  const symbol = (m) => `<img src="${universeIcon(m, UNIVERSE_COLORS.column).src}" alt="">`;
+  const row = (icon, text) => `<div class="universe-row">${icon}<span>${esc(text)}</span></div>`;
+  // A node's characteristics, one under the other: name, kind and place; a column's type and symbols (a
+  // foreign key with the column it points to); others what they hold and their relations by kind.
+  function characteristics(id) {
+    const n = byId.get(id);
+    let rows = `<b>${esc(n.label)}</b><div class="universe-where">${esc(n.subkind || n.kind)} · ${esc(chain(id).slice(0, -1).map((x) => byId.get(x).label).join(" › "))}</div>`;
+    if (n.kind === "column") {
+      if (n.type) rows += row("", n.type);
+      for (const m of universeMarks(n.flags)) {
+        const to = m === "fk" ? relations.filter((e) => e.kind === "foreign key" && e.source === id).map((e) => chain(e.target).slice(2).map((x) => byId.get(x).label).join(".")) : [];
+        rows += row(symbol(m), UNIVERSE_SYMBOLS[m][1] + (to.length ? ` → ${to.join(", ")}` : ""));
+      }
+    } else {
+      const counts = {};
+      for (const k of children.get(id) ?? []) counts[byId.get(k).kind] = (counts[byId.get(k).kind] ?? 0) + 1;
+      for (const [k, c] of Object.entries(counts)) rows += row("", `${c} ${k}${c > 1 ? "s" : ""}`);
+      const mine = (end) => up(end, UNIVERSE_LEVEL[n.kind]) === id, rel = {};
+      for (const e of relations) if (mine(e.source) !== mine(e.target)) rel[e.kind] = (rel[e.kind] ?? 0) + 1;
+      for (const [k, c] of Object.entries(rel)) rows += row(`<i style="border-color:${UNIVERSE_LINKS[k]}"></i>`, `${c} ${k}`);
+    }
+    if (n.comment) rows += `<div class="universe-comment">${esc(n.comment)}</div>`;
+    return rows;
+  }
+  const captor = renderer.getMouseCaptor();
+  captor.on("mousemovebody", (e) => {
+    if (!dragged) { const node = hit(e.x, e.y); if (node !== hovered) { if (hovered) leave(); if (node) enter(node); } canvas.style.cursor = node ? "pointer" : ""; return; }
+    const p = renderer.viewportToGraph(e);
+    graph.mergeNodeAttributes(dragged, { x: p.x, y: p.y }); moved = true; move(30);
+    e.preventSigmaDefault(); e.original.preventDefault(); e.original.stopPropagation();
+  });
+  captor.on("mousedown", (e) => { const node = hit(e.x, e.y); if (!node) return; dragged = node; moved = false; graph.setNodeAttribute(node, "fixed", true); e.preventSigmaDefault(); });
+  captor.on("mouseup", () => { if (!dragged) return; graph.removeNodeAttribute(dragged, "fixed"); dragged = null; move(60); });
+
+  // One click goes into the node (its place in the tree becomes the path); a second click on it within
+  // half a second opens its details instead (counted here: sigma's own double click window is shorter
+  // than a person's double click).
+  let pending = null, pendingNode = null;
+  captor.on("click", (e) => {
+    const node = hit(e.x, e.y);
+    if (!node || moved) return;
+    clearTimeout(pending);
+    if (pendingNode === node) { pendingNode = null; details(node); return; }
+    pendingNode = node;
+    pending = setTimeout(() => {
+      pendingNode = null; hovered = null; near = new Set(); hoverBox.hidden = true;
+      const target = level(node) === 4 ? byId.get(node).parent : node;
+      if (target !== path.at(-1)) show(chain(target));
+    }, 500);
+  });
+  for (const event of ["doubleClickNode", "doubleClickStage", "doubleClickEdge"]) renderer.on(event, (e) => e.preventSigmaDefault());
+
+  // The node's details, in the drawing's Details panel: where it sits, what it holds, its relations by kind.
+  function details(id) {
+    if (!info) return;
+    const n = byId.get(id);
+    const mine = (end) => up(end, UNIVERSE_LEVEL[n.kind]) === id, short = (x) => chain(x).slice(1).map((y) => byId.get(y).label).join(".");
+    const out = {}, inn = {};
+    for (const e of relations) {
+      if (mine(e.source) && !mine(e.target)) (out[e.kind] ??= []).push(e);
+      if (mine(e.target) && !mine(e.source)) (inn[e.kind] ??= []).push(e);
+    }
+    const group = (list, arrow) => Object.entries(list).map(([kind, items]) => `<h4><i class="universe-line" style="border-color:${UNIVERSE_LINKS[kind]}"></i>${esc(kind)} ${arrow} <span class="count">${items.length}</span></h4>
+      <ul>${items.slice(0, 50).map((e) => `<li>${esc(`${short(e.source)} → ${short(e.target)}`)}</li>`).join("")}${items.length > 50 ? `<li>… ${items.length - 50} more</li>` : ""}</ul>`).join("");
+    const kids = children.get(id) ?? [], counts = {};
+    for (const k of kids) counts[byId.get(k).kind] = (counts[byId.get(k).kind] ?? 0) + 1;
+    const holds = n.kind === "table" || n.kind === "view"
+      ? `<h4>Columns <span class="count">${kids.length}</span></h4><ul>${kids.map((c) => `<li>${esc(byId.get(c).label)} <span class="universe-type">${esc(byId.get(c).type ?? "")}</span> ${universeMarks(byId.get(c).flags).map(symbol).join("")}</li>`).join("")}</ul>`
+      : kids.length ? `<p>${Object.entries(counts).map(([k, c]) => `${c} ${k}${c > 1 ? "s" : ""}`).join(" · ")}</p>` : "";
+    info.innerHTML = `<p class="graph-info-role">${esc(n.subkind || n.kind)}</p><h3 class="graph-details-name">${esc(n.label)}</h3>
+      <code class="path">${esc(chain(id).map((x) => byId.get(x).label).join(" › "))}</code>
+      ${n.comment ? `<p>${esc(n.comment)}</p>` : ""}
+      ${n.kind === "column" ? `<p>${esc(n.type ?? "")} ${universeMarks(n.flags).map((m) => `${symbol(m)} ${esc(UNIVERSE_SYMBOLS[m][1])}`).join(" · ")}</p>` : ""}
+      ${holds}${group(out, "→")}${group(inn, "←")}`;
+    openSidePanel(area);
+  }
+}
+
 function initViews() {
   for (const canvas of document.querySelectorAll(".graph-canvas")) {
-    if (canvas.dataset.ready || !DIAGRAMS[canvas.dataset.view] || !canvas.dataset.url) continue;  // no url: nothing chosen yet
+    if (canvas.dataset.ready || !canvas.dataset.url) continue;  // no url: nothing chosen yet
+    if (canvas.dataset.view === "universe") { canvas.dataset.ready = "1"; drawUniverse(canvas); continue; }
+    if (!DIAGRAMS[canvas.dataset.view]) continue;
     canvas.dataset.ready = "1";
     drawDiagram(canvas, DIAGRAMS[canvas.dataset.view]);
   }

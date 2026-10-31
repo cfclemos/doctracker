@@ -233,11 +233,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
 
     def database_context(params: dict, error: str = "") -> dict:
-        """What DATABASE shows: its tab (Connections), the connections, their last tests, whether the
-        saved passwords wait for the master password, and a refusal to show on top."""
+        """What DATABASE shows: its tab (Connections or Universe), the connections, their last tests, whether
+        the saved passwords wait for the master password, whether any database was read, and a refusal
+        to show on top."""
         return {"tab": params.get("tab", "connections"), "connections": connections.connections(),
                 "tests": connection_tests, "kinds": KINDS, "locked": connections.locked(),
-                "has_secrets": (connections.folder / "secrets.bin").is_file(), "error": error}
+                "has_secrets": (connections.folder / "secrets.bin").is_file(), "error": error,
+                "has_collections": bool(catalog.objects(kind="database"))}
 
     def database_modal(details: str = "", editing: bool = False, oob: bool = False, error: str = "") -> str:
         """The modals of DATABASE: everything about a connection (`details`, changed in place with
@@ -603,6 +605,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "timeline":  # when each file appeared, for the timeline of the architecture
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
+        if view == "universe":  # DATABASE › Universe: the databases as the server last read them
+            return JSONResponse(catalog.universe())
         if view == "local":  # an entity's page: the entity and its neighbours, a few steps away
             graph = call_graph(state, params.get("focus", ""), depth_of(params), "both", kinds=LOCAL_KINDS)
             return JSONResponse(pages.visible_graph(state, graph, shown))
