@@ -1845,3 +1845,108 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .graph-legend .hint:last-child { font-weight: 400; color: var(--muted); }
 .graph-legend .universe-relation { gap: 0.3rem; }
 .universe-filters .form-field { min-width: 0; }
+
+/* DATABASE: the pages of tables, columns and the other objects read, and the Tables and columns list. */
+.db-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.db-table th, .db-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.db-table th { font-weight: 600; color: var(--muted); }
+.db-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0.3rem 0; font-size: 0.85rem; }
+.db-facts dt { font-weight: 600; }
+.db-facts dd { margin: 0; overflow-wrap: anywhere; }
+.db-list { margin: 0.3rem 0; padding-left: 1.2rem; font-size: 0.85rem; }
+.db-list .summary, .db-table .summary, .db-facts .summary { color: var(--muted); font-size: 0.85em; }
+.db-mark { display: inline-block; margin: 0 0.25rem 0.15rem 0; padding: 0 0.35rem; border: 1px solid var(--border); border-radius: 999px;
+  font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.objects-filter { margin: 0.6rem 0; }
+.objects-count { margin: 0.4rem 0; font-size: 0.85rem; color: var(--muted); }
+/* Tables and columns: the page takes the screen's height under the bar; the list fills what is left,
+   its rows scrolling under a fixed head, the pages always in view below; long names and comments wrap. */
+.objects-page { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height) - 3rem); min-height: 20rem; }
+.objects-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.objects-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.objects-table { table-layout: fixed; }
+.objects-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.objects-table td { overflow-wrap: anywhere; }
+.objects-list .search-pagination { flex: none; }
+@media (max-width: 700px) { .objects-page { height: auto; } .objects-scroll { overflow: visible; } }
+/* Its filters: Database, Schema and Kind share the first line, each as wide as its share; Name takes
+   the whole second line. None goes past the page's edge. */
+.objects-filter.filters-line { flex-wrap: wrap; }
+.objects-filter .form-field { flex: 1 1 10rem; min-width: 0; }
+.objects-filter .form-field.objects-name { flex-basis: 100%; }
+.objects-filter .form-field .field { min-width: 0; }
+/* Its columns' heads: the title sorts; the filter icon opens a small box with the column's field. */
+.objects-head { display: flex; align-items: center; gap: 0.3rem; }
+.objects-sort { flex: 1; min-width: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.objects-sort:hover { color: var(--accent); }
+.objects-arrow { color: var(--accent); }
+.objects-column-filter { position: relative; }
+.objects-column-filter summary { list-style: none; display: inline-flex; padding: 0.15rem; border-radius: 4px; cursor: pointer; opacity: 0.45; }
+.objects-column-filter summary::-webkit-details-marker { display: none; }
+.objects-column-filter summary:hover, .objects-column-filter[open] summary, .objects-column-filter.active summary { opacity: 1; color: var(--accent); }
+.objects-column-filter.active summary { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.objects-filter-box { position: fixed; z-index: 20; display: flex; flex-direction: column; gap: 0.4rem; width: 18rem; padding: 0.5rem;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  font-weight: 400; text-align: left; box-sizing: border-box; }
+.objects-filter-box .field input { width: 100%; box-sizing: border-box; }
+/* Every cell's data centred, across and down; the heads follow. */
+.objects-table td, .objects-table th { text-align: center; vertical-align: middle; }
+.objects-table .objects-head { justify-content: center; }
+.objects-table .objects-sort { flex: none; text-align: center; }
+/* The filters in use, beside the count: one badge each, × removes it. */
+.objects-count { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.objects-chip { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.05rem 0.2rem 0.05rem 0.55rem; border: 1px solid var(--border);
+  border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--fg); font-size: 0.78rem; }
+.objects-chip b { font-weight: 600; }
+.objects-chip button { width: 1.2rem; height: 1.2rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; line-height: 1; }
+.objects-chip button:hover { background: var(--border); color: var(--fg); }
+.objects-count .objects-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; flex: 1; min-width: 0; }
+.objects-count .objects-total { margin-left: auto; white-space: nowrap; }
+.objects-count .objects-total { font-weight: 700; }
+.objects-table col.col-name { width: 22%; }
+.objects-table col.col-comment { width: 28%; }
+.objects-table col.col-page { width: 4.5rem; }
+.objects-page-link { display: inline-flex; color: var(--muted); }
+.objects-page-link:hover { color: var(--accent); }
+.objects-modes { margin-right: 0.5rem; }
+.objects-path { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; flex: 1; min-width: 0; font-size: 0.9rem; }
+.objects-path a { cursor: pointer; }
+.objects-path .sep { color: var(--muted); }
+.objects-path .objects-up { width: 1.9rem; height: 1.8rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.objects-path .objects-up:disabled { opacity: 0.4; cursor: default; }
+/* The values of a column's filter: its search, how many, Clear, then each value ticked or not, with its count. */
+.objects-values-find { width: 100%; box-sizing: border-box; height: 2rem; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 0.82rem; }
+.objects-values-find:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.objects-values-head { display: flex; align-items: center; justify-content: space-between; font-size: 0.75rem; color: var(--muted); }
+.objects-values-clear { padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: 4px; background: none; color: var(--accent); font-size: 0.75rem; cursor: pointer; }
+.objects-values-clear:disabled { color: var(--muted); opacity: 0.6; cursor: default; }
+.objects-values { flex: 1; min-height: 0; max-height: 18rem; overflow: auto; margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
+.objects-values li[hidden] { display: none; }
+.objects-values label { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.3rem; border-radius: 4px; cursor: pointer; }
+.objects-values label:hover { background: var(--panel); }
+.objects-values .objects-value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.objects-values .count { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+/* The edge of a title that sets its column's width (the head's cells are sticky, so it sits in them). */
+.objects-resize { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; }
+.objects-resize:hover, .objects-resize:active { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+/* A column's filter box over everything: its title cell (sticky, so a stacking context of its own) is
+   raised above the other titles, the rows and the page's bars while its box is open. */
+.objects-table thead th:has(.objects-column-filter[open]) { z-index: 1000; }
+.objects-filter-box { z-index: 1000; }
+.objects-unsort { width: 1.2rem; height: 1.2rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; line-height: 1; }
+.objects-unsort:hover { background: var(--border); color: var(--fg); }
+/* The Universe inside an object's page or its consultation modal: a block of the page, not the whole screen. */
+.universe-embed .graph-canvas { height: 30rem; min-height: 0; }
+/* Browse's path: each part a box to pick from, as the columns' filters. */
+.objects-crumb summary.objects-crumb-label { opacity: 1; display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border); border-radius: 6px; color: var(--accent); background: var(--bg); max-width: 22rem; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.objects-crumb.active summary.objects-crumb-label { background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.objects-crumb-arrow { font-size: 0.7rem; color: var(--muted); }
+/* The consultation modal's Close at the right of its footer, the other actions in the middle. */
+.page-dialog-foot { position: relative; }
+.page-dialog-foot > .page-dialog-close.see-in-link { position: absolute; right: 1.2rem; }
+.objects-values-actions { display: inline-flex; gap: 0.35rem; }
+.objects-values-apply { padding: 0.1rem 0.6rem; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent); color: #fff; font-size: 0.75rem; cursor: pointer; }
+.objects-values-apply:hover { filter: brightness(1.1); }

@@ -125,7 +125,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         other_sections=pages.other_sections,
         relations=pages.relations,
         dead_code_of=pages.dead_code_of,
+        db_place=pages.db_place,
+        db_marks=pages.DB_MARKS,
+        browse_counts=pages.BROWSE_COUNTS,
     )
+    templates.filters["size"] = pages.size_text
 
     def view_settings(request: Request) -> tuple[str, set[str]]:
         """The tree layout and the shown languages chosen in this browser (cookies set by `static/live.js`)."""
@@ -167,7 +171,25 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                             "body_html": pages.render_commit_message(commit.body) if commit else ""})
         return earlier
 
+    def database_object(path: str) -> dict | None:
+        """A database object's page data: what the catalog holds of it; a server, which is no object of its
+        own, as what holds its databases."""
+        found = catalog.object(path)
+        if found is None and path.count("/") == 0:
+            databases = [o for o in catalog.objects(kind="database") if o["parent"] == path]
+            if databases:
+                found = {"path": path, "kind": "server", "name": path.removeprefix("db:"), "parent": "", "data": {},
+                         "children": databases, "relations": [], "ends": {}, "read": "", "unavailable": []}
+        if found is not None:
+            found["groups"] = pages.db_relation_groups(found)
+            found["crumbs"] = pages.db_crumbs(path)
+        return found
+
     async def render(request: Request, path: str) -> HTMLResponse:
+        if path.startswith("db:"):  # an object of a database the server read
+            found = database_object(path)
+            content, status = ("database_object.html", 200) if found else ("not_found.html", 404)
+            return render_page(request, content, f"/wiki/{path}", {"path": path, "item": found}, status)
         entity = state.entities.get(path)
         context = {"path": path, "entity": entity}
         if not state.ready:
@@ -220,6 +242,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         if view == "database":
+            # A column filter of Tables and columns may hold several values (`f_<column>` repeated).
+            params["filters"] = {key[2:]: request.query_params.getlist(key) for key in request.query_params if key.startswith("f_")}
+            # Browse: the servers, databases, schemas and tables ticked in the path, several each.
+            params["picked"] = {level: request.query_params.getlist(field) for level, field in pages.BROWSE_FIELDS.items()}
             context.update(database_context(params))
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
@@ -233,13 +259,99 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
 
     def database_context(params: dict, error: str = "") -> dict:
-        """What DATABASE shows: its tab (Connections or Universe), the connections, their last tests, whether
-        the saved passwords wait for the master password, whether any database was read, and a refusal
-        to show on top."""
-        return {"tab": params.get("tab", "connections"), "connections": connections.connections(),
-                "tests": connection_tests, "kinds": KINDS, "locked": connections.locked(),
-                "has_secrets": (connections.folder / "secrets.bin").is_file(), "error": error,
-                "has_collections": bool(catalog.objects(kind="database"))}
+        """What DATABASE shows: its tab (Connections, Universe or Tables and columns), the connections, their
+        last tests, whether the saved passwords wait for the master password, whether any database was
+        read, the list of objects with its filters, and a refusal to show on top."""
+        tab = params.get("tab", "connections")
+        context = {"tab": tab, "connections": connections.connections(), "params": params,
+                   "tests": connection_tests, "kinds": KINDS, "locked": connections.locked(),
+                   "has_secrets": (connections.folder / "secrets.bin").is_file(), "error": error,
+                   "has_collections": bool(catalog.objects(kind="database"))}
+        if tab == "objects":
+            context.update(objects_list(params))
+        return context
+
+    OBJECTS_PER_PAGE = 50
+
+    def browse(params: dict) -> tuple[str, list[dict], list[dict]]:
+        """Browse's level: what the ticks of the path (or `at`, a page's link) choose, and the path's parts.
+
+        Each part of the path is a level (servers, databases, schemas, tables) with every option it has
+        under what is ticked above it, and what is ticked in it; the list shows the level under the
+        last part ticked (the columns, once tables are), each row knowing which ticked item holds it.
+        """
+        picked = {level: list(params.get("picked", {}).get(level, [])) for level in pages.BROWSE_FIELDS}
+        at = params.get("at", "")
+        if at and not any(picked.values()):  # a page's link, or a row's name: that one thing, down to it
+            chain = [path for path, _ in pages.db_crumbs(at)] + [at]
+            for level, path in zip(pages.BROWSE_FIELDS, chain):
+                picked[level] = [path]
+        crumbs, parents = [], [""]
+        for level in pages.BROWSE_FIELDS:
+            options = [{**row, "parent": parent} for parent in parents for row in catalog.level(parent)["rows"]]
+            known = {row["path"] for row in options}
+            ticked = [path for path in picked[level] if path in known]
+            crumbs.append({"level": level, "field": pages.BROWSE_FIELDS[level], "options": options, "picked": ticked,
+                           "several_parents": len(parents) > 1})
+            if not ticked:
+                return level, options, crumbs
+            parents = ticked
+        rows = [{**row, "parent": parent} for parent in parents for row in catalog.level(parent)["rows"]]
+        crumbs.append({"level": "columns", "field": "", "options": [], "picked": [], "several_parents": len(parents) > 1})
+        return "columns", rows, crumbs
+
+    def objects_list(params: dict) -> dict:
+        """The Tables and columns tab. Browse (the default): one level of the SQL tree (`at`), its own
+        columns. Search: every object read, filtered by database (or a server, from a page), schema, kind
+        and name. In both, each column's own filter (the values chosen in it, `params["filters"]`) and the
+        order chosen by its title; one page of the rows, the values each filter lists and the filters in use."""
+        mode = "search" if params.get("mode") == "search" else "browse"
+        context: dict = {"mode": mode}
+        top: list[tuple[str, str, str]] = []  # the filters above the table in use: (field, label, shown)
+        if mode == "browse":
+            level, rows, crumbs = browse(params)
+            # ← takes away the ticks of the deepest part ticked: one level up.
+            up = pages.browse_url({c["level"]: c["picked"] for c in crumbs[:-2]}) if len(crumbs) > 1 else ""
+            context.update(level=level, crumbs=crumbs, up=up)
+        else:
+            level = "search"
+            within = params.get("within", "")  # a server, database or schema, from a page's link
+            database = params.get("database") or ("/".join(within.split("/")[:2]) if within.count("/") >= 1 else "")
+            schema = params.get("schema") or (within if within.count("/") == 2 else "")
+            if database and not schema.startswith(f"{database}/"):
+                schema = ""
+            if params.get("database") is not None or params.get("schema") is not None:
+                within = schema or database
+            rows = [{"path": o["path"], "name": o["name"], "kind": o["kind"], "where": pages.db_place(o["parent"]),
+                     "rows": o["data"].get("rows"), "comment": o["data"].get("comment", ""), "down": False}
+                    for o in catalog.objects(kind=params.get("kind", ""), within=within, name=params.get("name", "").strip())]
+            context.update(databases=catalog.objects(kind="database"), schemas=catalog.objects(kind="schema", within=database),
+                           object_kinds=sorted({o["kind"] for o in catalog.objects()} - {"database", "schema"}),
+                           chosen={"database": database, "schema": schema, "kind": params.get("kind", ""),
+                                   "name": params.get("name", ""), "within": within})
+            top = [("within", "In", pages.db_place(within) if within and not database else ""),
+                   ("database", "Database", pages.db_place(database)), ("schema", "Schema", pages.db_place(schema)),
+                   ("kind", "Kind", params.get("kind", "")), ("name", "Name", params.get("name", "").strip())]
+        columns = pages.LIST_COLUMNS[level]
+        if mode == "browse" and context["crumbs"][-1]["several_parents"]:  # rows from several ticked above: where each is
+            columns = [columns[0], {"key": "in", "title": "In", "filter": "list"}, *columns[1:]]
+            for row in rows:
+                row["in"] = pages.db_place(row["parent"])
+        chosen = params.get("filters", {})  # by column, the values chosen in its filter
+        values = pages.filter_values(rows, columns, chosen)
+        rows, in_use = pages.filter_rows(rows, columns, chosen)
+        sort = params.get("sort", "") if any(c["key"] == params.get("sort") for c in columns) else ""
+        descending = params.get("dir") == "desc"
+        if sort:
+            rows.sort(key=lambda row: pages.sort_key(row.get(sort)), reverse=descending)
+        page = int(params.get("page", "1")) if params.get("page", "1").isdigit() else 1
+        offset = OBJECTS_PER_PAGE * (max(1, page) - 1)
+        context.update(objects=rows[offset:offset + OBJECTS_PER_PAGE], objects_total=len(rows),
+                       objects_pages=pages.pagination(len(rows), offset, OBJECTS_PER_PAGE),
+                       list_columns=columns, values=values, sort=sort, direction="desc" if descending else "asc",
+                       column_filters={c["key"]: [v for v in chosen.get(c["key"], []) if v] for c in columns}, empty=pages.EMPTY,
+                       in_use=[entry for entry in top if entry[2]] + in_use)
+        return context
 
     def database_modal(details: str = "", editing: bool = False, oob: bool = False, error: str = "") -> str:
         """The modals of DATABASE: everything about a connection (`details`, changed in place with
@@ -640,6 +752,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 continue
             if group == "code":
                 rows = pages.ranked_results(state, [(row["ref"], row["score"]) for row in found[group]], query)
+            elif group == "databases":
+                rows = [{**row, "url": f"/wiki/{row['ref']}"} for row in found[group]]
             elif group == "history":
                 rows = [{**row, "url": f"/git?commit={row['commits'][0]}" if row.get("commits") else "/git"}
                         for row in found[group]]
@@ -649,6 +763,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                         for row in found[group]]
             groups.append({"name": group, "rows": rows})
         return groups
+
+    def object_row(path: str, document: dict, score: float) -> dict:
+        """A database object in the search box's results, shaped as a code entity's row."""
+        return {"path": path, "role": document["kind"], "icon": "database", "symbol": "", "before": document["title"],
+                "match": "", "after": "", "snippet": {"before": document["summary"], "match": "", "after": ""}, "score": score}
 
     async def search_box(request: Request) -> Response:
         query = request.query_params.get("q", "")
@@ -665,7 +784,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset, shown)
             context["renamed"] = outcome.renamed
             if outcome.ready:
-                context["results"] = pages.ranked_results(state, outcome.results, query)
+                objects, rows = catalog.searchable(), []
+                for path, score in outcome.results:
+                    if path in objects:
+                        rows.append(object_row(path, objects[path], score))
+                    else:
+                        rows.extend(pages.ranked_results(state, [(path, score)], query))
+                context["results"] = rows
                 context["pagination"] = pages.pagination(outcome.total, outcome.offset, DEFAULT_LIMIT)
             else:
                 context["preparing"] = outcome.status

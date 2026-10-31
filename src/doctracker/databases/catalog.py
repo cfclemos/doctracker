@@ -171,13 +171,16 @@ class CatalogStore:
             row = connection.execute("SELECT max(started) FROM collections WHERE connection = ?", (connection_id,)).fetchone()
         return row[0] or ""
 
-    def objects(self, connection_id: str = "", kind: str = "", schema: str = "") -> list[dict]:
+    def objects(self, connection_id: str = "", kind: str = "", schema: str = "", within: str = "", name: str = "") -> list[dict]:
         """The objects of the databases as last read, every connection's or one's.
 
         Args:
             connection_id: Only this connection's; empty for all.
             kind: Only this kind (`table`, `view`, `column`, `function`...); empty for all.
-            schema: Only the objects inside this schema; empty for all.
+            schema: Only the objects inside a schema of this name; empty for all.
+            within: Only what is inside this server, database or schema (its path, e.g.
+                `db:127.0.0.1:5432/shop`); empty for all.
+            name: Only the objects whose name holds this text (any case); empty for all.
 
         Returns:
             Each object's `path`, `kind`, `parent`, `name`, `connection` and `data`, by path.
@@ -192,32 +195,115 @@ class CatalogStore:
         if schema:
             query += " AND (o.parent LIKE ? OR o.parent LIKE ?)"
             values += [f"%/{schema}", f"%/{schema}.%"]
+        if within:  # a server or a database holds paths under `/`, a schema under `.`
+            query += " AND o.path LIKE ? ESCAPE '\\'"
+            values.append(_like(within) + ("/%" if within.count("/") < 2 else ".%"))
+        if name:
+            query += " AND o.name LIKE ? ESCAPE '\\'"
+            values.append(f"%{_like(name)}%")
         with self._connect() as connection:
             return [_object(row) for row in connection.execute(query + " ORDER BY o.path", values)]
 
     def object(self, path: str) -> dict | None:
-        """One object of the databases as last read, with its relations.
+        """One object of the databases as last read, with what it holds and its relations.
 
         Args:
             path: The object's path (`db:<server>/<database>/<schema>.<name>`).
 
         Returns:
-            The object (see `objects`) with `children` (paths and kinds of what it holds) and `relations`
-            (`source`, `target`, `kind`, both ways); None when no database read holds it.
+            The object (see `objects`) with `children` (`path`, `kind`, `name`, `data` of what it holds),
+            `relations` (`source`, `target`, `kind`, both ways; a table's or view's include its columns'
+            and triggers'), `ends` (`kind`, `name`, `parent` of every object those relations reach, by
+            path), `read` (when its database was read) and `unavailable` (what could not be read of its
+            database, and why); None when no database read holds it.
         """
         with self._connect() as connection:
             row = connection.execute(
-                f"SELECT o.*, c.connection FROM objects o JOIN collections c ON c.id = o.collection "
+                f"SELECT o.*, c.connection, c.started FROM objects o JOIN collections c ON c.id = o.collection "
                 f"WHERE o.path = ? AND o.collection IN ({_CURRENT}) ORDER BY o.collection DESC", (path,)).fetchone()
             if row is None:
                 return None
             found = _object(row)
-            found["children"] = [{"path": p, "kind": k} for p, k in connection.execute(
-                "SELECT path, kind FROM objects WHERE collection = ? AND parent = ? ORDER BY path", (row["collection"], path))]
+            found["read"] = row["started"]
+            found["children"] = [{"path": r["path"], "kind": r["kind"], "name": r["name"], "data": json.loads(r["data"])}
+                                 for r in connection.execute("SELECT * FROM objects WHERE collection = ? AND parent = ? ORDER BY rowid",
+                                                             (row["collection"], path))]
+            inside = row["kind"] in ("table", "view", "materialized view", "foreign table")
             found["relations"] = [dict(r) for r in connection.execute(
-                "SELECT source, target, kind FROM relations WHERE collection = ? AND (source = ? OR target = ?)",
-                (row["collection"], path, path))]
+                f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT}) AND (source = ? OR target = ?"
+                + (" OR source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\'" if inside else "") + ")",
+                (path, path, *((f"{_like(path)}.%", f"{_like(path)}.%", f"{_like(path)}:%") if inside else ())))]
+            ends = {end for r in found["relations"] for end in (r["source"], r["target"])}
+            found["ends"] = {r["path"]: {"kind": r["kind"], "name": r["name"], "parent": r["parent"]} for r in connection.execute(
+                f"SELECT path, kind, name, parent FROM objects WHERE collection IN ({_CURRENT}) "
+                f"AND path IN ({', '.join('?' * len(ends))})", list(ends))} if ends else {}
+            found["unavailable"] = [dict(u) for u in connection.execute(
+                "SELECT what, reason FROM unavailable WHERE collection = ?", (row["collection"],))]
         return found
+
+    def level(self, at: str = "") -> dict:
+        """One level of the SQL tree, as the Tables and columns tab browses it: what `at` holds, one row each.
+
+        Args:
+            at: Empty for the servers; a server's path for its databases, a database's for its schemas,
+                a schema's for its tables and views, a table's or view's for its columns.
+
+        Returns:
+            `at`, `level` (`servers`, `databases`, `schemas`, `tables`, `columns`) and `rows`: each one's
+            `path`, `name` and what that level shows of it — servers: `databases`, `read`; databases:
+            `schemas`, `tables`, `views`, `comment`; schemas: `tables`, `views`, `functions`, `comment`;
+            tables and views: `kind`, `columns`, `rows`, `size`, `comment`; columns: `type`, `null`,
+            `default`, `marks`, `comment`. Rows that hold a next level have `down` true.
+        """
+        tables, views = ("table", "foreign table"), ("view", "materialized view")
+        if not at:
+            with self._connect() as connection:
+                read = {f"db:{server}": started for server, started in connection.execute(
+                    "SELECT server, max(started) FROM collections WHERE ok = 1 GROUP BY server")}
+            servers: dict[str, int] = {}
+            for database in self.objects(kind="database"):
+                servers[database["parent"]] = servers.get(database["parent"], 0) + 1
+            rows = [{"path": path, "name": path.removeprefix("db:"), "databases": count, "read": read.get(path, ""), "down": True}
+                    for path, count in sorted(servers.items())]
+            return {"at": at, "level": "servers", "rows": rows}
+        inside = self.objects(within=at) if at.count("/") < 2 or "." not in at.split("/")[-1] else []
+        found = self.object(at) if at.count("/") >= 2 else None
+        if at.count("/") == 0:  # a server: its databases
+            level, holders = "databases", [o for o in self.objects(kind="database") if o["parent"] == at]
+        elif at.count("/") == 1:
+            level, holders = "schemas", [o for o in inside if o["kind"] == "schema"]
+        elif found and found["kind"] == "schema":
+            level, holders = "tables", [o for o in inside if o["parent"] == at and o["kind"] in tables + views]
+        elif found and found["kind"] in tables + views:
+            columns = [c for c in found["children"] if c["kind"] == "column"]
+            return {"at": at, "level": "columns", "rows": [
+                {"path": c["path"], "name": c["name"], "type": c["data"].get("type", ""),
+                 "null": "yes" if c["data"].get("nullable", True) else "no", "default": c["data"].get("default") or c["data"].get("computed") or "",
+                 "marks": [m for m in c["data"].get("marks", []) if m != "null"], "comment": c["data"].get("comment", ""), "down": False}
+                for c in columns]}
+        else:
+            return {"at": at, "level": "", "rows": []}
+        if level == "databases":
+            inside = self.objects(within=at)
+        counts: dict[str, dict[str, int]] = {}
+        for item in inside:  # how many of each kind each row holds, anywhere below it
+            for holder in holders:
+                if item["path"].startswith(holder["path"] + ("/" if level == "databases" else ".")):
+                    counted = counts.setdefault(holder["path"], {})
+                    counted[item["kind"]] = counted.get(item["kind"], 0) + 1
+        rows = []
+        for holder in holders:
+            n, data = counts.get(holder["path"], {}), holder["data"]
+            row = {"path": holder["path"], "name": holder["name"], "comment": data.get("comment", ""), "down": True}
+            if level == "databases":
+                row.update(schemas=n.get("schema", 0), tables=sum(n.get(k, 0) for k in tables), views=sum(n.get(k, 0) for k in views))
+            elif level == "schemas":
+                row.update(tables=sum(n.get(k, 0) for k in tables), views=sum(n.get(k, 0) for k in views),
+                           functions=n.get("function", 0) + n.get("procedure", 0) + n.get("aggregate", 0))
+            else:
+                row.update(kind=holder["kind"], columns=n.get("column", 0), rows=data.get("rows"), size=data.get("bytes"))
+            rows.append(row)
+        return {"at": at, "level": level, "rows": rows}
 
     def searchable(self) -> dict[str, dict]:
         """The objects of the databases as last read, as search documents.
@@ -277,6 +363,11 @@ class CatalogStore:
             if source in nodes and target in nodes:
                 edges.append({"source": source, "target": target, "kind": kind})
         return {"nodes": list(nodes.values()), "edges": edges}
+
+
+def _like(text: str) -> str:
+    """Text for a LIKE pattern, its own `%`, `_` and `\\` taken literally (with ESCAPE '\\')."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _object(row: sqlite3.Row) -> dict:

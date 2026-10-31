@@ -3,8 +3,8 @@
 All searches return `(path, score)` pairs, best first. Semantic and hybrid searches
 need the embedding backend; while it is being prepared they report its progress
 instead of results. The index also holds the notes and planner items, and the objects of the
-collected databases: the search modes keep the code's entities and, unless the languages are
-filtered, the database objects (`db:` paths); `recall` returns everything.
+collected databases: the search modes keep the code's entities (of the languages chosen) and the
+database objects (`db:` paths); `recall` returns everything.
 """
 
 import re
@@ -147,8 +147,8 @@ class SearchEngine:
             limit: Results per page.
             wait: Seconds to wait for the embedding backend (semantic and hybrid).
             offset: Results to skip, e.g. `limit * (page - 1)`.
-            languages: Keep only the entities of these languages (the wiki's filter); `None` keeps all,
-                the database objects too.
+            languages: Keep only the code entities of these languages (the wiki's filter); `None` keeps
+                all. Database objects, which have no language, are always kept.
 
         Returns:
             The page and the total, or the backend progress when it is not ready yet.
@@ -160,7 +160,7 @@ class SearchEngine:
             ranked = await (self.semantic(query, wait) if mode == "semantic" else self.hybrid(query, wait))
             if ranked is None:
                 return SearchOutcome(ready=False, status=self.embeddings.status())
-        objects = self.catalog.searchable() if languages is None else {}
+        objects = self.catalog.searchable()
         ranked = [(path, score) for path, score in ranked if path in objects or (path in self.state.entities
                   and (languages is None or self.state.entities[path]["language"] in languages))]
         offset = max(0, offset)
