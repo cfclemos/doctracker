@@ -1427,8 +1427,8 @@ async function drawUniverse(canvas) {
     <div class="universe-hover" hidden><div class="universe-hover-body"></div><button type="button" class="see-in-link universe-hover-details">Details ›</button></div>`);
   const crumbsBox = box.querySelector(".universe-crumbs"), backButton = box.querySelector(".universe-back"), hoverBox = box.querySelector(".universe-hover");
   const tooltip = area.querySelector(".graph-tooltip"), info = area.querySelector(".graph-details");
-  const pageButton = area.querySelector(".graph-panel-page");
-  if (pageButton) pageButton.hidden = true;  // the pages of tables and columns come later
+  const pageButton = area.querySelector(".graph-panel-page");  // the page of the node shown in Details
+  if (pageButton) pageButton.hidden = true;
 
   // The SQL tree: every node knows its parent.
   const byId = new Map(data.nodes.map((n) => [n.id, n]));
@@ -1443,12 +1443,19 @@ async function drawUniverse(canvas) {
   const esc = escapeHtml;
 
   // What the user chose, kept for the browser tab.
+  // An object's page keeps its own (it opens on that object), so it does not move the Universe tab.
+  const savedKey = canvas.closest(".universe-embed") ? `${UNIVERSE_KEY}-page` : UNIVERSE_KEY;
   let saved = {};
-  try { saved = JSON.parse(sessionStorage.getItem(UNIVERSE_KEY) || "{}"); } catch {}
+  try { saved = JSON.parse(sessionStorage.getItem(savedKey) || "{}"); } catch {}
   const themes = new Set(saved.themes || []);
   let depth = saved.depth || 1, others = Boolean(saved.others);
   let path = (saved.path || []).filter((id) => byId.has(id));
-  const remember = () => { try { sessionStorage.setItem(UNIVERSE_KEY, JSON.stringify({ themes: [...themes], depth, others, path })); } catch {} };
+  // Opened from an object's page ("See in Universe"): the view of that object, or of what holds it
+  // (a column's table; a function or trigger is not drawn: its schema or table).
+  let opened = canvas.dataset.focus;
+  while (opened && !byId.has(opened)) { const holder = opened.replace(/[.:/][^.:/]*$/, ""); opened = holder === opened ? "" : holder; }
+  if (opened) path = chain(byId.get(opened).kind === "column" ? byId.get(opened).parent : opened);
+  const remember = () => { try { sessionStorage.setItem(savedKey, JSON.stringify({ themes: [...themes], depth, others, path })); } catch {} };
 
   // The legend: colours, the relation kinds (each turns its relations on or off), the column symbols.
   const legend = fillLegend(canvas);
@@ -1798,6 +1805,7 @@ async function drawUniverse(canvas) {
       ${n.comment ? `<p>${esc(n.comment)}</p>` : ""}
       ${n.kind === "column" ? `<p>${esc(n.type ?? "")} ${universeMarks(n.flags).map((m) => `${symbol(m)} ${esc(UNIVERSE_SYMBOLS[m][1])}`).join(" · ")}</p>` : ""}
       ${holds}${group(out, "→")}${group(inn, "←")}`;
+    if (pageButton) { pageButton.hidden = false; pageButton.dataset.pageModal = id; }
     openSidePanel(area);
   }
 }

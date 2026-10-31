@@ -921,3 +921,140 @@ function placeHelp(event) {
 }
 document.addEventListener("mouseover", placeHelp);
 document.addEventListener("focusin", placeHelp);
+
+// The filter boxes of a list's columns and of Browse's path (DATABASE › Tables and columns) work as
+// menus: one open at a time (opening one closes the others); it opens right under its icon, inside the
+// window (fixed, so the list's scrolling does not cut it), follows it when the page scrolls, and a
+// column's fetches its values again (their counts follow the other filters). Its search box narrows the
+// values shown. Ticks, and Clear (untick all), wait for Apply, which applies them and closes the box; a
+// box closed otherwise (a click outside it, Escape) puts its ticks back as they were.
+const filterTicks = new WeakMap();  // the values ticked in each box as it opened
+function applyFilterBox(box) {
+  if (!box) return;
+  filterTicks.delete(box);  // what it holds now is what applies
+  if (box.matches(".objects-crumb")) {  // a part of the path: the parts below it were chosen under it
+    const parts = [...box.closest(".objects-path").querySelectorAll(".objects-crumb")];
+    for (const below of parts.slice(parts.indexOf(box) + 1)) below.querySelectorAll("input[type=checkbox]").forEach((input) => { input.checked = false; });
+    box.open = false;
+    htmx.trigger(box.closest("form"), "path-changed");
+  } else {
+    box.open = false;
+    htmx.trigger(box.closest("thead"), "filters-changed");
+  }
+}
+function placeFilterBox(box) {
+  const panel = box.querySelector(".objects-filter-box");
+  if (!panel) return;
+  const icon = box.querySelector("summary").getBoundingClientRect();
+  const width = Math.min(panel.offsetWidth || 288, window.innerWidth - 16);
+  panel.style.left = `${Math.max(8, Math.min(icon.left, window.innerWidth - width - 8))}px`;
+  panel.style.top = `${icon.bottom + 4}px`;
+  panel.style.maxHeight = `${Math.max(160, window.innerHeight - icon.bottom - 12)}px`;
+}
+document.addEventListener("toggle", (event) => {
+  const box = event.target;
+  if (box.matches?.(".objects-column-filter") && !box.open && filterTicks.has(box)) {  // closed without Apply
+    const ticked = filterTicks.get(box);  // by value: its list may have been fetched again since
+    box.querySelectorAll("input[type=checkbox]").forEach((input) => { input.checked = ticked.has(input.value); });
+    filterTicks.delete(box);
+  }
+  if (!box.matches?.(".objects-column-filter") || !box.open) return;
+  for (const other of document.querySelectorAll(".objects-column-filter[open]")) if (other !== box) other.open = false;
+  filterTicks.set(box, new Set([...box.querySelectorAll("input[type=checkbox]:checked")].map((input) => input.value)));
+  placeFilterBox(box);
+  box.querySelector(".objects-values-find")?.focus();
+  box.dataset.refreshing = "1";
+  htmx.trigger(box.querySelector(".objects-filter-box"), "refresh-values");
+}, true);  // "toggle" does not bubble: listen while it goes down
+document.addEventListener("htmx:afterSwap", () => {  // its values fetched again: in place, its search focused
+  const box = document.querySelector(".objects-column-filter[open]");
+  if (!box) return;
+  placeFilterBox(box);
+  if (box.dataset.refreshing) {
+    delete box.dataset.refreshing;
+    box.querySelector(".objects-values-find")?.focus();
+  }
+});
+document.addEventListener("click", (event) => {
+  for (const box of document.querySelectorAll(".objects-column-filter[open]")) if (!box.contains(event.target)) box.open = false;
+  const clear = event.target.closest(".objects-values-clear");
+  if (clear) for (const input of clear.closest(".objects-filter-box").querySelectorAll("input[type=checkbox]")) input.checked = false;
+  const apply = event.target.closest(".objects-values-apply");
+  if (apply) applyFilterBox(apply.closest(".objects-column-filter"));
+});
+document.addEventListener("input", (event) => {  // the box's search: only narrows what it shows
+  if (!event.target.matches(".objects-values-find")) return;
+  event.stopPropagation();
+  const text = event.target.value.trim().toLowerCase();
+  for (const item of event.target.closest(".objects-filter-box").querySelectorAll(".objects-values li")) {
+    item.hidden = Boolean(text) && !item.textContent.toLowerCase().includes(text);
+  }
+}, true);
+document.addEventListener("change", (event) => {  // a tick, or the box's search: nothing applies before Apply
+  if (event.target.closest?.(".objects-filter-box")) event.stopPropagation();
+}, true);
+document.addEventListener("scroll", () => {
+  for (const box of document.querySelectorAll(".objects-column-filter[open]")) placeFilterBox(box);
+}, true);
+window.addEventListener("resize", () => document.querySelectorAll(".objects-column-filter[open]").forEach(placeFilterBox));
+document.addEventListener("keydown", (event) => {
+  const box = event.target.closest?.(".objects-column-filter[open]");
+  if (!box || event.key !== "Escape") return;
+  event.preventDefault();
+  box.open = false;
+  box.querySelector("summary").focus();
+});
+
+// Its columns' widths: the right edge of a title, dragged, makes the column wider or narrower (the list
+// grows sideways and scrolls); the widths are kept per level, in this browser.
+const WIDTHS_KEY = "doctracker-objects-widths";
+function applyWidths(table) {
+  const widths = load(localStorage, WIDTHS_KEY, {})[table.dataset.level];
+  if (!widths) return;
+  const cols = [...table.querySelectorAll("col")];
+  cols.forEach((col, i) => { if (widths[i]) col.style.width = `${widths[i]}px`; });
+  table.style.width = `${cols.reduce((sum, col) => sum + (parseFloat(col.style.width) || 0), 0)}px`;
+}
+document.addEventListener("htmx:afterSettle", () => document.querySelectorAll(".objects-table").forEach(applyWidths));
+document.addEventListener("DOMContentLoaded", () => document.querySelectorAll(".objects-table").forEach(applyWidths));
+document.addEventListener("pointerdown", (event) => {
+  const handle = event.target.closest(".objects-resize");
+  if (!handle) return;
+  event.preventDefault();
+  const table = handle.closest("table"), heads = [...handle.closest("tr").children], index = heads.indexOf(handle.closest("th"));
+  const cols = [...table.querySelectorAll("col")];
+  const start = heads.map((th) => th.getBoundingClientRect().width), x = event.clientX;
+  cols.forEach((col, i) => { col.style.width = `${start[i]}px`; });  // every width fixed in pixels from now on
+  const move = (moved) => {
+    cols[index].style.width = `${Math.max(48, start[index] + moved.clientX - x)}px`;
+    table.style.width = `${cols.reduce((sum, col) => sum + parseFloat(col.style.width), 0)}px`;
+  };
+  const stop = () => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", stop);
+    const all = load(localStorage, WIDTHS_KEY, {});
+    all[table.dataset.level] = cols.map((col) => Math.round(parseFloat(col.style.width)));
+    try { localStorage.setItem(WIDTHS_KEY, JSON.stringify(all)); } catch {}
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", stop);
+});
+
+// An object's page of DATABASE (in the consultation modal too): Universe, in its header or the modal's
+// footer, opens the page's own Universe section and goes to it; the drawing is made when that section
+// first opens (its address set then), so a page that never shows it never draws it.
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-open-universe]")) return;
+  const page = document.getElementById("page-dialog")?.open ? document.getElementById("page-dialog-body") : document.getElementById("content");
+  const section = page?.querySelector('[data-section="universe"]');
+  if (!section) return;
+  section.open = true;
+  section.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+document.addEventListener("toggle", (event) => {
+  if (!event.target.matches?.('[data-section="universe"]') || !event.target.open) return;
+  const canvas = event.target.querySelector('.graph-canvas[data-view="universe"]');
+  if (!canvas || canvas.dataset.url) return;
+  canvas.dataset.url = "/graph/universe";
+  initViews();
+}, true);

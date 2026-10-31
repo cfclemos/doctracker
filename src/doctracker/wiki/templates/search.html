@@ -1,9 +1,9 @@
 {% import "macros.html" as ui %}
-{# One code entity in the results. #}
+{# One code entity, or one database object (its `icon` given), in the results. #}
 {% macro code_row(item) %}
   <li role="option" aria-selected="false">
     <a class="search-link" {{ ui.nav(item.path) }}>
-      {{ ui.icon(item.role, item.symbol) }}
+      {{ ui.icon(item.icon or item.role, item.symbol) }}
       <span class="search-text">
         <span class="search-name">{{ item.before }}<mark>{{ item.match }}</mark>{{ item.after }}</span>
         <span class="search-path">{{ item.path }}</span>

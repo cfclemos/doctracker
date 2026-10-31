@@ -337,3 +337,40 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   {% endfor %}
 </select>
 {%- endmacro %}
+
+{# DATABASE's Universe: the drawing static/graph.js (drawUniverse) makes of the databases read, with its
+   filters (Depth, Outside) and its legend (the kinds' colours, the relation kinds each with a ? saying
+   what it is, the column symbols, the mouse). In the Universe tab, and in an object's page opened on it
+   (`focus`); there `data_url` stays empty until its section opens (static/live.js sets it). #}
+{% set UNIVERSE_RELATIONS = {
+  "foreign key": "A column declared to hold a value of another table's key (its primary key or a unique column): the database refuses a value that is not there. The line goes from the column to the column it refers to.",
+  "implied": "A column named <name>_id with no foreign key declared, linked by its name to the one-column primary key of a table <name>, <name>s or <name>es in the same database. A guess from the names: the database enforces nothing.",
+  "view reads": "A view or materialized view reads from this table or view, as the database's own catalog records it (for SQLite, read from the view's SQL).",
+  "foreign table": "A table that stands for a table of another database (PostgreSQL's postgres_fdw): reading it reads the other one. Linked when that database is read too.",
+} %}
+{% macro universe_canvas(focus="", data_url="/graph/universe", empty="") -%}
+  {% set bar_filters %}
+  <div class="graph-toolbar filters-line universe-filters">
+    {% call form_field("Depth", "How many steps of the chosen relations are followed from what is opened: 1 shows only what it links to directly.", wide=False) %}
+    <select name="depth">{% for step in range(1, 6) %}<option value="{{ step }}">{{ step }}</option>{% endfor %}</select>{% endcall %}
+    {% call form_field("Outside", "Also show the nodes outside the one opened that its relations reach (only those, never the rest of their container), drawn lighter.", wide=False) %}
+    <span class="field-check"><input type="checkbox" name="others"> <span class="universe-others">other schemas</span></span>{% endcall %}
+  </div>
+  {% endset %}
+  {% call view_canvas("universe", data_url, focus, filters=bar_filters, details=true, empty=empty) %}
+    <p class="hint">Nodes</p>
+    {% for kind in ("server", "database", "schema", "table", "view", "column") %}
+    <span><i class="universe-swatch" data-node="{{ kind }}"></i>{{ kind }}</span>
+    {% endfor %}
+    <span><i class="universe-swatch" data-node="outside"></i>outside the one opened</span>
+    <p class="hint">Relations (click to show)</p>
+    {% for kind, text in UNIVERSE_RELATIONS.items() %}
+    <span class="universe-relation">{{ help_hover(kind, text) }}<button type="button" class="graph-kind universe-kind" data-kind="{{ kind }}" aria-pressed="false"><i class="universe-line" data-relation="{{ kind }}"></i>{{ kind }}</button></span>
+    {% endfor %}
+    <p class="hint">Column symbols</p>
+    {% for mark, text in (("pk", "primary key"), ("fk", "foreign key"), ("unique", "unique"), ("index", "indexed"), ("generated", "computed by the database"), ("notnull", "not null"), ("null", "null allowed")) %}
+    <span><img class="universe-mark" data-mark="{{ mark }}" alt="">{{ text }}</span>
+    {% endfor %}
+    <p class="hint">Click: go into it · double click, or Details › on hover: its details · the path above or ←: back · drag: the others follow</p>
+  {% endcall %}
+{%- endmacro %}

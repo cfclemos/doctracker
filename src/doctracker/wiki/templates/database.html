@@ -2,7 +2,8 @@
 {# DATABASE: the project's databases. Connections: what the project declares (blocked until allowed)
    and what the user enters; every form posts to /database/<action>, the same store the MCP tools use,
    and the page comes back redrawn; the notes' buttons and modal are reused. Universe: the databases the
-   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. #}
+   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. Tables and columns:
+   every object read, filtered, one page at a time; a name opens its page in the consultation modal. #}
 {# A connection's card: its name and state, kind and server; a click on it opens the rest in the consultation modal.
    Its colour, on the pill and the side, tells the state: green allowed, red blocked; sent again out of band
    after a change made in its details. #}
@@ -21,43 +22,161 @@
 hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}
 
-{# What each kind of relation of the Universe is: the legend's ? beside each. #}
-{% set RELATIONS = {
-  "foreign key": "A column declared to hold a value of another table's key (its primary key or a unique column): the database refuses a value that is not there. The line goes from the column to the column it refers to.",
-  "implied": "A column named <name>_id with no foreign key declared, linked by its name to the one-column primary key of a table <name>, <name>s or <name>es in the same database. A guess from the names: the database enforces nothing.",
-  "view reads": "A view or materialized view reads from this table or view, as the database's own catalog records it (for SQLite, read from the view's SQL).",
-  "foreign table": "A table that stands for a table of another database (PostgreSQL's postgres_fdw): reading it reads the other one. Linked when that database is read too.",
-} %}
-<div class="{% if tab == 'universe' %}graph-page{% else %}notes-page{% endif %} database-page">
+{% macro objects_page(number, label, current=false, aria="") -%}
+<button type="button" class="page{% if current %} current{% endif %}"{% if number is none %} disabled{% endif %}
+        {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
+        hx-get="/database?page={{ number }}" hx-include="#objects-filter, .objects-table thead" hx-target="#content" hx-push-url="true">{{ label }}</button>
+{%- endmacro %}
+<div class="{% if tab == 'universe' %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
-  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe")), tab) }}
+  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
+             ("objects", "Tables and columns", "/database?tab=objects")), tab) }}
   {% if tab == "universe" %}
   <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
-  {% set bar_filters %}
-  <div class="graph-toolbar filters-line universe-filters">
-    {% call ui.form_field("Depth", "How many steps of the chosen relations are followed from what is opened: 1 shows only what it links to directly.", wide=False) %}
-    <select name="depth">{% for step in range(1, 6) %}<option value="{{ step }}">{{ step }}</option>{% endfor %}</select>{% endcall %}
-    {% call ui.form_field("Outside", "Also show the nodes outside the one opened that its relations reach (only those, never the rest of their container), drawn lighter.", wide=False) %}
-    <span class="field-check"><input type="checkbox" name="others"> <span class="universe-others">other schemas</span></span>{% endcall %}
+  {{ ui.universe_canvas(params.open or "", "/graph/universe" if has_collections else "",
+                        "" if has_collections else "No database read yet: allow a connection in Connections.") }}
+  {% elif tab == "objects" %}
+  <p class="tab-description">Every object doctracker read from the allowed connections. Browse goes down the SQL tree one level at a time (servers, databases, schemas, tables and views, columns): a name goes into it, the path above goes back. Search lists every object at once. A column's title sorts by it, its filter icon filters it; the page icon opens the object's page.</p>
+  {# The mode, and what goes with every request of the list: the level (Browse) or the filters above
+     (Search), the order chosen (sort, dir). #}
+  <form id="objects-filter" class="graph-toolbar filters-line objects-filter" hx-get="/database" hx-target="#content" hx-push-url="true"
+        hx-trigger="change, input changed delay:400ms from:input[name=name], path-changed"{% if mode == "search" %} hx-include=".objects-table thead"{% endif %} hx-disinherit="*">
+    <input type="hidden" name="tab" value="objects"><input type="hidden" name="mode" value="{{ mode }}">
+    <input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="dir" value="{{ direction }}">
+    <div class="search-modes objects-modes" role="radiogroup" aria-label="How to list">
+      {% for name, label, tip in (("browse", "Browse", "One level of the SQL tree at a time: servers, databases, schemas, tables and views, columns"),
+                                  ("search", "Search", "Every object read at once, filtered by database, schema, kind and name")) %}
+      <button type="button" role="radio" aria-checked="{{ 'true' if mode == name else 'false' }}" title="{{ tip }}"
+              hx-get="/database?tab=objects&mode={{ name }}" hx-target="#content" hx-push-url="true">{{ label }}</button>
+      {% endfor %}
+    </div>
+    {% if mode == "browse" %}
+    {# The path: each level a box listing every option it has under what is ticked above it, with what
+       each holds, to tick one or more and Apply (as the columns' filters); the list shows the level under
+       the last part ticked. ← takes away the deepest ticks. #}
+    <nav class="objects-path" aria-label="Where in the SQL tree">
+      <button type="button" class="graph-icon objects-up" aria-label="One level up" title="One level up"{% if not up %} disabled{% endif %}
+              {% if up %}hx-get="{{ up }}" hx-target="#content" hx-push-url="true"{% endif %}>←</button>
+      {% for crumb in crumbs %}
+      {% if crumb.field %}
+      {% set names = crumb.options | selectattr("path", "in", crumb.picked) | map(attribute="name") | list %}
+      <details class="objects-column-filter objects-crumb{% if crumb.picked %} active{% endif %}">
+        <summary class="objects-crumb-label" title="Choose the {{ crumb.level }}">{% if names %}{{ names | join(", ") }}{% else %}All {{ crumb.level }}{% endif %} <span class="objects-crumb-arrow">▾</span></summary>
+        <div class="objects-filter-box">
+          <input type="search" class="objects-values-find" placeholder="Search the {{ crumb.level }}…" aria-label="Search the {{ crumb.level }}" autocomplete="off">
+          <div class="objects-values-head"><span>{{ crumb.options | length }} {{ crumb.level if crumb.options | length != 1 else crumb.level[:-1] }}</span>
+            <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
+            <button type="button" class="objects-values-apply">Apply</button></span></div>
+          <ul class="objects-values">{% for option in crumb.options %}
+            <li><label><input type="checkbox" name="{{ crumb.field }}" value="{{ option.path }}"{% if option.path in crumb.picked %} checked{% endif %}>
+              <span class="objects-value">{% if crumb.several_parents %}<span class="summary">{{ db_place(option.parent) }} › </span>{% endif %}{{ option.name }}</span>
+              <span class="count">({% for what in browse_counts[crumb.level] %}{{ "{:,}".format(option[what] or 0) }} {{ what }}{% if not loop.last %}, {% endif %}{% endfor %})</span></label></li>
+          {% endfor %}</ul>
+        </div>
+      </details>
+      {% if not loop.last %}<span class="sep">›</span>{% endif %}
+      {% else %}<b>All {{ crumb.level }}</b>{% endif %}
+      {% endfor %}
+    </nav>
+    {% else %}
+    {% if chosen.within and not chosen.database %}<input type="hidden" name="within" value="{{ chosen.within }}">{% endif %}
+    {% call ui.form_field("Database", "The database to list: its schemas and everything in them. All: every database read.", wide=False) %}
+    <select name="database"><option value="">All</option>{% for d in databases %}<option value="{{ d.path }}"{% if chosen.database == d.path %} selected{% endif %}>{{ d.parent | replace("db:", "") }} › {{ d.name }}</option>{% endfor %}</select>{% endcall %}
+    {% call ui.form_field("Schema", "The schema to list, within the database chosen. All: every schema.", wide=False) %}
+    <select name="schema"><option value="">All</option>{% for sc in schemas %}<option value="{{ sc.path }}"{% if chosen.schema == sc.path %} selected{% endif %}>{% if not chosen.database %}{{ db_place(sc.parent) }} › {% endif %}{{ sc.name }}</option>{% endfor %}</select>{% endcall %}
+    {% call ui.form_field("Kind", "Only objects of this kind: tables, views, columns, functions, triggers, sequences, types... All: every kind.", wide=False) %}
+    <select name="kind"><option value="">All</option>{% for k in object_kinds %}<option value="{{ k }}"{% if chosen.kind == k %} selected{% endif %}>{{ k }}</option>{% endfor %}</select>{% endcall %}
+    {% call ui.form_field("Name", "Only objects whose name holds this text, in any case.", extra="objects-name") %}
+    <input name="name" value="{{ chosen.name }}" autocomplete="off">{% endcall %}
+    {% endif %}
+  </form>
+  {% if not has_collections %}<p class="empty">No database read yet: allow a connection in Connections.</p>
+  {% else %}
+  {# The list fills the room left on the screen: its head stays while the rows scroll, the pages below.
+     Typing in a column's filter redraws only the rows, the count and the pages, so the field keeps the cursor. #}
+  {% macro cell(row, key) -%}
+  {%- set value = row[key] -%}
+  {%- if key == "name" -%}
+    {%- if row.down %}<a {{ ui.nav_url("/database?tab=objects&mode=browse&at=" ~ (row.path | urlencode)) }} title="Go into it"><code>{{ row.name }}</code></a>
+    {%- else %}<a href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}"><code>{{ row.name }}</code></a>{% endif -%}
+  {%- elif key == "page" -%}<a class="objects-page-link" href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}" title="Open its page" aria-label="Open the page of {{ row.name }}"><i class="bar-icon bar-icon-link"></i></a>
+  {%- elif value is none or value == "" or value == [] -%}-
+  {%- elif key == "marks" -%}{% for mark in value %}<span class="db-mark">{{ db_marks[mark] }}</span>{% endfor %}
+  {%- elif key == "size" -%}{{ value | size }}
+  {%- elif key == "read" -%}{{ value | local_time(seconds=True) }}
+  {%- elif key in ("type", "default") -%}<code>{{ value }}</code>
+  {%- elif key == "where" -%}<span class="summary">{{ value }}</span>
+  {%- elif value is number -%}{{ "{:,}".format(value) }}
+  {%- else -%}{{ value }}{%- endif -%}
+  {%- endmacro %}
+  <div class="objects-list">
+  <p id="objects-count" class="objects-count">
+    <span class="objects-chips"><b>Selected filters:</b>
+    {% for field, label, shown in in_use %}<span class="objects-chip">{{ label }}: <b>{{ shown }}</b>
+      <button type="button" aria-label="Remove the filter {{ label }}" title="Remove this filter" hx-get="/database" hx-include="#objects-filter, .objects-table thead"
+              hx-vals='{"{{ field }}": ""{% if field == "database" %}, "schema": ""{% endif %}}' hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-push-url="true">×</button></span>
+    {% else %}<span class="empty">none</span>{% endfor %}</span>
+    <span class="objects-total">{{ objects_total }} {% if mode == "browse" %}{{ level if objects_total != 1 else level[:-1] }}{% else %}object{% if objects_total != 1 %}s{% endif %}{% endif %}</span></p>
+  <div class="objects-scroll">
+  <table class="db-table objects-table" data-level="{{ level if mode == 'browse' else 'search' }}">
+    <colgroup>{% for c in list_columns %}<col class="col-{{ c.key }}">{% endfor %}</colgroup>
+    <thead hx-get="/database" hx-include="#objects-filter, closest thead" hx-trigger="filters-changed"
+           hx-target="#objects-rows" hx-select="#objects-rows" hx-select-oob="#objects-count,#objects-pages" hx-swap="outerHTML" hx-push-url="true">
+      {# Each title sorts by its column, up then down; × beside the arrow takes the order away (the list's
+         own order again); its right edge, dragged, sets its width.
+         Each column with a filter has its icon: a box listing every value of the column with how many rows
+         hold it, "(empty)" first, to tick one or more and Apply (static/live.js opens it under the icon, one at a
+         time, and fetches its counts again each time it opens); a filter in use lights its icon. #}
+      <tr>{% for c in list_columns %}
+        {% set next = "desc" if sort == c.key and direction != "desc" else "asc" %}
+        <th aria-sort="{% if sort == c.key %}{{ 'descending' if direction == 'desc' else 'ascending' }}{% else %}none{% endif %}"><span class="objects-head">
+          {% if c.key == "page" %}<span class="objects-sort">{{ c.title }}</span>{% else %}
+          <button type="button" class="objects-sort" hx-get="/database" hx-include="#objects-filter, closest thead" hx-vals='{"sort": "{{ c.key }}", "dir": "{{ next }}"}'
+                  hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume" title="Sort by {{ c.title | lower }}">{{ c.title }}
+            <span class="objects-arrow">{% if sort == c.key %}{{ "↓" if direction == "desc" else "↑" }}{% endif %}</span></button>
+          {% if sort == c.key %}{# back to the list's own order #}
+          <button type="button" class="objects-unsort" hx-get="/database" hx-include="#objects-filter, closest thead" hx-vals='{"sort": "", "dir": ""}'
+                  hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume"
+                  aria-label="Remove the order by {{ c.title | lower }}" title="Back to the list's own order">×</button>{% endif %}{% endif %}
+          {% if c.filter %}{% set picked = column_filters[c.key] %}
+          <details class="objects-column-filter{% if picked %} active{% endif %}">
+            <summary aria-label="Filter {{ c.title | lower }}" title="Filter {{ c.title | lower }}"><i class="bar-icon bar-icon-filters"></i></summary>
+            <div class="objects-filter-box" id="objects-values-{{ c.key }}" hx-get="/database" hx-include="#objects-filter, closest thead"
+                 hx-trigger="refresh-values" hx-target="this" hx-select="#objects-values-{{ c.key }}" hx-select-oob="unset" hx-swap="outerHTML" hx-push-url="false">
+              <input type="search" class="objects-values-find" placeholder="Search the values…" aria-label="Search the values of {{ c.title | lower }}" autocomplete="off">
+              <div class="objects-values-head"><span>{{ values[c.key] | length }} value{% if values[c.key] | length != 1 %}s{% endif %}</span>
+                <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
+                <button type="button" class="objects-values-apply">Apply</button></span></div>
+              <ul class="objects-values">{% for value, count in values[c.key] %}
+                <li><label><input type="checkbox" name="f_{{ c.key }}" value="{{ value }}"{% if value in picked %} checked{% endif %}>
+                  <span class="objects-value">{% if value == empty %}<i>(empty)</i>{% elif c.key == "size" %}{{ value | int | size }}{% elif c.key == "read" %}{{ value | local_time(seconds=True) }}{% elif c.key == "marks" %}{{ db_marks.get(value, value) }}{% else %}{{ value }}{% endif %}</span>
+                  <span class="count">({{ "{:,}".format(count) }})</span></label></li>
+              {% endfor %}</ul>
+            </div>
+          </details>
+          {% endif %}</span><span class="objects-resize" aria-hidden="true" title="Drag to change the width"></span></th>
+      {% endfor %}</tr>
+    </thead>
+    <tbody id="objects-rows">{% for row in objects %}
+      <tr>{% for c in list_columns %}<td>{{ cell(row, c.key) }}</td>{% endfor %}</tr>
+    {% else %}<tr><td colspan="{{ list_columns | length }}" class="empty">{% if in_use %}Nothing matches these filters.{% else %}Nothing here.{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
   </div>
-  {% endset %}
-  {% call ui.view_canvas("universe", "/graph/universe" if has_collections else "", filters=bar_filters, details=true,
-                         empty="" if has_collections else "No database read yet: allow a connection in Connections.") %}
-    <p class="hint">Nodes</p>
-    {% for kind in ("server", "database", "schema", "table", "view", "column") %}
-    <span><i class="universe-swatch" data-node="{{ kind }}"></i>{{ kind }}</span>
-    {% endfor %}
-    <span><i class="universe-swatch" data-node="outside"></i>outside the one opened</span>
-    <p class="hint">Relations (click to show)</p>
-    {% for kind, text in RELATIONS.items() %}
-    <span class="universe-relation">{{ ui.help_hover(kind, text) }}<button type="button" class="graph-kind universe-kind" data-kind="{{ kind }}" aria-pressed="false"><i class="universe-line" data-relation="{{ kind }}"></i>{{ kind }}</button></span>
-    {% endfor %}
-    <p class="hint">Column symbols</p>
-    {% for mark, text in (("pk", "primary key"), ("fk", "foreign key"), ("unique", "unique"), ("index", "indexed"), ("generated", "computed by the database"), ("notnull", "not null"), ("null", "null allowed")) %}
-    <span><img class="universe-mark" data-mark="{{ mark }}" alt="">{{ text }}</span>
-    {% endfor %}
-    <p class="hint">Click: go into it · double click, or Details › on hover: its details · the path above or ←: back · drag: the others follow</p>
-  {% endcall %}
+  <div id="objects-pages">
+  {% if objects_pages %}
+  <nav class="search-pagination" aria-label="Pages of the list">
+    <span class="range">{{ objects_pages.first }}–{{ objects_pages.last }} of {{ objects_pages.total }}</span>
+    <span class="pages">
+      {{ objects_page(objects_pages.previous, "‹", aria="Previous page") }}
+      {% for number in objects_pages.pages %}{% if number is none %}<span class="ellipsis">…</span>{% else %}{{ objects_page(number, number, current=number == objects_pages.current) }}{% endif %}{% endfor %}
+      {{ objects_page(objects_pages.next, "›", aria="Next page") }}
+    </span>
+  </nav>
+  {% endif %}
+  </div>
+  </div>
+  {% endif %}
   {% else %}
   <p class="tab-description">The databases your project declares, and those you enter. Declared ones stay blocked until you allow them; doctracker only ever reads: the session is read only where the database allows it, every transaction is rolled back, and any statement that is not a read is aborted before it is sent.</p>
   {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}

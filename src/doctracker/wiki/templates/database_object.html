@@ -1,0 +1,176 @@
+{% import "macros.html" as ui %}
+{# The page of an object of a database the server read (`item`, from CatalogStore.object): a server,
+   database, schema, table, view, column, function, trigger... Folding sections from the general to the
+   specific, those that apply to its kind; what later steps of DATABASE fill says "Data unavailable".
+   Names link to their own pages (in the consultation modal too, as the code's pages do). The Universe
+   opens in the page itself, in its own section, on this object; in the modal, its footer has Close,
+   Universe and Open the page, the only one that leaves for another screen. #}
+{% set kind = item.kind %}
+{% set data = item.data %}
+{% set tabular = kind in ("table", "view", "materialized view", "foreign table") %}
+{% macro link(path, name) -%}<a {{ ui.nav(path) }}>{{ name }}</a>{%- endmacro %}
+{% macro unavailable(reason) -%}<p class="empty">Data unavailable: {{ reason }}</p>{%- endmacro %}
+{% macro marks(found) -%}
+{% for mark in (found.marks or []) %}{% if mark != "null" %}<span class="db-mark" title="{{ db_marks[mark] }}">{{ db_marks[mark] }}</span>{% endif %}{% endfor %}
+{%- if found.nullable is defined and not found.nullable %}<span class="db-mark" title="not null">not null</span>{% endif %}
+{%- endmacro %}
+{% set drawn = kind in ("server", "database", "schema", "table", "view", "materialized view", "foreign table", "column") %}
+{% set table_list = "/database?tab=objects&mode=browse&at=" ~ (item.path | urlencode) %}
+
+<header class="page-header">
+  <p class="crumbs">
+    {% for path, name in item.crumbs %}<a {{ ui.nav(path) }}>{{ name }}</a><span class="sep">›</span>{% endfor %}
+  </p>
+  <h1>{{ ui.icon("database") }}<span class="name">{{ item.name }}</span><span class="kind">{{ kind }}</span></h1>
+  <p class="meta"><code class="path">{{ item.path }}</code>
+    {% if item.read %}<span class="location">read from the live database · {{ item.read | local_time(seconds=True) }}</span>{% endif %}</p>
+  {% set universe_button %}{% if drawn %}<button type="button" class="see-in-link" data-open-universe>{{ ui.icon("database") }}Universe</button>{% endif %}{% endset %}
+  {% if modal %}
+  <footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+    {{ universe_button }}
+    <a class="see-in-link" {{ ui.nav(item.path) }}><i class="bar-icon bar-icon-link"></i>Open the page</a>
+    <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
+  </footer>
+  {% elif drawn %}
+  <p class="see-in">See in {{ universe_button }}{% if kind in ("server", "database", "schema") or tabular %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Tables and columns</a>{% endif %}</p>
+  {% endif %}
+</header>
+
+{% call ui.section("description", "Description", divider=true) %}
+  {% if data.comment %}<p>{{ data.comment }}</p>{% else %}<p class="empty">The database holds no comment on it.</p>{% endif %}
+{% endcall %}
+
+{% if drawn %}
+{# The Universe opened on it, drawn only once its section opens (Universe in the header or the footer). #}
+{% call ui.section("class", "Universe", name="universe", divider=true, open=false) %}
+  <div class="graph-page universe-embed">{{ ui.universe_canvas(item.path, "") }}</div>
+{% endcall %}
+{% endif %}
+
+{% if kind in ("server", "database", "schema") %}
+{# What it holds, by kind, each a link. #}
+{% for group_kind, children in item.children | groupby("kind") %}
+{% call ui.section("attributes", group_kind ~ "s", count=children | length, name="holds-" ~ group_kind, divider=true) %}
+  <ul class="db-list">{% for child in children %}<li>{{ link(child.path, child.name) }}{% if child.data.comment %} <span class="summary">{{ child.data.comment }}</span>{% endif %}</li>{% endfor %}</ul>
+{% endcall %}
+{% endfor %}
+{% endif %}
+
+{% if tabular %}
+{% set columns = item.children | selectattr("kind", "equalto", "column") | list %}
+{% call ui.section("attributes", "Columns", count=columns | length, name="columns", divider=true) %}
+  {% if columns %}
+  <table class="db-table">
+    <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Marks</th><th>Comment</th></tr></thead>
+    <tbody>{% for column in columns %}
+      <tr><td><code>{{ link(column.path, column.name) }}</code></td><td><code>{{ column.data.type }}</code></td>
+        <td>{% if column.data.default %}<code>{{ column.data.default }}</code>{% elif column.data.computed %}<code>{{ column.data.computed }}</code> <span class="summary">computed</span>{% endif %}</td>
+        <td>{{ marks(column.data) }}</td><td>{{ column.data.comment or "" }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="empty">No columns read.</p>{% endif %}
+{% endcall %}
+
+{% if kind != "view" and kind != "materialized view" %}
+{% call ui.section("attributes", "Keys and constraints", name="keys", divider=true) %}
+  <dl class="db-facts">
+    <dt>Primary key</dt><dd>{% if data.primary_key %}<code>{{ data.primary_key.columns | join(", ") }}</code>{% if data.primary_key.name %} <span class="summary">{{ data.primary_key.name }}</span>{% endif %}{% else %}none{% endif %}</dd>
+    {% for key in data.foreign_keys or [] %}
+    <dt>Foreign key</dt><dd><code>{{ key.columns | join(", ") }}</code> → {{ link(key.target, db_place(key.target)) }} <code>({{ key.target_columns | join(", ") }})</code>
+      {% for option, value in key.options.items() %} <span class="summary">{{ option | replace("on", "ON ") | upper }} {{ value }}</span>{% endfor %}{% if key.name %} <span class="summary">{{ key.name }}</span>{% endif %}</dd>
+    {% endfor %}
+    {% for unique in data.unique or [] %}<dt>Unique</dt><dd><code>{{ unique.columns | join(", ") }}</code>{% if unique.name %} <span class="summary">{{ unique.name }}</span>{% endif %}</dd>{% endfor %}
+    {% for check in data.checks or [] %}<dt>Check</dt><dd><code>{{ check.check }}</code>{% if check.name %} <span class="summary">{{ check.name }}</span>{% endif %}</dd>{% endfor %}
+  </dl>
+{% endcall %}
+
+{% call ui.section("attributes", "Indexes", count=(data.indexes or []) | length, name="indexes", divider=true) %}
+  {% if data.indexes %}
+  <ul class="db-list">{% for index in data.indexes %}<li><code>{{ index.name }}</code> on <code>{{ (index.columns + index.expressions) | join(", ") }}</code>{% if index.unique %} <span class="db-mark">unique</span>{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">No indexes.</p>{% endif %}
+{% endcall %}
+{% endif %}
+{% endif %}
+
+{% if kind == "column" %}
+{% call ui.section("attributes", "Type and constraints", name="type", divider=true) %}
+  <dl class="db-facts">
+    <dt>Type</dt><dd><code>{{ data.type }}</code></dd>
+    <dt>Null</dt><dd>{% if data.nullable %}allowed{% else %}not null{% endif %}</dd>
+    {% if data.default %}<dt>Default</dt><dd><code>{{ data.default }}</code></dd>{% endif %}
+    {% if data.computed %}<dt>Computed</dt><dd><code>{{ data.computed }}</code></dd>{% endif %}
+    {% if data.identity %}<dt>Identity</dt><dd>its values are generated by the database</dd>{% endif %}
+    <dt>Marks</dt><dd>{{ marks(data) or "none" }}</dd>
+    {% if data.position %}<dt>Position</dt><dd>{{ data.position }}</dd>{% endif %}
+  </dl>
+{% endcall %}
+{% endif %}
+
+{% if kind not in ("server", "database", "schema", "table", "view", "materialized view", "foreign table", "column") %}
+{# A function, procedure, trigger, sequence, type, synonym...: what was read of it. #}
+{% call ui.section("attributes", "Properties", name="properties", divider=true) %}
+  <dl class="db-facts">{% for key, value in data.items() if key not in ("comment", "definition") %}
+    <dt>{{ key | replace("_", " ") }}</dt><dd>{% if value is string and value.startswith("db:") %}{{ link(value, db_place(value)) }}{% elif value is sequence and value is not string %}<code>{{ value | join(", ") }}</code>{% else %}<code>{{ value }}</code>{% endif %}</dd>
+  {% else %}<dt></dt><dd class="empty">Nothing else was read of it.</dd>{% endfor %}</dl>
+{% endcall %}
+{% endif %}
+
+{% if kind not in ("server", "database", "schema") %}
+{% call ui.section("class", "Relations", count=item.relations | length, name="relations", divider=true) %}
+  {% for group in item.groups %}
+  <h4>{{ group.kind }} {% if group.direction == "out" %}→{% else %}←{% endif %} <span class="count">{{ group["items"] | length }}</span></h4>
+  <ul class="db-list">{% for relation in group["items"] %}
+    <li>{{ link(relation.source.path, relation.source.place) }} → {{ link(relation.target.path, relation.target.place) }}</li>
+  {% endfor %}</ul>
+  {% else %}<p class="empty">No relations read.</p>
+  {% endfor %}
+{% endcall %}
+{% endif %}
+
+{% if tabular %}
+{% set triggers = item.children | selectattr("kind", "equalto", "trigger") | list %}
+{% call ui.section("function", "Behaviour", count=triggers | length, name="behaviour", divider=true) %}
+  {% if triggers %}
+  <ul class="db-list">{% for trigger in triggers %}<li>{{ link(trigger.path, trigger.name) }}{% if trigger.data.function %} calls {{ link(trigger.data.function, db_place(trigger.data.function)) }}{% endif %}
+    {% if trigger.data.definition %}<pre class="code-block"><code>{{ trigger.data.definition }}</code></pre>{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="empty">No triggers.</p>{% endif %}
+  {{ unavailable("rules, row security policies and grants are not read yet.") }}
+{% endcall %}
+
+{% call ui.section("attributes", "Physical structure", name="physical", divider=true) %}
+  <dl class="db-facts">
+    {% if data.partition_of %}<dt>Partition of</dt><dd>{{ link(data.partition_of, db_place(data.partition_of)) }}{% if data.partition_bound %} <code>{{ data.partition_bound }}</code>{% endif %}</dd>{% endif %}
+    {% if data.inherits %}<dt>Inherits</dt><dd>{{ link(data.inherits, db_place(data.inherits)) }}</dd>{% endif %}
+    {% if data.partitioning %}<dt>Partitioned by</dt><dd><code>{{ data.partitioning }}</code></dd>{% endif %}
+    {% for part in data.partitions or [] %}<dt>Partition</dt><dd><code>{{ part.name }}</code> {{ part.bound or "" }}</dd>{% endfor %}
+    {% if data.foreign_target %}<dt>Stands for</dt><dd>{{ link(data.foreign_target, db_place(data.foreign_target)) }} <span class="summary">through {{ data.foreign_server }}</span></dd>{% endif %}
+  </dl>
+  {{ unavailable("tablespace, unlogged and temporal settings are not read yet.") }}
+{% endcall %}
+
+{% call ui.section("attributes", "Numbers", name="numbers", divider=true) %}
+  {% set found = namespace(reason="") %}
+  {% for entry in item.unavailable if "row estimates" in entry.what %}{% set found.reason = entry.reason %}{% endfor %}
+  {% set reason = found.reason %}
+  <dl class="db-facts">
+    <dt>Rows (estimate)</dt><dd>{% if data.rows is defined %}{{ "{:,}".format(data.rows) }}{% else %}<span class="empty">Data unavailable{% if reason %}: {{ reason }}{% endif %}</span>{% endif %}</dd>
+    <dt>Size</dt><dd>{% if data.bytes is defined %}{{ data.bytes | size }}{% else %}<span class="empty">Data unavailable{% if reason %}: {{ reason }}{% endif %}</span>{% endif %}</dd>
+  </dl>
+{% endcall %}
+{% endif %}
+
+{% if tabular or kind in ("function", "procedure", "aggregate", "trigger") %}
+{% call ui.section("source", "Definition", name="definition", divider=true) %}
+  {% if data.definition %}<pre class="code-block"><code>{{ data.definition }}</code></pre>
+  {% else %}{{ unavailable("the definition comes from the project's SQL files and migrations (a later step).") }}{% endif %}
+{% endcall %}
+{% endif %}
+
+{% if tabular or kind == "column" %}
+{% if kind == "column" %}
+{% call ui.section("warns", "Samples and profile", name="samples", divider=true) %}{{ unavailable("samples and profiles of the values come in a later step.") }}{% endcall %}
+{% endif %}
+{% call ui.section("warns", "Use in the code", name="code-use", divider=true) %}{{ unavailable("the links to the code that uses it come in a later step.") }}{% endcall %}
+{% if tabular %}{% call ui.section("warns", "Lint", name="lint", divider=true) %}{{ unavailable("the lint comes in a later step.") }}{% endcall %}{% endif %}
+{% call ui.section("warns", "History", name="history", divider=true) %}{{ unavailable("the history from migrations and commits comes in a later step.") }}{% endcall %}
+{% endif %}

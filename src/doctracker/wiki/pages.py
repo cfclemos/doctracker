@@ -1,6 +1,7 @@
 """Turn extracted entities into the data the wiki templates display."""
 
 import re
+from urllib.parse import quote
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
@@ -1012,3 +1013,180 @@ def dead_code_view(state: DocState, params: dict, languages: set[str] | None = N
 def dead_code_of(state: DocState, path: str) -> dict | None:
     """The dead code finding about an entity, for the badge on its page; None when there is none."""
     return next((row for row in state.dead_code if row["path"] == path), None)
+
+
+# --- Database objects (DATABASE): their pages and the Tables and columns list.
+
+DB_MARKS = {"pk": "primary key", "fk": "foreign key", "unique": "unique", "index": "indexed",
+            "generated": "computed by the database", "null": "null allowed"}
+"""The marks of a column, as the pages name them (no `null` mark: not null)."""
+
+
+def db_place(path: str) -> str:
+    """Where a database object is, without its server: `database/schema.table.column` (a server: its address)."""
+    parts = path.removeprefix("db:").split("/", 1)
+    return parts[1] if len(parts) > 1 else parts[0]
+
+
+def db_crumbs(path: str) -> list[tuple[str, str]]:
+    """What a database object sits in, as `(path, name)`, outermost first: its server, database, schema,
+    and the table holding a column or a trigger."""
+    server, *rest = path.removeprefix("db:").split("/")
+    crumbs, current = [], f"db:{server}"
+    if rest:
+        crumbs.append((current, server))
+    for part in rest[:-1]:
+        current = f"{current}/{part}"
+        crumbs.append((current, part))
+    if len(rest) == 2:  # inside a schema: the schema, then the table of a column or a trigger
+        holder, _, _trigger = rest[-1].partition(":")
+        names = holder.split(".")
+        if _trigger:
+            names.append("")
+        for depth in range(1, len(names)):
+            crumbs.append((f"{current}/{'.'.join(names[:depth])}", names[depth - 1]))
+    return crumbs
+
+
+def db_relation_groups(found: dict) -> list[dict]:
+    """A database object's relations, grouped by kind and direction, for its page.
+
+    Args:
+        found: What `CatalogStore.object` gives.
+
+    Returns:
+        Each group's `kind`, `direction` (`out`: from the object or what it holds; `in`: towards it) and
+        `items`: `source` and `target` (path, `name` and `place` of each end), in the order read.
+    """
+    path = found["path"]
+    mine = lambda end: end == path or end.startswith((f"{path}.", f"{path}:"))  # noqa: E731
+    end = lambda p: {"path": p, "name": found["ends"].get(p, {}).get("name", p.rsplit(".", 1)[-1]), "place": db_place(p)}  # noqa: E731
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for relation in found["relations"]:
+        direction = "out" if mine(relation["source"]) else "in"
+        groups.setdefault((relation["kind"], direction), []).append(
+            {"source": end(relation["source"]), "target": end(relation["target"])})
+    return [{"kind": kind, "direction": direction, "items": items} for (kind, direction), items in groups.items()]
+
+
+def size_text(size: int | None) -> str:
+    """A size in bytes, readable: `812 B`, `24 kB`, `3.1 MB`, `1.2 GB`."""
+    if size is None:
+        return ""
+    for unit in ("B", "kB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit in ("B", "kB") else f"{size:.1f} {unit}"
+        size /= 1024
+    return ""
+
+
+def _list_columns(*columns: tuple[str, str, str]) -> list[dict]:
+    """The columns of a level of the Tables and columns list, with the page icon's own column right after
+    Rows (or, without Rows, before Comment; else last)."""
+    found = [{"key": key, "title": title, "filter": kind} for key, title, kind in columns]
+    keys = [column["key"] for column in found]
+    at = keys.index("rows") + 1 if "rows" in keys else keys.index("comment") if "comment" in keys else len(found)
+    found.insert(at, {"key": "page", "title": "Page", "filter": ""})
+    return found
+
+
+LIST_COLUMNS = {
+    "servers": _list_columns(("name", "Server", "text"), ("databases", "Databases", "number"), ("read", "Read", "text")),
+    "databases": _list_columns(("name", "Database", "text"), ("schemas", "Schemas", "number"), ("tables", "Tables", "number"),
+                               ("views", "Views", "number"), ("comment", "Comment", "text")),
+    "schemas": _list_columns(("name", "Schema", "text"), ("tables", "Tables", "number"), ("views", "Views", "number"),
+                             ("functions", "Functions", "number"), ("comment", "Comment", "text")),
+    "tables": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("columns", "Columns", "number"),
+                            ("rows", "Rows", "number"), ("size", "Size", "number"), ("comment", "Comment", "text")),
+    "columns": _list_columns(("name", "Column", "text"), ("type", "Type", "text"), ("null", "Null", "choice"),
+                             ("default", "Default", "text"), ("marks", "Marks", "choice"), ("comment", "Comment", "text")),
+    "search": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("where", "Where", "text"),
+                            ("rows", "Rows", "number"), ("comment", "Comment", "text")),
+}
+"""The columns of each level of DATABASE › Tables and columns (and of its Search): key, title, and whether
+it has a filter (any value: the filter lists its values to choose from; empty: none)."""
+
+
+EMPTY = "__empty__"
+"""The value a column filter gives to its empty cells (listed first, as "(empty)")."""
+
+
+def cell_values(row: dict, key: str) -> list[str]:
+    """The values a cell holds for its column's filter: each mark of a list, else its value; `EMPTY` when none."""
+    value = row.get(key)
+    if value is None or value == "" or value == []:
+        return [EMPTY]
+    return [str(item) for item in value] if isinstance(value, list) else [str(value)]
+
+
+def _passes(row: dict, chosen: dict[str, list[str]], but: str = "") -> bool:
+    """Whether a row holds one of the values chosen in every column's filter (except `but`'s)."""
+    return all(set(cell_values(row, key)) & set(values) for key, values in chosen.items() if values and key != but)
+
+
+def filter_rows(rows: list[dict], columns: list[dict], chosen: dict[str, list[str]]) -> tuple[list[dict], list[tuple[str, str, str]]]:
+    """Keep the rows holding, in every filtered column, one of the values chosen in its filter.
+
+    Args:
+        rows: The rows of the list.
+        columns: Its columns (`LIST_COLUMNS`).
+        chosen: By column key, the values chosen in its filter (`EMPTY` for the empty cells).
+
+    Returns:
+        The rows kept, and the filters in use as `(field, label, shown)` for the badges.
+    """
+    chosen = {key: [value for value in values if value] for key, values in chosen.items()}
+    titles = {column["key"]: column["title"] for column in columns if column["filter"]}
+    in_use = [(f"f_{key}", titles[key], ", ".join("(empty)" if value == EMPTY else value for value in values))
+              for key, values in chosen.items() if values and key in titles]
+    return [row for row in rows if _passes(row, {k: v for k, v in chosen.items() if k in titles})], in_use
+
+
+def filter_values(rows: list[dict], columns: list[dict], chosen: dict[str, list[str]]) -> dict[str, list[tuple[str, int]]]:
+    """Every value of each filtered column, with how many rows hold it, for its filter's list.
+
+    A column's values are counted on the rows the other columns' filters let through (its own choice
+    does not hide its other values); the empty cells come first, then the values in order.
+
+    Returns:
+        By column key, `(value, count)` pairs.
+    """
+    chosen = {key: [value for value in values if value] for key, values in chosen.items()}
+    found = {}
+    for column in columns:
+        if not column["filter"]:
+            continue
+        counts: dict[str, int] = {}
+        for row in rows:
+            if _passes(row, chosen, but=column["key"]):
+                for value in set(cell_values(row, column["key"])):
+                    counts[value] = counts.get(value, 0) + 1
+        found[column["key"]] = sorted(counts.items(), key=lambda pair: (pair[0] != EMPTY, sort_key(_number(pair[0]))))
+    return found
+
+
+def _number(text: str):
+    """A value as a number when it is one (so 9 sorts before 10), else as it is."""
+    return int(text) if text.lstrip("-").isdigit() else text
+
+
+def sort_key(value) -> tuple:
+    """What a cell sorts by: numbers before text, empty cells first."""
+    if value is None or value == "" or value == []:
+        return (0, 0, "")
+    if isinstance(value, (int, float)):
+        return (1, value, "")
+    return (2, 0, " ".join(value).lower() if isinstance(value, list) else str(value).lower())
+
+
+BROWSE_FIELDS = {"servers": "s", "databases": "d", "schemas": "c", "tables": "t"}
+"""The levels of Browse's path, and the address field of what is ticked in each (several each)."""
+
+BROWSE_COUNTS = {"servers": ("databases",), "databases": ("schemas",), "schemas": ("tables", "views"), "tables": ("columns",)}
+"""What an option of each level of the path counts (what it holds one level down)."""
+
+
+def browse_url(picked: dict[str, list[str]]) -> str:
+    """The address of Browse with these ticks in its path (levels missing: nothing ticked)."""
+    query = [("tab", "objects"), ("mode", "browse")] + [(BROWSE_FIELDS[level], path) for level, paths in picked.items() for path in paths]
+    return "/database?" + "&".join(f"{key}={quote(value, safe='')}" for key, value in query)

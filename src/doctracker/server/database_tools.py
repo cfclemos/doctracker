@@ -89,20 +89,42 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
 
     @mcp.tool()
     @refusals_reported
-    def database_objects(connection_id: str = "", kind: str = "", schema: str = "") -> list[dict]:
+    def database_objects(connection_id: str = "", kind: str = "", schema: str = "", within: str = "",
+                         name: str = "") -> list[dict]:
         """List the objects of the databases as last read: every connection's, or one's.
 
         Args:
             connection_id: Only this connection's; empty for all.
             kind: Only this kind: `schema`, `table`, `view`, `materialized view`, `foreign table`, `column`,
                 `sequence`, `enum`, `domain`, `function`, `procedure`, `aggregate`, `trigger`, `synonym`.
-            schema: Only what is inside this schema.
+            schema: Only what is inside a schema of this name.
+            within: Only what is inside this server, database or schema, by its path
+                (`db:<server>`, `db:<server>/<database>`, `db:<server>/<database>/<schema>`).
+            name: Only the objects whose name holds this text.
 
         Returns:
             Each object's `path` (`db:<server>/<database>/<schema>.<name>`), `kind`, `parent`, `name`,
             `connection` and `data` (type, comment, keys, indexes, row estimate... as it applies).
         """
-        return catalog.objects(connection_id, kind, schema)
+        return catalog.objects(connection_id, kind, schema, within, name)
+
+    @mcp.tool()
+    @refusals_reported
+    def database_level(at: str = "") -> dict:
+        """Browse the databases as last read, one level of the SQL tree at a time (as the wiki's Tables and columns).
+
+        Args:
+            at: Empty for the servers; then a server's path for its databases, a database's for its
+                schemas, a schema's for its tables and views, a table's or view's for its columns
+                (the `path` of a row of the level above).
+
+        Returns:
+            `at`, `level` (servers, databases, schemas, tables, columns) and `rows`, each with its `path`,
+            `name`, what that level counts or shows of it (databases, schemas, tables, views,
+            functions, columns, rows, size, type, null, default, marks, comment...) and `down` (it
+            holds a next level).
+        """
+        return catalog.level(at)
 
     @mcp.tool()
     @refusals_reported
@@ -113,8 +135,10 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             path: The object's path, from `database_objects` or a search.
 
         Returns:
-            The object (see `database_objects`) with `children` (path and kind) and `relations`
-            (`source`, `target`, `kind`; both directions).
+            The object (see `database_objects`) with `children` (path, kind, name, data), `relations`
+            (`source`, `target`, `kind`; both directions, a table's with its columns' and triggers'),
+            `ends` (kind, name, parent of each object they reach), `read` (when its database was read)
+            and `unavailable` (what could not be read of its database, and why).
         """
         found = catalog.object(path)
         if found is None:
