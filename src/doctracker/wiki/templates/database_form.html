@@ -15,7 +15,7 @@
   "Port": "The database server's port. Empty: the kind's usual one (PostgreSQL 5432, MySQL 3306, SQL Server 1433, Oracle 1521). May be ${VARIABLE}.",
   "Server": "Address and port of the database server. Any value may be ${VARIABLE} or ${VARIABLE:-default}, read from the environment and the project's .env files when connecting.",
   "File": "The SQLite file, from the project's root. It is opened read only.",
-  "Database": "Name of the database on the server. Empty: the user's default database.",
+  "Database": "Name of the database on the server. Empty: every database the user can see on the server is read (each one doctracker can connect to).",
   "User": "The user doctracker connects as. A read-only user is best; whatever the user may do, doctracker only reads. May be ${VARIABLE}.",
   "Password": "The user's password. Typed here, it is saved encrypted in doc/connections/ (out of git), the key kept in your system's vault; or write ${VARIABLE} to take it from an environment variable. Never shown afterwards: once saved, empty keeps it. Not asked with AWS RDS IAM, whose token takes its place.",
   "SSH host": "An SSH server to go through: doctracker logs in to it and reaches the database from there. Empty: no tunnel, straight to the database.",
@@ -30,7 +30,7 @@
   "SSH": "An SSH server the connection goes through: doctracker logs in to it, with a key or a password, and reaches the database from there. A jump host is reached first. With ~/.ssh/config, what is not typed comes from your SSH settings.",
   "URL in": "The environment variable holding the whole connection URL, read when connecting.",
   "From": "Where the connection is declared (file and line), or that it was entered here.",
-  "Database read": "What doctracker read from the database's catalog, read only: every schema of the connection's database, with its tables, views, columns, keys, indexes, functions, triggers, comments and statistics, and the relations between them. Read by itself while the connection is allowed (when allowed, when doctracker starts, and every minute); Refresh reads it again now. Only this last reading is kept. What could not be read (permissions, statistics never gathered) is listed, never guessed. Other databases on the same server are only named: add a connection to one to read it.",
+  "Database read": "What doctracker read from the database's catalog, read only: every schema of the connection's database, with its tables, views, columns, keys, indexes, functions, triggers, comments and statistics, and the relations between them. Read by itself while the connection is allowed (when allowed, when doctracker starts, and every minute); Refresh reads it again now. Only this last reading is kept. What could not be read (permissions, statistics never gathered) is listed, never guessed. With no database named, every database on the server is read; with one named, the others on the same server are only listed.",
   "Last test": "The last test, read only: connect, read the server's version, try a write that must be aborted before it reaches the database; with when it ran and how long it took.",
 } %}
 {# A name in the details (not a form), with the ? explaining it. #}
@@ -116,7 +116,7 @@
     {% else %}
     {% if k.failure %}<span class="failed">Reading it again failed: {{ k.failure.error }} · {{ k.failure.started | local_time(seconds=True) }}</span>{% if k.started %}<br>Shown: the reading before.{% endif %}{% endif %}
     {% if k.started %}
-    <code>{{ k.database }}</code> on <code>{{ k.server }}</code> · {{ k.started | local_time(seconds=True) }} <small>({{ k.seconds }} s)</small>
+    {% if k.database %}<code>{{ k.database }}</code>{% else %}every database{% endif %} on <code>{{ k.server }}</code> · {{ k.started | local_time(seconds=True) }} <small>({{ k.seconds }} s)</small>
     <ul>
       <li><b>Objects</b>: {% for kind, n in k.counts.objects | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% endfor %}</li>
       <li><b>Relations</b>: {% for kind, n in k.counts.relations | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% else %}none{% endfor %}</li>

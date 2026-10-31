@@ -1,6 +1,8 @@
 """Read what a live database holds from its catalog, read only, in a process apart from the server.
 
-A collection reads the connection's own database, every schema of it: tables, views, materialized
+A collection reads the connection's database, every schema of it; a connection that names no
+database reads every database the user can see on the server (PostgreSQL, SQL Server; MySQL's
+databases are its schemas), each one through a connection of its own. What is read of each: tables, views, materialized
 views, foreign tables, columns (type, null, default, comment and the marks primary key, foreign key,
 unique, indexed, null allowed, computed), keys, constraints, indexes, sequences, types, functions,
 procedures and triggers, the comments of each, and per table the row estimate and the size kept by
@@ -46,9 +48,13 @@ SYSTEM_SCHEMAS = {"information_schema", "pg_catalog", "pg_toast", "sys", "guest"
                   "performance_schema", "mysql"}
 """Schemas of the database itself, never collected (with `pg_*` and SQL Server's `db_*` roles)."""
 
-SYSTEM_DATABASES = {"postgres", "template0", "template1", "master", "tempdb", "model", "msdb", "mysql",
+SYSTEM_DATABASES = {"template0", "template1", "master", "tempdb", "model", "msdb", "mysql",
                     "information_schema", "performance_schema", "sys"}
-"""Databases of the server itself, left out of the other databases listed."""
+"""Databases of the server itself, never read nor listed."""
+
+_FIRST_DATABASE = {"postgresql": "postgres"}
+"""The database to list the others from when the connection names none (PostgreSQL would otherwise
+choose the one named like the user, which may not exist)."""
 
 _CURRENT = {"postgresql": "SELECT current_database()", "mysql": "SELECT database()", "mssql": "SELECT db_name()",
             "oracle": "SELECT sys_context('USERENV', 'DB_NAME') FROM dual"}
@@ -142,7 +148,8 @@ class _Collection:
     """What one collection has read so far: objects by path, relations, what was unavailable.
 
     Attributes:
-        base: The database's path, `db:<server>/<database>`.
+        base: The path of the database being read, `db:<server>/<database>`.
+        prefix: Put before what could not be read, when several databases are read (their name).
         objects: Objects by path: `path`, `kind`, `parent`, `name` and `data`.
         relations: `source`, `target` and `kind` of each relation.
         unavailable: `what` could not be read, and the `reason`.
@@ -150,6 +157,7 @@ class _Collection:
 
     def __init__(self, base: str) -> None:
         self.base = base
+        self.prefix = ""
         self.objects: dict[str, dict] = {}
         self.relations: list[dict] = []
         self.unavailable: list[dict] = []
@@ -175,12 +183,12 @@ class _Collection:
         except NotImplementedError:  # the database has no such thing (SQLite's comments): nothing to read
             connection.rollback()
         except Exception as failed:  # a permission or a catalog the database lacks: the rest is still read
-            self.unavailable.append({"what": what, "reason": _message(failed)})
+            self.unavailable.append({"what": f"{self.prefix}: {what}" if self.prefix else what, "reason": _message(failed)})
             connection.rollback()
 
 
 def collect(spec: dict) -> dict:
-    """Read the catalog of a connection's database.
+    """Read the catalog of a connection's database, or of every database on its server when it names none.
 
     Runs in a process apart (see `run_collect`), on a read-only engine; the transaction is rolled back.
 
@@ -188,9 +196,10 @@ def collect(spec: dict) -> dict:
         spec: The resolved connection (see `readonly.open_engine`), with `ssh` when it goes through a tunnel.
 
     Returns:
-        `ok`, `error`, `version`, `kind`, `server`, `database`, `started` (ISO 8601, UTC), `seconds`,
-        `databases` (the other databases on the server), `objects` (path, kind, parent, name, data),
-        `relations` (source, target, kind) and `unavailable` (what, reason).
+        `ok`, `error`, `version`, `kind`, `server`, `database` (empty when every database was read),
+        `started` (ISO 8601, UTC), `seconds`, `databases` (the other databases on the server, not read),
+        `objects` (path, kind, parent, name, data), `relations` (source, target, kind) and
+        `unavailable` (what, reason).
     """
     began = time.monotonic()
     warnings.filterwarnings("ignore", message="Did not recognize type")  # completed by our own queries
@@ -199,31 +208,51 @@ def collect(spec: dict) -> dict:
     result = {"ok": False, "error": "", "version": "", "kind": kind, "server": server_name(spec), "database": "",
               "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "databases": [],
               "objects": [], "relations": [], "unavailable": []}
+    everything = not spec.get("database") and kind in _DATABASES
+    first = {**spec, "database": _FIRST_DATABASE.get(kind, "")} if everything else spec
+    found = _Collection(f"db:{result['server']}")
     try:
-        with opened(spec) as (engine, _tunnel), engine.connect() as connection:
+        with opened(first) as (engine, _tunnel), engine.connect() as connection:
             result["version"] = str(connection.execute(text(_CHECKS[kind][0])).scalar() or "").splitlines()[0][:160]
             if kind == "sqlite":
                 database = Path(spec["host"]).name
             else:
                 database = str(connection.execute(text(_CURRENT[kind])).scalar() or spec.get("database") or "")
-            result["database"] = database
-            found = _Collection(f"db:{result['server']}/{database}")
-            found.add(found.base, "database", f"db:{result['server']}", database)
+            names: list[str] = []
             if kind in _DATABASES:
-                def others() -> None:
-                    names = [row[0] for row in connection.execute(text(_DATABASES[kind]))]
-                    result["databases"] = sorted(n for n in names if n != database and n not in SYSTEM_DATABASES)
-                found.attempt("other databases on the server", connection, others)
-            _read_structure(found, connection, kind, database)
-            _read_catalog(found, connection, kind)
-            _implied(found)
+                def listed() -> None:
+                    names.extend(sorted(row[0] for row in connection.execute(text(_DATABASES[kind]))
+                                        if row[0] and row[0] not in SYSTEM_DATABASES))
+                found.attempt("databases on the server", connection, listed)
+            if not everything:
+                result["database"] = database
+                result["databases"] = [name for name in names if name != database]
+                _read_database(found, connection, kind, database)
             connection.rollback()
+        for name in names if everything else []:
+            found.prefix = name
+            try:
+                with opened({**spec, "database": name}) as (engine, _tunnel), engine.connect() as connection:
+                    _read_database(found, connection, kind, name)
+                    connection.rollback()
+            except Exception as failed:  # a database the user may not connect to: the others are still read
+                found.unavailable.append({"what": f"database {name}", "reason": _message(failed)})
+        _implied(found)
         result.update(ok=True, objects=list(found.objects.values()), relations=found.relations,
                       unavailable=found.unavailable)
     except Exception as failed:  # any driver's or SSH error is reported to the user as it is
         result["error"] = _message(failed)
     result["seconds"] = round(time.monotonic() - began, 2)
     return result
+
+
+def _read_database(found: _Collection, connection: Connection, kind: str, database: str) -> None:
+    """Read one database: the database itself, its schemas and everything in them."""
+    server = found.base.split("/")[0]
+    found.base = f"{server}/{database}"
+    found.add(found.base, "database", server, database)
+    _read_structure(found, connection, kind, database)
+    _read_catalog(found, connection, kind)
 
 
 def _schemas(inspector: Inspector, kind: str, database: str) -> list[str]:
@@ -432,11 +461,12 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
                "synonyms": synonyms, "column types": column_types, "statistics": statistics}
     for name in queries:
         found.attempt(name, connection, readers[name])
-    tables = [o for o in found.objects.values() if o["kind"] in ("table", "materialized view")]
+    tables = [o for o in found.objects.values() if o["kind"] in ("table", "materialized view") and o["path"].startswith(found.base + "/")]
     if "statistics" not in queries:
-        found.unavailable.append({"what": "row estimates and sizes", "reason": "This database keeps no statistics of its tables."})
+        found.unavailable.append({"what": f"{found.prefix}: row estimates and sizes" if found.prefix else "row estimates and sizes",
+                                  "reason": "This database keeps no statistics of its tables."})
     elif missing := [o["path"] for o in tables if "rows" not in o["data"]]:
-        found.unavailable.append({"what": f"row estimates of {len(missing)} tables",
+        found.unavailable.append({"what": f"{found.prefix + ': ' if found.prefix else ''}row estimates of {len(missing)} tables",
                                   "reason": "The database has not gathered statistics of them yet (it needs ANALYZE)."})
 
 
@@ -453,9 +483,9 @@ def _implied(found: _Collection) -> None:
         name = obj["name"].lower()
         if obj["kind"] != "column" or not name.endswith("_id") or obj["path"] in declared:
             continue
-        base = name[:-3]
+        base, database = name[:-3], "/".join(obj["path"].split("/")[:2]) + "/"
         for target in keys[base] + keys[base + "s"] + keys[base + "es"]:
-            if not target.startswith(obj["parent"] + "."):
+            if target.startswith(database) and not target.startswith(obj["parent"] + "."):
                 found.relate(obj["path"], target, "implied")
 
 

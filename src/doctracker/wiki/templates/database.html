@@ -1,7 +1,8 @@
 {% import "macros.html" as ui %}
-{# DATABASE: the project's databases. For now its one tab, Connections: what the project declares
-   (blocked until allowed) and what the user enters; every form posts to /database/<action>, the same
-   store the MCP tools use, and the page comes back redrawn. The notes' buttons and modal are reused. #}
+{# DATABASE: the project's databases. Connections: what the project declares (blocked until allowed)
+   and what the user enters; every form posts to /database/<action>, the same store the MCP tools use,
+   and the page comes back redrawn; the notes' buttons and modal are reused. Universe: the databases the
+   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. #}
 {# A connection's card: its name and state, kind and server; a click on it opens the rest in the consultation modal.
    Its colour, on the pill and the side, tells the state: green allowed, red blocked; sent again out of band
    after a change made in its details. #}
@@ -20,9 +21,44 @@
 hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}
 
-<div class="notes-page database-page">
+{# What each kind of relation of the Universe is: the legend's ? beside each. #}
+{% set RELATIONS = {
+  "foreign key": "A column declared to hold a value of another table's key (its primary key or a unique column): the database refuses a value that is not there. The line goes from the column to the column it refers to.",
+  "implied": "A column named <name>_id with no foreign key declared, linked by its name to the one-column primary key of a table <name>, <name>s or <name>es in the same database. A guess from the names: the database enforces nothing.",
+  "view reads": "A view or materialized view reads from this table or view, as the database's own catalog records it (for SQLite, read from the view's SQL).",
+  "foreign table": "A table that stands for a table of another database (PostgreSQL's postgres_fdw): reading it reads the other one. Linked when that database is read too.",
+} %}
+<div class="{% if tab == 'universe' %}graph-page{% else %}notes-page{% endif %} database-page">
   {{ ui.view_header("database", "DATABASE", "") }}
-  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"),), tab) }}
+  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe")), tab) }}
+  {% if tab == "universe" %}
+  <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
+  {% set bar_filters %}
+  <div class="graph-toolbar filters-line universe-filters">
+    {% call ui.form_field("Depth", "How many steps of the chosen relations are followed from what is opened: 1 shows only what it links to directly.", wide=False) %}
+    <select name="depth">{% for step in range(1, 6) %}<option value="{{ step }}">{{ step }}</option>{% endfor %}</select>{% endcall %}
+    {% call ui.form_field("Outside", "Also show the nodes outside the one opened that its relations reach (only those, never the rest of their container), drawn lighter.", wide=False) %}
+    <span class="field-check"><input type="checkbox" name="others"> <span class="universe-others">other schemas</span></span>{% endcall %}
+  </div>
+  {% endset %}
+  {% call ui.view_canvas("universe", "/graph/universe" if has_collections else "", filters=bar_filters, details=true,
+                         empty="" if has_collections else "No database read yet: allow a connection in Connections.") %}
+    <p class="hint">Nodes</p>
+    {% for kind in ("server", "database", "schema", "table", "view", "column") %}
+    <span><i class="universe-swatch" data-node="{{ kind }}"></i>{{ kind }}</span>
+    {% endfor %}
+    <span><i class="universe-swatch" data-node="outside"></i>outside the one opened</span>
+    <p class="hint">Relations (click to show)</p>
+    {% for kind, text in RELATIONS.items() %}
+    <span class="universe-relation">{{ ui.help_hover(kind, text) }}<button type="button" class="graph-kind universe-kind" data-kind="{{ kind }}" aria-pressed="false"><i class="universe-line" data-relation="{{ kind }}"></i>{{ kind }}</button></span>
+    {% endfor %}
+    <p class="hint">Column symbols</p>
+    {% for mark, text in (("pk", "primary key"), ("fk", "foreign key"), ("unique", "unique"), ("index", "indexed"), ("generated", "computed by the database"), ("notnull", "not null"), ("null", "null allowed")) %}
+    <span><img class="universe-mark" data-mark="{{ mark }}" alt="">{{ text }}</span>
+    {% endfor %}
+    <p class="hint">Click: go into it · double click, or Details › on hover: its details · the path above or ←: back · drag: the others follow</p>
+  {% endcall %}
+  {% else %}
   <p class="tab-description">The databases your project declares, and those you enter. Declared ones stay blocked until you allow them; doctracker only ever reads: the session is read only where the database allows it, every transaction is rolled back, and any statement that is not a read is aborted before it is sent.</p>
   {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
 
@@ -45,4 +81,5 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   </div>
 
   <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
+  {% endif %}
 </div>

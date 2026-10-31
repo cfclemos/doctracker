@@ -1814,3 +1814,34 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .connection-card h3 .notes-pill { margin-left: auto; }
 .database-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem;
   padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 0.85rem; }
+
+/* DATABASE › Universe: sigma.js draws in the drawing area; the path back, a node's hover box and the
+   legend's swatches, lines and column symbols around it. */
+.graph-canvas[data-view="universe"] { position: relative; overflow: hidden; }
+.universe-path { position: absolute; top: 0.5rem; left: 3rem; right: 6rem; z-index: 5; display: flex; align-items: center; gap: 0.5rem;
+  pointer-events: none; font-size: 0.82rem; color: var(--muted); }
+.universe-path > * { pointer-events: auto; }
+.universe-path .universe-back { height: 1.8rem; width: 1.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 12%); cursor: pointer; }
+.universe-path .universe-back:disabled { opacity: 0.4; cursor: default; }
+.universe-crumbs { padding: 0.15rem 0.5rem; border-radius: 6px; background: var(--bg); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); }
+.universe-crumbs a { color: var(--accent); cursor: pointer; }
+.universe-crumbs b { color: var(--fg); }
+.universe-stats { margin-left: auto; font-variant-numeric: tabular-nums; }
+.universe-hover { position: absolute; z-index: 6; display: flex; flex-direction: column; gap: 2px; max-width: 16rem; padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 2px 8px rgb(0 0 0 / 15%); font-size: 0.76rem; line-height: 1.4; }
+.universe-hover[hidden] { display: none; }
+.universe-hover .universe-hover-details { align-self: flex-start; margin-top: 0.3rem; }
+.universe-where { color: var(--muted); margin-bottom: 0.25rem; overflow-wrap: anywhere; }
+.universe-comment { margin-top: 0.25rem; color: var(--muted); font-style: italic; }
+.universe-row { display: flex; gap: 0.4rem; align-items: center; }
+.universe-row img, .graph-details img { width: 0.75rem; height: 0.75rem; vertical-align: -1px; }
+.universe-row i { display: inline-block; width: 0.75rem; border-top: 2px solid; }
+.universe-type { color: var(--muted); font-size: 0.85em; }
+.graph-legend .universe-swatch { flex: none; width: 0.9rem; height: 0.6rem; border-radius: 3px; }
+.universe-line { display: inline-block; flex: none; width: 1.1rem; height: 0; border-top: 3px solid; margin-right: 0.3rem; vertical-align: 3px; }
+.graph-legend .universe-mark { flex: none; width: 0.75rem; height: 0.75rem; }
+.graph-legend .hint { margin: 0.4rem 0 0; font-weight: 600; color: var(--fg); }
+.graph-legend .hint:last-child { font-weight: 400; color: var(--muted); }
+.graph-legend .universe-relation { gap: 0.3rem; }
+.universe-filters .form-field { min-width: 0; }

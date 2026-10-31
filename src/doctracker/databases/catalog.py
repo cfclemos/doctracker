@@ -6,6 +6,7 @@ keeps the state read before, with the failure noted beside it until a collection
 No history is kept: the evolution of a database comes from its migrations and commits.
 """
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Iterator
@@ -16,7 +17,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS collections (
   id INTEGER PRIMARY KEY AUTOINCREMENT, connection TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
   server TEXT NOT NULL, database TEXT NOT NULL, started TEXT NOT NULL, seconds REAL NOT NULL, ok INTEGER NOT NULL,
-  error TEXT NOT NULL, version TEXT NOT NULL, databases TEXT NOT NULL);
+  error TEXT NOT NULL, version TEXT NOT NULL, databases TEXT NOT NULL, fingerprint TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS objects (
   collection INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, path TEXT NOT NULL, kind TEXT NOT NULL,
   parent TEXT NOT NULL, name TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (collection, path));
@@ -29,12 +30,19 @@ CREATE TABLE IF NOT EXISTS unavailable (
   collection INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, what TEXT NOT NULL, reason TEXT NOT NULL);
 """
 """Tables: `collections` (per connection, its last successful collection and a later failed one, with
-the other `databases` on the server as JSON), `objects` (what the collection read, `data` as JSON),
+the other `databases` on the server as JSON and a `fingerprint` of what was read), `objects` (what the collection read, `data` as JSON),
 `relations` and `unavailable`."""
 
 SEARCHED_KINDS = ("table", "view", "materialized view", "foreign table", "column", "function", "procedure",
                   "aggregate", "trigger", "sequence", "enum", "domain", "synonym")
 """Kinds of object found by the searches."""
+
+UNIVERSE_KINDS = {"database": "database", "schema": "schema", "table": "table", "foreign table": "table",
+                  "view": "view", "materialized view": "view", "column": "column"}
+"""What the Universe draws of each kind of object (the SQL tree), as the kind it is drawn as."""
+
+UNIVERSE_RELATIONS = ("foreign key", "implied", "view reads", "foreign table")
+"""The relations the Universe draws."""
 
 _CURRENT = "SELECT id FROM collections WHERE ok = 1"
 """The current collection of each connection: its last successful one, the only one kept."""
@@ -64,6 +72,8 @@ class CatalogStore:
         try:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.executescript(SCHEMA)
+            if "fingerprint" not in {row[1] for row in connection.execute("PRAGMA table_info(collections)")}:
+                connection.execute("ALTER TABLE collections ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''")
             if write:
                 with connection:
                     yield connection
@@ -75,6 +85,9 @@ class CatalogStore:
     def save(self, connection_id: str, name: str, result: dict) -> dict:
         """Keep a collection in place of the one before; a failed one is noted beside the state read before.
 
+        The wiki is told only when something read differs from the reading it replaces, so the
+        readings made every minute do not reload its pages for nothing.
+
         Args:
             connection_id: The connection collected.
             name: The connection's name, as the user knows it.
@@ -83,14 +96,20 @@ class CatalogStore:
         Returns:
             The connection's state (see `collection`).
         """
+        fingerprint = hashlib.sha256(json.dumps(
+            [result[key] for key in ("ok", "error", "databases", "objects", "relations", "unavailable")],
+            sort_keys=True, default=str).encode("utf-8")).hexdigest()
         with self._connect(write=True) as connection:
+            replaced = connection.execute("SELECT fingerprint FROM collections WHERE connection = ? AND ok = ?",
+                                          (connection_id, int(result["ok"]))).fetchone()
             connection.execute(f"DELETE FROM collections WHERE connection = ?{'' if result['ok'] else ' AND ok = 0'}",
                                (connection_id,))
             cursor = connection.execute(
-                "INSERT INTO collections (connection, name, kind, server, database, started, seconds, ok, error, version, databases) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO collections (connection, name, kind, server, database, started, seconds, ok, error, version, databases, fingerprint) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (connection_id, name, result["kind"], result["server"], result["database"], result["started"],
-                 result["seconds"], int(result["ok"]), result["error"], result["version"], json.dumps(result["databases"])))
+                 result["seconds"], int(result["ok"]), result["error"], result["version"], json.dumps(result["databases"]),
+                 fingerprint))
             collection = cursor.lastrowid
             connection.executemany("INSERT OR REPLACE INTO objects VALUES (?, ?, ?, ?, ?, ?)",
                                    [(collection, o["path"], o["kind"], o["parent"], o["name"], json.dumps(o["data"], default=str))
@@ -99,7 +118,8 @@ class CatalogStore:
                                    [(collection, r["source"], r["target"], r["kind"]) for r in result["relations"]])
             connection.executemany("INSERT INTO unavailable VALUES (?, ?, ?)",
                                    [(collection, u["what"], u["reason"]) for u in result["unavailable"]])
-        self._on_change()
+        if replaced is None or replaced["fingerprint"] != fingerprint:
+            self._on_change()
         return self.collection(connection_id)
 
     def forget(self, connection_id: str) -> None:
@@ -215,6 +235,48 @@ class CatalogStore:
                                             "summary": str(data.get("comment") or described), "text": " ".join(
                     str(part) for part in (found["kind"], found["path"], data.get("type", ""), data.get("comment", "")) if part)}
         return documents
+
+    def universe(self) -> dict:
+        """The databases as last read, as the Universe draws them: the SQL tree and the relations.
+
+        Returns:
+            `nodes`: `id` (the path; a server is `db:<host:port>`), `label`, `kind` (`server`, `database`,
+            `schema`, `table` for tables and foreign tables, `view` for views and materialized views,
+            `column`), `parent`, and for columns `type`, `flags` (pk, fk, unique, index, null, generated)
+            and `comment`. `edges`: `source`, `target`, `kind` (foreign key, implied, view reads, foreign
+            table), both ends drawn.
+        """
+        nodes: dict[str, dict] = {}
+        for found in self.objects():
+            kind = UNIVERSE_KINDS.get(found["kind"])
+            if kind is None:
+                continue
+            node = {"id": found["path"], "label": found["name"], "kind": kind, "parent": found["parent"]}
+            if kind == "database":
+                server = found["parent"]
+                nodes.setdefault(server, {"id": server, "label": server.removeprefix("db:"), "kind": "server", "parent": None})
+            if kind == "column":
+                node.update(type=found["data"].get("type", ""), flags=found["data"].get("marks", []))
+            if found["data"].get("comment"):
+                node["comment"] = found["data"]["comment"]
+            if found["kind"] != kind:
+                node["subkind"] = found["kind"]
+            nodes.setdefault(found["path"], node)
+        with self._connect() as connection:
+            rows = connection.execute(f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT}) "
+                                      f"AND kind IN ({', '.join('?' * len(UNIVERSE_RELATIONS))})", UNIVERSE_RELATIONS).fetchall()
+        # A foreign table names its server as that server reaches it (a name inside its network, say),
+        # not as doctracker does: without that exact path, the one table with its database and name.
+        by_place: dict[str, list[str]] = {}
+        for path in nodes:
+            by_place.setdefault(path.split("/", 1)[-1], []).append(path)
+        edges = []
+        for source, target, kind in rows:
+            if kind == "foreign table" and target not in nodes and len(by_place.get(target.split("/", 1)[-1], [])) == 1:
+                target = by_place[target.split("/", 1)[-1]][0]
+            if source in nodes and target in nodes:
+                edges.append({"source": source, "target": target, "kind": kind})
+        return {"nodes": list(nodes.values()), "edges": edges}
 
 
 def _object(row: sqlite3.Row) -> dict:

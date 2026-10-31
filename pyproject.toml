@@ -9,6 +9,7 @@ license-files = [
     "src/doctracker/wiki/static/htmx-LICENSE.txt",
     "src/doctracker/wiki/static/cola-LICENSE.txt",
     "src/doctracker/wiki/static/dagre-LICENSE.txt",
+    "src/doctracker/wiki/static/sigma-LICENSE.txt",
     "src/doctracker/wiki/static/icons/tabler-icons-LICENSE.txt",
 ]
 authors = [
