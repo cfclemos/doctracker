@@ -16,7 +16,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.discovery import KINDS
-from doctracker.databases.origins import compare_origin, database_object as object_with_origins, describe_origins
+from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
@@ -315,7 +315,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         link was made), its suggestions and its differences from each database linked."""
         described = describe_origins(state.origins, catalog, connections.connections(), project_root)
         return [{**origin, **described[origin["name"]],
-                 "comparisons": {link["database"]: compare_origin(origin, catalog, link["database"]) for link in described[origin["name"]]["links"]}}
+                 "comparisons": comparisons(origin, described[origin["name"]], catalog)}
                 for origin in state.origins]
 
     OBJECTS_PER_PAGE = 50
@@ -800,13 +800,14 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     async def source(request: Request) -> Response:
         path = request.path_params["path"]
-        if path.startswith("file:"):  # an SQL file of an origin (DATABASES), in the origin's dialect; no other file
+        if path.startswith("file:"):  # a file of an origin (DATABASES): SQL in the origin's dialect, an ORM's code; no other file
             file = path.removeprefix("file:")
             origin = next((o for o in state.origins for step in o["steps"] if file in (step["file"], step.get("down"))), None)
             if origin is None:
                 return HTMLResponse("", status_code=404)
             code = (project_root / file).read_text(encoding="utf-8", errors="replace")
-            return HTMLResponse(templates.get_template("source.html").render(code=code, language=origin["dialect"]))
+            language = "python" if file.endswith(".py") else "text" if not file.lower().endswith(".sql") else origin["dialect"]
+            return HTMLResponse(templates.get_template("source.html").render(code=code, language=language))
         entity = state.entities.get(path)
         if entity is None:
             return HTMLResponse("", status_code=404)

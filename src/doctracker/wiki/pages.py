@@ -168,8 +168,8 @@ def highlight(code: str, language: str = "python") -> Markup:
 
     Args:
         code: Python source, or an interactive session starting with `>>>` (console lexer).
-        language: `python`, or the `language` of another entity (`js`, `css`, `html`, `java`...), or an
-            SQL dialect (`SQL_LEXERS`).
+        language: `python`, or the `language` of another entity (`js`, `css`, `html`, `java`...), an
+            SQL dialect (`SQL_LEXERS`), or `text` (no highlighting: a Prisma schema).
 
     Returns:
         Token spans with Pygments classes, safe to insert in a template.
@@ -178,6 +178,8 @@ def highlight(code: str, language: str = "python") -> Markup:
         lexer = _frontend_lexers[language]
     elif language in SQL_LEXERS:  # an SQL file of DATABASES, in its dialect
         lexer = get_lexer_by_name(SQL_LEXERS[language])
+    elif language == "text":
+        lexer = get_lexer_by_name("text")
     elif language != "python" and language in LANGUAGES:
         lexer = get_lexer_by_name(language, startinline=True)
     else:

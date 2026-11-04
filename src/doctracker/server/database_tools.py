@@ -11,7 +11,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
-from doctracker.databases.origins import compare_origin, database_object as object_with_origins, describe_origins
+from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.server.state import DocState
 from doctracker.databases.readonly import run_test
 from doctracker.server.note_tools import refusals_reported
@@ -163,7 +163,8 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @refusals_reported
     def database_origins() -> list[dict]:
         """List the origins of the project's database schema: migration sets (Flyway, golang-migrate,
-        dbmate) and SQL files that declare tables, views, functions... read as text, never run.
+        dbmate, Alembic, Django, Prisma), SQL files that declare tables, views, functions..., and ORM
+        models (SQLAlchemy, Django, a Prisma schema), read as text, never run.
 
         Returns:
             Each origin's `name` (its folder or file), `kind`, `dialect`, `steps` (how many), `unread`
@@ -189,11 +190,12 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
 
         Returns:
             The origin with `steps`, `objects`, `links`, `unlinked`, `suggestions`, `warning` and
-            `differences` by database (`missing`, `extra`, and per table its `differences`).
+            `differences` by database (`missing`, `extra`, and per table its `differences`); an ORM's
+            also by `origin:<name>`, its other origin (its models against its migrations: `related`).
         """
         origin = next((o for o in state.origins if o["name"] == name), None)
         if origin is None:
             raise ToolError(f"No origin {name}. List them with database_origins.")
         described = describe_origins(state.origins, catalog, connections.connections(), project_root)[name]
         return {**origin, **described,
-                "differences": {link["database"]: compare_origin(origin, catalog, link["database"]) for link in described["links"]}}
+                "differences": comparisons(origin, described, catalog)}

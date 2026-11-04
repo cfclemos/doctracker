@@ -32,8 +32,8 @@ PACK_NAMES = {"js": "javascript", "css": "css", "html": "html", "typescript": "t
 NOT_CODE = {"vimdoc"}
 """Languages the pack guesses for files that are not code (any `.txt` is taken for Vim help)."""
 
-SCHEMA_SUFFIXES = (".sql",)
-"""Files that declare databases, read by DATABASES (`databases.origins`) and not as code."""
+SCHEMA_SUFFIXES = (".sql", ".prisma")
+"""Files that declare databases, read by DATABASES (`databases.origins`: SQL, a Prisma schema) and not as code."""
 
 LABELS = {"yaml": "YAML", "json": "JSON", "toml": "TOML", "xml": "XML", "markdown": "Markdown", "bash": "Shell",
           "ini": "INI", "dockerfile": "Dockerfile", "make": "Make", "cmake": "CMake", "scss": "SCSS"}
