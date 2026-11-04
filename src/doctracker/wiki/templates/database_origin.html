@@ -1,9 +1,12 @@
 {% import "macros.html" as ui %}
 {# The page of an origin of the schema (`origin`, from databases.origins): a migration set (Flyway,
-   golang-migrate, dbmate) or an SQL file. Its source, and the schema it ends with, each object to its
-   page. Which databases it describes and where they differ is DATABASE › Drift. #}
+   golang-migrate, dbmate, Alembic, Django, Prisma), an SQL file, or an ORM's models (SQLAlchemy, Django,
+   a Prisma schema). Its source, and the schema it ends with, each object to its page. Which databases it
+   describes and where they differ is DATABASE › Drift. #}
 {% set KINDS = {"flyway": "Flyway migrations", "golang-migrate": "golang-migrate migrations", "dbmate": "dbmate migrations",
-                "dump": "schema dump", "sql file": "SQL file"} %}
+                "dump": "schema dump", "sql file": "SQL file", "sqlalchemy": "SQLAlchemy models", "alembic": "Alembic migrations",
+                "django models": "Django models", "django migrations": "Django migrations", "prisma schema": "Prisma schema",
+                "prisma migrations": "Prisma migrations"} %}
 {% set DIALECTS = {"postgres": "PostgreSQL", "mysql": "MySQL / MariaDB", "tsql": "SQL Server (T-SQL)", "sqlite": "SQLite"} %}
 {% macro place(where) -%}<code>{{ where.file.rsplit("/", 1)[-1] }}:{{ where.line }}</code>{%- endmacro %}
 
@@ -11,9 +14,14 @@
   <p class="crumbs">{% for part in origin.folder.split("/") %}<span>{{ part }}</span><span class="sep">›</span>{% endfor %}</p>
   <h1>{{ ui.icon("database") }}<span class="name">{{ origin.name.rsplit("/", 1)[-1] }}</span><span class="kind">{{ KINDS[origin.kind] }}</span></h1>
   <p class="meta"><code class="path">{{ origin.name }}</code>
-    <span class="location">{{ origin.steps | length }} step{% if origin.steps | length != 1 %}s{% endif %} · {{ DIALECTS.get(origin.dialect, origin.dialect) }}</span></p>
+    <span class="location">{{ origin.steps | length }} step{% if origin.steps | length != 1 %}s{% endif %} · {{ DIALECTS.get(origin.dialect, origin.dialect) }}{% if origin.dialect_from %} (from {{ origin.dialect_from }}){% endif %}</span></p>
   <p class="see-in">{% if origin.links %}Describes {% for link in origin.links %}<a {{ ui.nav(link.database) }}><code>{{ db_place(link.database) }}</code></a>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Linked to no database read{% endif %}
+    {% if origin.related %} · Same schema as <a {{ ui.nav("origin:" ~ origin.related) }}><code>{{ origin.related }}</code></a>{% endif %}
     · <a class="see-in-link" {{ ui.nav_url("/database?tab=drift#" ~ (origin.name | urlencode)) }}>{{ ui.icon("database") }}Drift</a></p>
+  {# What the reading could not tell without running the code, and the tables the code expects but does not create. #}
+  {% if origin.unresolved %}<div class="notes-error-text origin-unresolved">Not resolved without running the code:
+    <ul class="db-list">{% for u in origin.unresolved %}<li>{% if u.line %}{{ place(u) }} {% endif %}{{ u.what }}</li>{% endfor %}</ul></div>{% endif %}
+  {% if origin.expects %}<p class="summary">Expects tables it does not create: {% for e in origin.expects %}<code>{{ e.table }}</code> ({{ place(e) }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
 </header>
 
 {# What it ends with, as the store keeps it (the same objects as a live database's, see
