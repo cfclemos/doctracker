@@ -1362,7 +1362,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
 // in its kind's colour, a column's with its symbols. The view opened, the relations and the filters are
 // kept for the browser tab, so a redraw (a database read again and changed) comes back where it was.
 const UNIVERSE_COLORS = { server: "#24292f", database: "#bc4c00", schema: "#8250df", table: "#0969da", view: "#1a7f37", column: "#6e7781" };
-const UNIVERSE_LINKS = { contains: "#d8dee4", "foreign key": "#cf222e", implied: "#bf8700", "view reads": "#1a7f37", "foreign table": "#1b7c83" };
+const UNIVERSE_LINKS = { contains: "#8c959f", "foreign key": "#cf222e", implied: "#bf8700", "view reads": "#1a7f37", "foreign table": "#1b7c83" };
 const UNIVERSE_OUTSIDE = "#9cc3f5";  // a node outside the one opened, drawn only because a link reaches it
 // ForceAtlas2 pushes two nodes apart by the product of their masses (1 + the weight of their links); a
 // link from a node to itself adds mass without pulling anything, so schemas and tables push harder.
@@ -1404,15 +1404,156 @@ const universeMarks = (flags = []) => [...["pk", "fk", "unique", "index", "gener
 const universeForces = (graph, slowDown = 1) => ({ ...SigmaBundle.forceAtlas2.inferSettings(graph), barnesHutOptimize: true, strongGravityMode: true,
   gravity: 0.3, scalingRatio: 40, edgeWeightInfluence: 1, linLogMode: true, outboundAttractionDistribution: true, slowDown });
 
+// The Universe's drawing engine without WebGL: the part of sigma the Universe uses, drawn in Canvas 2D, so
+// the same Universe (graph, layout, badges, legend, path, hover box, details, clicks, drag, zoom, pan)
+// runs where WebGL is off. Coordinates as sigma's: the graph's box (the custom one when set) normalised
+// to a square, y upwards, then the camera (x, y, ratio) on the viewport's smaller side. Nodes are drawn
+// by the Universe's own badge (the settings' defaultDrawNodeLabel / defaultDrawNodeHover), edges as lines,
+// a curved one as a quadratic curve bowing by its curvature.
+class UniverseCanvas {
+  constructor(graph, container, settings) {
+    this.graph = graph; this.container = container; this.settings = settings;
+    this.camera = { x: 0.5, y: 0.5, ratio: 1, angle: 0 };
+    this.bbox = null; this.handlers = new Map(); this.captorHandlers = new Map(); this.hoveredEdge = null;
+    this.element = document.createElement("canvas");
+    this.element.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    container.style.position ||= "relative";
+    container.appendChild(this.element);
+    this.context = this.element.getContext("2d");
+    this.listeners = new AbortController();
+    const signal = this.listeners.signal, at = (e) => { const r = this.element.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const captured = (name, e, extra = {}) => {
+      let prevented = false;
+      const event = { ...at(e), ...extra, original: e, preventSigmaDefault: () => { prevented = true; } };
+      for (const fn of this.captorHandlers.get(name) ?? []) fn(event);
+      return prevented;
+    };
+    let panning = null, downAt = null;
+    this.element.addEventListener("mousedown", (e) => {
+      downAt = at(e);
+      if (!captured("mousedown", e)) panning = { ...downAt, camera: { ...this.camera } };
+    }, { signal });
+    window.addEventListener("mousemove", (e) => {
+      const inside = e.target === this.element;
+      if (inside || panning) captured("mousemovebody", e);
+      if (panning) {
+        const p = at(e), side = Math.min(this.width, this.height) || 1;
+        this.camera.x = panning.camera.x - ((p.x - panning.x) / side) * this.camera.ratio;
+        this.camera.y = panning.camera.y + ((p.y - panning.y) / side) * this.camera.ratio;
+        this.schedule();
+      } else if (inside) this.edgeUnder(at(e));
+    }, { signal });
+    window.addEventListener("mouseup", (e) => {
+      if (!downAt) return;
+      const p = at(e), still = Math.hypot(p.x - downAt.x, p.y - downAt.y) < 4;
+      captured("mouseup", e);
+      if (still && e.target === this.element) captured("click", e);
+      panning = null; downAt = null;
+    }, { signal });
+    this.element.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const p = at(e), before = this.viewportToGraph(p);
+      this.camera.ratio = Math.min(Math.max(this.camera.ratio * (e.deltaY > 0 ? 1.15 : 1 / 1.15), 0.02), 20);
+      const after = this.viewportToGraph(p), side = this.side();
+      this.camera.x += (before.x - after.x) / side.span; this.camera.y += (before.y - after.y) / side.span;
+      this.schedule();
+    }, { signal, passive: false });
+    this.element.addEventListener("mouseleave", () => { if (this.hoveredEdge) { this.emit("leaveEdge", { edge: this.hoveredEdge }); this.hoveredEdge = null; } }, { signal });
+    this.resize();
+  }
+  on(name, fn) { if (!this.handlers.has(name)) this.handlers.set(name, []); this.handlers.get(name).push(fn); return this; }
+  emit(name, payload) { for (const fn of this.handlers.get(name) ?? []) fn(payload); }
+  getMouseCaptor() { const self = this; return { on(name, fn) { if (!self.captorHandlers.has(name)) self.captorHandlers.set(name, []); self.captorHandlers.get(name).push(fn); return this; } }; }
+  getCamera() { return { setState: (state) => { Object.assign(this.camera, state); this.schedule(); }, getState: () => ({ ...this.camera }) }; }
+  setCustomBBox(bbox) { this.bbox = bbox; }
+  kill() { this.listeners.abort(); this.element.remove(); }
+  resize() {
+    const ratio = window.devicePixelRatio || 1;
+    this.width = this.container.clientWidth; this.height = this.container.clientHeight;
+    this.element.width = Math.max(1, Math.round(this.width * ratio)); this.element.height = Math.max(1, Math.round(this.height * ratio));
+    this.context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+  // The graph's box made a square (its larger side), as sigma normalises it.
+  side() {
+    let x = this.bbox?.x, y = this.bbox?.y;
+    if (!x || !y) {
+      const xs = [], ys = []; this.graph.forEachNode((_, a) => { xs.push(a.x); ys.push(a.y); });
+      x = [Math.min(...xs, 0), Math.max(...xs, 1)]; y = [Math.min(...ys, 0), Math.max(...ys, 1)];
+    }
+    return { cx: (x[0] + x[1]) / 2, cy: (y[0] + y[1]) / 2, span: Math.max(x[1] - x[0], y[1] - y[0]) || 1 };
+  }
+  graphToViewport(p) {
+    const b = this.side(), side = Math.min(this.width, this.height) || 1;
+    const nx = (p.x - b.cx) / b.span + 0.5, ny = (p.y - b.cy) / b.span + 0.5;
+    return { x: ((nx - this.camera.x) / this.camera.ratio) * side + this.width / 2, y: (-(ny - this.camera.y) / this.camera.ratio) * side + this.height / 2 };
+  }
+  viewportToGraph(p) {
+    const b = this.side(), side = Math.min(this.width, this.height) || 1;
+    const nx = ((p.x - this.width / 2) / side) * this.camera.ratio + this.camera.x, ny = -((p.y - this.height / 2) / side) * this.camera.ratio + this.camera.y;
+    return { x: (nx - 0.5) * b.span + b.cx, y: (ny - 0.5) * b.span + b.cy };
+  }
+  schedule() { if (this.frame) return; this.frame = requestAnimationFrame(() => { this.frame = null; this.refresh(); }); }
+  // The ends of an edge on the screen, and its control point when curved.
+  edgeGeometry(edge, a, s, t) {
+    const p = this.graphToViewport(this.graph.getNodeAttributes(s)), q = this.graphToViewport(this.graph.getNodeAttributes(t));
+    if (a.type !== "curved" || !a.curvature) return { p, q };
+    const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2, dx = q.x - p.x, dy = q.y - p.y;
+    return { p, q, c: { x: mx - dy * a.curvature, y: my + dx * a.curvature } };
+  }
+  edgeUnder(at) {
+    if (!this.settings.enableEdgeEvents) return;
+    let found = null;
+    this.graph.forEachEdge((edge, attributes, s, t) => {
+      if (found || s === t) return;
+      const a = this.settings.edgeReducer ? this.settings.edgeReducer(edge, attributes) : attributes;
+      if (a.hidden) return;
+      const { p, q, c } = this.edgeGeometry(edge, a, s, t), m = c ?? { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+      // Distance to the line, the curve taken as its two halves.
+      const near = (u, v) => { const dx = v.x - u.x, dy = v.y - u.y, l = dx * dx + dy * dy || 1, k = Math.max(0, Math.min(1, ((at.x - u.x) * dx + (at.y - u.y) * dy) / l));
+        return Math.hypot(at.x - (u.x + k * dx), at.y - (u.y + k * dy)); };
+      if (Math.min(near(p, m), near(m, q)) <= Math.max(3, (a.size ?? 1) / 2 + 2)) found = edge;
+    });
+    if (found === this.hoveredEdge) return;
+    if (this.hoveredEdge) this.emit("leaveEdge", { edge: this.hoveredEdge });
+    this.hoveredEdge = found;
+    if (found) this.emit("enterEdge", { edge: found });
+  }
+  refresh() {
+    const context = this.context, settings = this.settings;
+    this.emit("beforeRender");
+    context.clearRect(0, 0, this.width, this.height);
+    this.graph.forEachEdge((edge, attributes, s, t) => {
+      if (s === t) return;
+      const a = settings.edgeReducer ? settings.edgeReducer(edge, attributes) : attributes;
+      if (a.hidden) return;
+      const { p, q, c } = this.edgeGeometry(edge, a, s, t);
+      context.beginPath(); context.moveTo(p.x, p.y);
+      c ? context.quadraticCurveTo(c.x, c.y, q.x, q.y) : context.lineTo(q.x, q.y);
+      context.strokeStyle = a.color || "#999"; context.lineWidth = Math.max(1.2, a.size ?? 1); context.stroke();  // never thinner than a pixel and a bit
+    });
+    const nodes = [];
+    this.graph.forEachNode((node, attributes) => {
+      const a = settings.nodeReducer ? settings.nodeReducer(node, attributes) : attributes;
+      if (a.hidden) return;
+      nodes.push({ ...a, ...this.graphToViewport(attributes) });
+    });
+    for (const d of nodes) if (!d.highlighted) settings.defaultDrawNodeLabel?.(context, d, settings);
+    for (const d of nodes) if (d.highlighted) (settings.defaultDrawNodeHover ?? settings.defaultDrawNodeLabel)?.(context, d, settings);
+  }
+}
+
 async function drawUniverse(canvas) {
   const area = canvas.closest(".graph-area"), page = canvas.closest(".graph-page");
   page.diagramListeners?.abort();
   page.diagramListeners = new AbortController();
   const signal = page.diagramListeners.signal;
-  if (typeof SigmaBundle === "undefined" || !document.createElement("canvas").getContext("webgl")) {
-    canvas.innerHTML = '<p class="empty">The Universe needs WebGL, which this browser does not offer (turn on hardware acceleration).</p>';
+  if (typeof SigmaBundle === "undefined") {
+    canvas.innerHTML = '<p class="empty">The Universe could not load its drawing library.</p>';
     return;
   }
+  // The engine: sigma on WebGL (it takes WebGL 2, else WebGL 1), else our own in Canvas 2D (UniverseCanvas).
+  const probe = document.createElement("canvas");
+  const webgl = Boolean(probe.getContext("webgl2") || probe.getContext("webgl") || probe.getContext("experimental-webgl"));
   const { Graph, Sigma, EdgeCurveProgram, indexParallelEdgesIndex, forceAtlas2, noverlap } = SigmaBundle;
   const data = await (await fetch(canvas.dataset.url)).json();
   if (!data.nodes.length) {
@@ -1421,9 +1562,10 @@ async function drawUniverse(canvas) {
   }
   canvas.innerHTML = "";
   const box = canvas.closest(".graph-canvas-box");
-  box.querySelectorAll(".universe-path, .universe-hover").forEach((element) => element.remove());
+  box.querySelectorAll(".universe-path, .universe-hover, .universe-engine").forEach((element) => element.remove());
   box.insertAdjacentHTML("beforeend", `<div class="universe-path"><button type="button" class="graph-icon universe-back" aria-label="Back" data-tip="Back one level">←</button>
     <span class="universe-crumbs"></span><span class="universe-stats"></span></div>
+    ${webgl ? "" : '<div class="universe-engine" title="WebGL is off in this browser (its hardware acceleration), so the Universe is drawn in Canvas 2D, which slows down with thousands of nodes and lines. Turn hardware acceleration on to draw large databases smoothly.">drawn without WebGL · turn on WebGL (hardware acceleration) to scale to large databases</div>'}
     <div class="universe-hover" hidden><div class="universe-hover-body"></div><button type="button" class="see-in-link universe-hover-details">Details ›</button></div>`);
   const crumbsBox = box.querySelector(".universe-crumbs"), backButton = box.querySelector(".universe-back"), hoverBox = box.querySelector(".universe-hover");
   const tooltip = area.querySelector(".graph-tooltip"), info = area.querySelector(".graph-details");
@@ -1682,7 +1824,7 @@ async function drawUniverse(canvas) {
   const hit = (x, y) => { let found = null; for (const [id, [l, t, w, h]] of rects) if (x >= l && x <= l + w && y >= t && y <= t + h && graph.hasNode(id)) found = id; return found; };
 
   show(path);
-  renderer = new Sigma(graph, canvas, {
+  renderer = new (webgl ? Sigma : UniverseCanvas)(graph, canvas, {
     labelRenderedSizeThreshold: 0, enableEdgeEvents: true, edgeProgramClasses: { curved: EdgeCurveProgram },
     defaultDrawNodeLabel: (context, d) => drawBadge(context, d), defaultDrawNodeHover: (context, d) => drawBadge(context, d, true),
     nodeReducer: (id, a) => {

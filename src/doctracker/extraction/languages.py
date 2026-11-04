@@ -20,18 +20,20 @@ LANGUAGES = {
     "cpp": {"label": "C++", "suffixes": (".cpp", ".cc", ".hpp")},
     "go": {"label": "Go", "suffixes": (".go",)},
     "rust": {"label": "Rust", "suffixes": (".rs",)},
-    "sql": {"label": "SQL", "suffixes": (".sql",)},
 }
 """The languages read in full, by the `language` of their entities: the name shown and the file suffixes.
 Python is read with griffe, the others through tree-sitter-language-pack (`PACK_NAMES`). Any other
 language the pack recognises by a file's name is read as a whole file (see `language_of`)."""
 
 PACK_NAMES = {"js": "javascript", "css": "css", "html": "html", "typescript": "typescript", "php": "php",
-              "java": "java", "csharp": "csharp", "c": "c", "cpp": "cpp", "go": "go", "rust": "rust", "sql": "sql"}
+              "java": "java", "csharp": "csharp", "c": "c", "cpp": "cpp", "go": "go", "rust": "rust"}
 """The grammar of tree-sitter-language-pack for each language of `LANGUAGES` but Python."""
 
 NOT_CODE = {"vimdoc"}
 """Languages the pack guesses for files that are not code (any `.txt` is taken for Vim help)."""
+
+SCHEMA_SUFFIXES = (".sql",)
+"""Files that declare databases, read by DATABASES (`databases.origins`) and not as code."""
 
 LABELS = {"yaml": "YAML", "json": "JSON", "toml": "TOML", "xml": "XML", "markdown": "Markdown", "bash": "Shell",
           "ini": "INI", "dockerfile": "Dockerfile", "make": "Make", "cmake": "CMake", "scss": "SCSS"}
@@ -50,6 +52,8 @@ def language_of(file: str) -> str | None:
     """The language of a project file: one of `LANGUAGES` by its suffix, else the one the language pack
     recognises by its name (e.g. `yaml`, read as a whole file); `None` when doctracker does not read it."""
     suffix = PurePosixPath(file).suffix
+    if suffix.lower() in SCHEMA_SUFFIXES:
+        return None
     known = next((name for name, language in LANGUAGES.items() if suffix in language["suffixes"]), None)
     detected = known or pack.detect_language_from_path(file)
     return None if detected in NOT_CODE else detected

@@ -64,4 +64,26 @@
     </li>
     {% endif %}
   </ul>
+  {% if database_tree %}
+  {# Below the code, the databases: by project, its connections (what was read from the live
+     databases, down the SQL tree) and its files (what each SQL file or migration set declares). #}
+  <hr class="tree-divider">
+  <ul>
+    <li>
+      <details data-path="section:databases">
+        <summary><span class="tree-group">{{ ui.icon("database") }}DATABASES</span></summary>
+        <ul>{% for item in database_tree %}
+          {% if item.path == "databases:connections" %}
+          {# Connections, with the manual refresh on its right (static/live.js): every allowed one read again now. #}
+          <li><details data-path="databases/{{ item.path }}">
+            <summary class="tree-connections">{{ ui.icon(item.role) }}<span class="role-{{ item.role }}">{{ item.name }}</span>
+              <button type="button" class="tree-refresh" title="Read every allowed connection again now" aria-label="Refresh the connections"><i class="bar-icon bar-icon-refresh"></i></button></summary>
+            <ul>{% for child in item.children %}{{ node(child, "databases/" ~ item.path) }}{% endfor %}</ul>
+          </details></li>
+          {% else %}{{ node(item, "databases") }}{% endif %}
+        {% endfor %}</ul>
+      </details>
+    </li>
+  </ul>
+  {% endif %}
 </nav>

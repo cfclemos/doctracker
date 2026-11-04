@@ -15,8 +15,9 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from doctracker.config import Config, project_files
+from doctracker.databases.catalog import CatalogStore
 from doctracker.extraction import extract_project
-from doctracker.extraction.languages import language_of
+from doctracker.extraction.languages import SCHEMA_SUFFIXES, language_of
 from doctracker.history import git_dir
 from doctracker.notes import NoteStore
 from doctracker.notes.commit_flow import review_outside_commits
@@ -27,7 +28,7 @@ GIT_FILES = ("HEAD", "packed-refs", "logs/HEAD")
 
 
 def snapshot(project_root: Path) -> dict[str, int]:
-    """Map every project file of a known language to its modification time.
+    """Map every project file of a known language, and every file declaring a database, to its modification time.
 
     Runs in a worker process. The files are listed on every call (`config.project_files`), so a new
     file, or one no longer ignored, is watched without a restart.
@@ -40,7 +41,7 @@ def snapshot(project_root: Path) -> dict[str, int]:
     """
     files: dict[str, int] = {}
     for file in project_files(project_root):
-        if language_of(file):
+        if language_of(file) or file.lower().endswith(SCHEMA_SUFFIXES):  # code, and the files declaring databases
             try:
                 files[file] = (project_root / file).stat().st_mtime_ns
             except OSError:
@@ -74,7 +75,7 @@ def git_snapshot(folder: Path | None) -> dict[str, int]:
     return files
 
 
-async def watch(project_root: Path, config: Config, state: DocState, notes: NoteStore) -> None:
+async def watch(project_root: Path, config: Config, state: DocState, notes: NoteStore, catalog: CatalogStore) -> None:
     """Build the documentation once, then keep the wiki in line with the code and the git state.
 
     A changed Python or front-end file rebuilds the documentation; a changed git state (commit, checkout,
@@ -86,6 +87,7 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
         config: Project settings (docstring style, watch interval).
         state: Shared data, replaced after every extraction.
         notes: The store, where commits made outside the commit flow become reviews.
+        catalog: The databases read, where what the SQL files declare is kept beside them.
     """
     loop = asyncio.get_running_loop()
     repository = await git_dir(project_root)
@@ -105,6 +107,7 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
                     config.show_private,
                 )
                 state.update(result)
+                catalog.keep_origins(result.get("origin_collections", []))
             elif git != previous_git and previous_git is not None:
                 state.notify()
             if git != previous_git:  # also at startup: the commits made while the server was off

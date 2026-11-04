@@ -134,6 +134,10 @@ class SearchEngine:
         self.notes = notes
         self.catalog = catalog
 
+    def database_documents(self) -> dict[str, dict]:
+        """The objects of the databases read and those the project's SQL files declare, as search documents."""
+        return self.catalog.searchable()
+
     async def run(self, mode: str, query: str, limit: int, wait: float, offset: int = 0,
                   languages: set[str] | None = None) -> SearchOutcome:
         """Run the search of the given mode and return one page of its results.
@@ -160,7 +164,7 @@ class SearchEngine:
             ranked = await (self.semantic(query, wait) if mode == "semantic" else self.hybrid(query, wait))
             if ranked is None:
                 return SearchOutcome(ready=False, status=self.embeddings.status())
-        objects = self.catalog.searchable()
+        objects = self.database_documents()
         ranked = [(path, score) for path, score in ranked if path in objects or (path in self.state.entities
                   and (languages is None or self.state.entities[path]["language"] in languages))]
         offset = max(0, offset)
@@ -261,7 +265,7 @@ class SearchEngine:
         if ranked is None:
             ranked, mode = self.bm25(query), "bm25"
         documents = self.notes.searchable()
-        objects = self.catalog.searchable()
+        objects = self.database_documents()
         groups: dict[str, list[dict]] = {group: [] for group in RECALL_GROUPS}
         for key, score in ranked:
             if key in documents:
@@ -364,7 +368,7 @@ class SearchEngine:
         if not outcome.ready:
             return {"status": "preparing", **(outcome.status or {})}
         results = []
-        objects = self.catalog.searchable()
+        objects = self.database_documents()
         for path, score in outcome.results:
             entity = self.state.entities.get(path)
             if entity is not None:

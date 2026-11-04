@@ -2,7 +2,9 @@
 
 Run from examples/database with the containers up and the project's environment (SQLAlchemy, pg8000,
 Alembic, Django; Node for Prisma): `python origins/compare_origins.py`. Each origin gets a fresh
-database `origin_<name>` on the test Postgres (Django: an SQLite file, its Postgres driver being LGPL);
+database `origin_<name>` on the test Postgres (Django: an SQLite file, its Postgres driver being LGPL),
+loaded by the origin's own tool where it has one — Flyway and golang-migrate run from their official
+images, so the databases hold their history tables as a real project's would;
 the schemas are then compared by name with the Flyway one: tables, columns, keys, uniques, checks,
 indexes. Nothing touches the acme databases.
 """
@@ -22,7 +24,7 @@ ENV = dotenv_values(HERE.parent / ".env")
 ADMIN = f"postgresql+pg8000://{ENV['POSTGRES_ADMIN_USER']}:{urllib.parse.quote(ENV['POSTGRES_ADMIN_PASSWORD'], safe='')}@localhost:{ENV['POSTGRES_PORT']}"
 """The test server, as its administrator (the origins are loaded with DDL)."""
 
-SKIPPED = {"alembic_version", "django_migrations", "_prisma_migrations"}
+SKIPPED = {"alembic_version", "django_migrations", "_prisma_migrations", "flyway_schema_history", "schema_migrations"}
 """Bookkeeping tables of the tools, left out of the comparison."""
 
 
@@ -31,6 +33,22 @@ def psql(database: str, sql: str) -> None:
     subprocess.run(["docker", "compose", "exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1",
                     "-U", ENV["POSTGRES_ADMIN_USER"], "-d", database], input=sql, text=True, check=True,
                    cwd=HERE.parent, stdout=subprocess.DEVNULL)
+
+
+NETWORK = "doctracker-testbed_testbed"
+"""The test bed's Docker network: the migration tools' containers reach the server there as `postgres`."""
+
+FLYWAY_IMAGE = "flyway/flyway:11.14.1"
+"""Flyway Community (Apache-2.0), only to load the test bed."""
+
+MIGRATE_IMAGE = "migrate/migrate:v4.19.0"
+"""golang-migrate (MIT), only to load the test bed."""
+
+
+def tool(image: str, folder: Path, *args: str) -> None:
+    """Run a migration tool's container on the test bed's network, the origin's folder mounted read only."""
+    subprocess.run(["docker", "run", "--rm", "--network", NETWORK, "-v", f"{folder}:/migrations:ro", image, *args],
+                   check=True, stdout=subprocess.DEVNULL)
 
 
 def fresh(name: str) -> str:
@@ -42,12 +60,13 @@ def fresh(name: str) -> str:
 def load_all() -> dict[str, str]:
     """Load each origin; give the URL of each database."""
     urls = {}
+    user, password = ENV["POSTGRES_ADMIN_USER"], ENV["POSTGRES_ADMIN_PASSWORD"]
     urls["flyway"] = fresh("flyway")
-    for path in sorted((HERE / "flyway").glob("V*__*.sql"), key=lambda p: int(p.name[1:].split("__")[0])):
-        psql("origin_flyway", path.read_text(encoding="utf-8"))
+    tool(FLYWAY_IMAGE, HERE / "flyway", "-url=jdbc:postgresql://postgres:5432/origin_flyway", f"-user={user}",
+         f"-password={password}", "-locations=filesystem:/migrations", "migrate")
     urls["golang-migrate"] = fresh("golang_migrate")
-    for path in sorted((HERE / "golang-migrate").glob("*.up.sql")):
-        psql("origin_golang_migrate", path.read_text(encoding="utf-8"))
+    tool(MIGRATE_IMAGE, HERE / "golang-migrate", "-path=/migrations", "-database",
+         f"postgres://{urllib.parse.quote(user, safe='')}:{urllib.parse.quote(password, safe='')}@postgres:5432/origin_golang_migrate?sslmode=disable", "up")
     urls["alembic"] = fresh("alembic")
     subprocess.run([sys.executable, "-m", "alembic", "-c", str(HERE / "alembic/alembic.ini"), "upgrade", "heads"],
                    env={**os.environ, "ACME_DATABASE_URL": urls["alembic"]}, check=True)

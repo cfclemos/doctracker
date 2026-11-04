@@ -2,7 +2,7 @@
 {# DATABASE: the project's databases. Connections: what the project declares (blocked until allowed)
    and what the user enters; every form posts to /database/<action>, the same store the MCP tools use,
    and the page comes back redrawn; the notes' buttons and modal are reused. Universe: the databases the
-   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. Tables and columns:
+   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. Navigate Database:
    every object read, filtered, one page at a time; a name opens its page in the consultation modal. #}
 {# A connection's card: its name and state, kind and server; a click on it opens the rest in the consultation modal.
    Its colour, on the pill and the side, tells the state: green allowed, red blocked; sent again out of band
@@ -30,11 +30,81 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
 <div class="{% if tab == 'universe' %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
   {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
-             ("objects", "Tables and columns", "/database?tab=objects")), tab) }}
+             ("objects", "Navigate Database", "/database?tab=objects"), ("drift", "Drift", "/database?tab=drift")), tab) }}
   {% if tab == "universe" %}
   <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
   {{ ui.universe_canvas(params.open or "", "/graph/universe" if has_collections else "",
                         "" if has_collections else "No database read yet: allow a connection in Connections.") }}
+  {% elif tab == "drift" %}
+  <p class="tab-description">Where the project's SQL files and migrations and the live databases they describe differ. An origin is linked to a database by hand, by the migration tool's history table in that database (the proof it was migrated, how far, and steps changed since), or by its configuration; the names of its tables only suggest a database, to link by hand.</p>
+  {% set HOW = {"chosen": ("chosen by you", "You linked it by hand."),
+                "history": ("history", "The database's own history table of this tool records these steps as applied."),
+                "declared": ("declared", "The origin's configuration, or a connection declared in its folder, names this database.")} %}
+  {% macro choose(origin, database, linked, label, icon) -%}
+  <form class="origin-choice" hx-post="/database/origin-link" hx-target="#content">
+    <input type="hidden" name="origin" value="{{ origin }}"><input type="hidden" name="database" value="{{ database }}">
+    <input type="hidden" name="linked" value="{{ linked }}"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-{{ icon }}"></i>{{ label }}</button>
+  </form>
+  {%- endmacro %}
+  {% for origin in drift %}
+  {% call ui.section("class", origin.name, name="drift-" ~ loop.index, divider=true, attrs='id="' ~ (origin.name | urlencode) ~ '"') %}
+    <p class="summary"><a {{ ui.nav("origin:" ~ origin.name) }}>the file's page</a> · {{ origin.kind }} · {{ origin.steps | length }} step{% if origin.steps | length != 1 %}s{% endif %}</p>
+    {% if origin.warning %}<p class="notes-error">{{ origin.warning }}</p>{% endif %}
+    {% for link in origin.links %}
+    {% set c = origin.comparisons[link.database] %}
+    <div class="origin-link">
+      <div class="origin-link-head">
+        <a {{ ui.nav(link.database) }}><code>{{ db_place(link.database) }}</code></a>
+        {% for how in link.how %}<span class="db-mark origin-how-{{ how }}" title="{{ HOW[how][1] }}">{{ HOW[how][0] }}</span>{% endfor %}
+        {% if link.declared %}<span class="summary">in <code>{{ link.declared }}</code></span>{% endif %}
+        <span class="origin-link-actions">
+          {% if "chosen" in link.how %}{{ choose(origin.name, link.database, "", "Forget my choice", "cancel") }}{% endif %}
+          {{ choose(origin.name, link.database, "0", "Unlink", "remove") }}
+        </span>
+      </div>
+      {% if link.history %}{% set h = link.history %}
+      <p class="origin-history">{{ h.applied }} of {{ h.steps }} steps applied (version <code>{{ h.version }}</code>)
+        {%- if h.pending %} · pending: {% for step in h.pending %}<code>{{ step }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+        {%- if h.changed %} · <span class="notes-error-text">changed since applied: {% for step in h.changed %}<code>{{ step }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+        {%- if h.failed %} · <span class="notes-error-text">failed: {{ h.failed | join(", ") }}</span>{% endif %}</p>
+      {% endif %}
+      {% set differing = c.tables.items() | selectattr("1.differences") | list %}
+      {% if not c.missing and not c.extra and not differing %}<p class="summary">No differences: the database is as the files say.</p>{% endif %}
+      {% if c.missing %}<h3 class="block-subtitle">In the files, not in the database</h3>
+      <ul class="db-list">{% for key in c.missing %}<li><a {{ ui.nav("origin:" ~ origin.name ~ "::" ~ key) }}><code>{{ key }}</code></a></li>{% endfor %}</ul>{% endif %}
+      {% if c.extra %}<h3 class="block-subtitle">In the database, not in the files</h3>
+      <ul class="db-list">{% for key in c.extra %}<li><code>{{ key }}</code></li>{% endfor %}</ul>{% endif %}
+      {% for key, table in differing %}
+      <h3 class="block-subtitle"><a {{ ui.nav(table.path) }}><code>{{ key }}</code></a></h3>
+      <ul class="db-list">{% for d in table.differences %}<li>{{ d }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </div>
+    {% else %}<p class="empty">Linked to no database read.</p>
+    {% endfor %}
+    {% if origin.suggestions %}
+    <h3 class="block-subtitle">Suggested by the names of its tables</h3>
+    {% for s in origin.suggestions %}
+    <div class="origin-link origin-suggestion"><div class="origin-link-head"><a {{ ui.nav(s.database) }}><code>{{ db_place(s.database) }}</code></a>
+      <span class="summary">{{ s.matched }} of {{ s.total }} tables match</span>
+      <span class="origin-link-actions">{{ choose(origin.name, s.database, "1", "Link", "allow") }}</span></div></div>
+    {% endfor %}
+    {% endif %}
+    {% if origin.unlinked %}
+    <h3 class="block-subtitle">Unlinked by you</h3>
+    {% for database in origin.unlinked %}
+    <div class="origin-link"><div class="origin-link-head"><code>{{ db_place(database) }}</code>
+      <span class="origin-link-actions">{{ choose(origin.name, database, "", "Undo", "cancel") }}</span></div></div>
+    {% endfor %}
+    {% endif %}
+    <form class="graph-toolbar filters-line origin-link-form" hx-post="/database/origin-link" hx-target="#content">
+      <input type="hidden" name="origin" value="{{ origin.name }}"><input type="hidden" name="linked" value="1">
+      {% call ui.form_field("Database", "A database read from the allowed connections that this origin describes: linked by hand, it wins over the other ways (history table, configuration); it can be unlinked again.", wide=False) %}
+      <select name="database" required><option value="">Choose…</option>{% for d in catalog_databases %}<option value="{{ d.path }}">{{ db_place(d.path) }}</option>{% endfor %}</select>{% endcall %}
+      <button type="submit" class="notes-button primary">Link</button>
+    </form>
+  {% endcall %}
+  {% else %}<p class="empty">The project has no SQL files nor migrations declaring a schema.</p>
+  {% endfor %}
   {% elif tab == "objects" %}
   <p class="tab-description">Every object doctracker read from the allowed connections. Browse goes down the SQL tree one level at a time (servers, databases, schemas, tables and views, columns): a name goes into it, the path above goes back. Search lists every object at once. A column's title sorts by it, its filter icon filters it; the page icon opens the object's page.</p>
   {# The mode, and what goes with every request of the list: the level (Browse) or the filters above
@@ -200,5 +270,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   </div>
 
   <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
+  {% if open_connection %}{# reached from the tree: the connection's details open at once #}
+  <div hidden hx-get="/database/form?details={{ open_connection }}" hx-target="#page-dialog-body" hx-trigger="load"></div>{% endif %}
   {% endif %}
 </div>

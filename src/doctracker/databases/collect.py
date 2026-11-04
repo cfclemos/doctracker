@@ -148,15 +148,18 @@ class _Collection:
     """What one collection has read so far: objects by path, relations, what was unavailable.
 
     Attributes:
-        base: The path of the database being read, `db:<server>/<database>`.
+        base: The path of the database being read, `db:<server>/<database>` (what a file declares:
+            `origin:<name>`, see `databases.origins.as_collection`).
+        separator: Between the base and a schema: `/`, or `::` in what a file declares.
         prefix: Put before what could not be read, when several databases are read (their name).
         objects: Objects by path: `path`, `kind`, `parent`, `name` and `data`.
         relations: `source`, `target` and `kind` of each relation.
         unavailable: `what` could not be read, and the `reason`.
     """
 
-    def __init__(self, base: str) -> None:
+    def __init__(self, base: str, separator: str = "/") -> None:
         self.base = base
+        self.separator = separator
         self.prefix = ""
         self.objects: dict[str, dict] = {}
         self.relations: list[dict] = []
@@ -164,7 +167,7 @@ class _Collection:
 
     def path(self, schema: str, *names: str) -> str:
         """The path of a schema, or of an object inside it."""
-        return f"{self.base}/{schema}" + "".join(f".{name}" for name in names)
+        return f"{self.base}{self.separator}{schema}" + "".join(f".{name}" for name in names)
 
     def add(self, path: str, kind: str, parent: str, name: str, **data) -> dict:
         """Add an object (or complete it, when already there) and return it."""
@@ -253,6 +256,32 @@ def _read_database(found: _Collection, connection: Connection, kind: str, databa
     found.add(found.base, "database", server, database)
     _read_structure(found, connection, kind, database)
     _read_catalog(found, connection, kind)
+    _read_history(found, connection, kind)
+
+
+HISTORY_TABLES = {"flyway_schema_history": "flyway", "schema_migrations": "golang-migrate or dbmate",
+                  "alembic_version": "alembic", "django_migrations": "django", "_prisma_migrations": "prisma",
+                  "databasechangelog": "liquibase", "atlas_schema_revisions": "atlas"}
+"""The tables where migration tools record the steps they applied, and the tool of each."""
+
+HISTORY_ROWS = 5000
+"""Most rows read of a history table."""
+
+
+def _read_history(found: _Collection, connection: Connection, kind: str) -> None:
+    """Read the rows of the migration tools' history tables (which steps a tool applied to this
+    database): kept in the table's data as `history`, each row's values as text."""
+    for obj in [o for o in found.objects.values() if o["kind"] == "table" and o["path"].startswith(found.base + "/")]:
+        if obj["name"].lower() not in HISTORY_TABLES:
+            continue
+        schema = obj["parent"].rsplit("/", 1)[-1]
+        query = exp.select("*").from_(exp.table_(obj["name"], db=None if kind == "sqlite" else schema)).limit(HISTORY_ROWS).sql(DIALECTS[kind])
+
+        def read(obj=obj, query=query) -> None:
+            result = connection.execute(text(query))
+            names = list(result.keys())
+            obj["data"]["history"] = [{name: (None if value is None else str(value)) for name, value in zip(names, row)} for row in result]
+        found.attempt(f"the history of {obj['name']}", connection, read)
 
 
 def _schemas(inspector: Inspector, kind: str, database: str) -> list[str]:
@@ -440,10 +469,10 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
             if found.path(schema) in found.objects:
                 found.add(found.path(schema, name), "synonym", found.path(schema), name, target=target)
 
-    def column_types() -> None:  # types the Inspector does not know (composite types) come as NULL
+    def column_types() -> None:  # the type as the database writes it (the Inspector loses "with time zone", composite types)
         for schema, table, column, type_ in rows("column types"):
             path = known(schema, table)
-            if path and f"{path}.{column}" in found.objects and found.objects[f"{path}.{column}"]["data"].get("type") == "NULL":
+            if path and f"{path}.{column}" in found.objects:
                 found.objects[f"{path}.{column}"]["data"]["type"] = type_
 
     def statistics() -> None:

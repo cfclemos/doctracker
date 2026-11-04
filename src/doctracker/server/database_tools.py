@@ -5,21 +5,29 @@ connection's database (it reads them by itself, read only) and ask for a databas
 are the user's decisions, made only in the wiki.
 """
 
+from pathlib import Path
+
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
+from doctracker.databases.origins import compare_origin, database_object as object_with_origins, describe_origins
+from doctracker.server.state import DocState
 from doctracker.databases.readonly import run_test
 from doctracker.server.note_tools import refusals_reported
 
 
-def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalog: CatalogStore) -> None:
-    """Add the tools over the project's database connections and what was collected from them.
+def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalog: CatalogStore, state: DocState,
+                            project_root: Path) -> None:
+    """Add the tools over the project's database connections, what was collected from them, and the
+    origins of the schema (SQL files and migrations).
 
     Args:
         mcp: Server to register the tools on.
         connections: Store of the connections (the same one the wiki uses).
         catalog: What was last read from each database (the same store the wiki uses).
+        state: The project as read, with its origins.
+        project_root: Root of the documented project.
     """
 
     @mcp.tool()
@@ -111,7 +119,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @mcp.tool()
     @refusals_reported
     def database_level(at: str = "") -> dict:
-        """Browse the databases as last read, one level of the SQL tree at a time (as the wiki's Tables and columns).
+        """Browse the databases as last read, one level of the SQL tree at a time (as the wiki's Navigate Database).
 
         Args:
             at: Empty for the servers; then a server's path for its databases, a database's for its
@@ -129,18 +137,63 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @mcp.tool()
     @refusals_reported
     def database_object(path: str) -> dict:
-        """Give one object of the databases as last read, with what it holds and its relations.
+        """Give one object of the databases as last read, or one the project's SQL files declare (the same
+        shape), with what it holds and its relations.
 
         Args:
-            path: The object's path, from `database_objects` or a search.
+            path: The object's path, from `database_objects`, `database_origin` or a search
+                (`db:<server>/<database>/<schema>.<name>`, or `origin:<origin>::<schema>.<name>`).
 
         Returns:
             The object (see `database_objects`) with `children` (path, kind, name, data), `relations`
             (`source`, `target`, `kind`; both directions, a table's with its columns' and triggers'),
-            `ends` (kind, name, parent of each object they reach), `read` (when its database was read)
-            and `unavailable` (what could not be read of its database, and why).
+            `ends` (kind, name, parent of each object they reach), `read` (when its database was read),
+            `declared` (a file's: where it was created and last changed), `unavailable` (what could not be
+            read of its database, and why) and, for a table, view or column, `declared_by` on a live one
+            (the origins declaring it and where they differ) or `found_in` on a file's (where it is in the
+            databases its file describes, and where they differ).
         """
-        found = catalog.object(path)
+        found = object_with_origins(path, state.origins, catalog, connections.connections(), project_root)
         if found is None:
-            raise ToolError(f"No object {path} in the databases read. List them with database_objects.")
+            raise ToolError(f"No object {path} in the databases read nor in the SQL files. List them with "
+                            "database_objects or database_origin.")
         return found
+
+    @mcp.tool()
+    @refusals_reported
+    def database_origins() -> list[dict]:
+        """List the origins of the project's database schema: migration sets (Flyway, golang-migrate,
+        dbmate) and SQL files that declare tables, views, functions... read as text, never run.
+
+        Returns:
+            Each origin's `name` (its folder or file), `kind`, `dialect`, `steps` (how many), `unread`
+            (statements not understood), `objects` (how many it ends with) and `links`: the databases it
+            describes, each with `how` the link was made (`chosen` by the user, the tool's `history`
+            table, `declared` in its configuration) and what its history says (steps applied, pending).
+        """
+        described = describe_origins(state.origins, catalog, connections.connections(), project_root)
+        return [{"name": o["name"], "kind": o["kind"], "dialect": o["dialect"], "steps": len(o["steps"]),
+                 "unread": sum(step["unread"] for step in o["steps"]), "objects": len(o["objects"]),
+                 "links": described[o["name"]]["links"], "suggestions": described[o["name"]]["suggestions"]}
+                for o in state.origins]
+
+    @mcp.tool()
+    @refusals_reported
+    def database_origin(name: str) -> dict:
+        """Give one origin of the schema: its steps (each statement's line and what it did), the schema
+        it ends with (each object with the file and line that created and last changed it), the
+        databases it describes and where it differs from each.
+
+        Args:
+            name: The origin's name, from `database_origins`.
+
+        Returns:
+            The origin with `steps`, `objects`, `links`, `unlinked`, `suggestions`, `warning` and
+            `differences` by database (`missing`, `extra`, and per table its `differences`).
+        """
+        origin = next((o for o in state.origins if o["name"] == name), None)
+        if origin is None:
+            raise ToolError(f"No origin {name}. List them with database_origins.")
+        described = describe_origins(state.origins, catalog, connections.connections(), project_root)[name]
+        return {**origin, **described,
+                "differences": {link["database"]: compare_origin(origin, catalog, link["database"]) for link in described["links"]}}

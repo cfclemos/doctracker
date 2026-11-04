@@ -48,8 +48,8 @@ renames another and adds an index: what a migration lint must flag):
 
 | Origin | Where |
 | --- | --- |
-| Flyway | `origins/flyway/V1__catalog.sql` … `V5__cleanup.sql` |
-| golang-migrate | `origins/golang-migrate/000001_catalog.up.sql` … with their `.down.sql` |
+| Flyway | `origins/flyway/V1__catalog.sql` … `V5__cleanup.sql`, and `flyway.conf` naming its database; loaded by Flyway's own image (`flyway_schema_history`) |
+| golang-migrate | `origins/golang-migrate/000001_catalog.up.sql` … with their `.down.sql`; loaded by golang-migrate's own image (`schema_migrations`) |
 | Alembic | `origins/alembic/` — step 3 split into two branches joined by a merge revision |
 | Django | `origins/django/shop/` — models and five migrations |
 | SQLAlchemy models | `origins/sqlalchemy/models.py` |
