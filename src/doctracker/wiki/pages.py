@@ -1,6 +1,7 @@
 """Turn extracted entities into the data the wiki templates display."""
 
 import re
+from os.path import commonprefix
 from urllib.parse import quote
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -158,18 +159,25 @@ def _is_dark(color: str) -> bool:
     return red * 0.299 + green * 0.587 + blue * 0.114 < 128
 
 
+SQL_LEXERS = {"sql": "sql", "postgres": "postgresql", "mysql": "mysql", "tsql": "tsql", "sqlite": "sql"}
+"""Pygments' lexer for each SQL dialect an SQL file of DATABASES is read in."""
+
+
 def highlight(code: str, language: str = "python") -> Markup:
     """Turn code into HTML with syntax highlighting.
 
     Args:
         code: Python source, or an interactive session starting with `>>>` (console lexer).
-        language: `python`, or the `language` of another entity (`js`, `css`, `html`, `java`...).
+        language: `python`, or the `language` of another entity (`js`, `css`, `html`, `java`...), or an
+            SQL dialect (`SQL_LEXERS`).
 
     Returns:
         Token spans with Pygments classes, safe to insert in a template.
     """
     if language in _frontend_lexers:
         lexer = _frontend_lexers[language]
+    elif language in SQL_LEXERS:  # an SQL file of DATABASES, in its dialect
+        lexer = get_lexer_by_name(SQL_LEXERS[language])
     elif language != "python" and language in LANGUAGES:
         lexer = get_lexer_by_name(language, startinline=True)
     else:
@@ -393,29 +401,54 @@ def projects(state: DocState, apart: str = "", within: str = "") -> list[tuple[s
     for entity in state.entities.values():
         if entity["kind"] != "module" or apart and _inside(entity, (apart,)):
             continue
-        parts = entity["filepath"].split("/")
-        if within:
-            depth = within.count("/") + 1
-            if not _inside(entity, (within,)) or len(parts) <= depth:
-                continue
-            if len(parts) == depth + 1:  # a file right in the folder: its own root files
-                name, folders, link = "(root)", [entity["filepath"]], ""
-            else:
-                name, folders, link = parts[depth], ["/".join(parts[:depth + 1])], ""
-        elif parts[0] in MEMBER_FOLDERS and len(parts) > 2:
-            name, folders, link = parts[1], ["/".join(parts[:2])], ""
-        else:
-            owner = next((path for path, places in roots.items() if _inside(entity, tuple(places))), None)
-            if owner:
-                name, folders, link = state.entities[owner]["name"], roots[owner], owner
-            elif len(parts) > 1:
-                name, folders, link = parts[0], [parts[0]], ""
-            else:
-                name, folders, link = "(root)", [entity["filepath"]], ""
+        if within and (not _inside(entity, (within,)) or entity["filepath"].count("/") <= within.count("/")):
+            continue
+        name, folders, link = _project_of(state, roots, entity["filepath"], within)
         known_folders, known_link = found.get(name, ([], ""))
         found[name] = (list(dict.fromkeys(known_folders + folders)), known_link or link)
     return [(name, folders, link) for name, (folders, link) in sorted(found.items())]
 
+
+
+def _project_of(state: DocState, roots: dict[str, list[str]], filepath: str, within: str = "") -> tuple[str, list[str], str]:
+    """The project a file belongs to, by the rules of `projects`: `(name, folders, link)`."""
+    parts = filepath.split("/")
+    entity = {"filepath": filepath}
+    if within:
+        depth = within.count("/") + 1
+        if len(parts) == depth + 1:  # a file right in the folder: its own root files
+            return "(root)", [filepath], ""
+        return parts[depth], ["/".join(parts[:depth + 1])], ""
+    if parts[0] in MEMBER_FOLDERS and len(parts) > 2:
+        return parts[1], ["/".join(parts[:2])], ""
+    owner = next((path for path, places in roots.items() if _inside(entity, tuple(places))), None)
+    if owner:
+        return state.entities[owner]["name"], roots[owner], owner
+    if len(parts) > 1:
+        return parts[0], [parts[0]], ""
+    return "(root)", [filepath], ""
+
+
+def project_of(state: DocState, place: str, apart: str = "", folder: bool = False) -> str:
+    """The name of the project a file or a folder belongs to, as CODE groups them; inside `apart` (the
+    examples, while doctracker itself is documented) each subfolder is a project, named with `apart`.
+
+    Args:
+        state: Extracted entities.
+        place: The file or folder, relative to the repository (`.` or empty: the root).
+        apart: A folder whose subfolders are projects of their own; empty for none.
+        folder: `place` is a folder.
+
+    Returns:
+        The project's name (`(root)` for what lies at the root).
+    """
+    if not place or place == ".":
+        return "(root)"
+    filepath = f"{place}/-" if folder else place  # a folder as a file inside it
+    if apart and filepath.startswith(f"{apart}/"):
+        return f"{apart}/{_project_of(state, {}, filepath, apart)[0]}" if filepath.count("/") > apart.count("/") + 1 else apart
+    roots = {path: _locations(state.entities[path]) for path in state.roots if path in state.entities}
+    return _project_of(state, roots, filepath)[0]
 
 
 def project_groups(state: DocState, apart: str = "") -> list[dict]:
@@ -1015,7 +1048,7 @@ def dead_code_of(state: DocState, path: str) -> dict | None:
     return next((row for row in state.dead_code if row["path"] == path), None)
 
 
-# --- Database objects (DATABASE): their pages and the Tables and columns list.
+# --- Database objects (DATABASE): their pages and the Navigate Database list.
 
 DB_MARKS = {"pk": "primary key", "fk": "foreign key", "unique": "unique", "index": "indexed",
             "generated": "computed by the database", "null": "null allowed"}
@@ -1023,14 +1056,23 @@ DB_MARKS = {"pk": "primary key", "fk": "foreign key", "unique": "unique", "index
 
 
 def db_place(path: str) -> str:
-    """Where a database object is, without its server: `database/schema.table.column` (a server: its address)."""
+    """Where a database object is, without its server: `database/schema.table.column` (a server: its address;
+    what a file declares, `origin:<file>::<schema>.<name>`: `schema.name`)."""
+    if path.startswith("origin:"):
+        return path.split("::", 1)[-1] if "::" in path else path.removeprefix("origin:")
     parts = path.removeprefix("db:").split("/", 1)
     return parts[1] if len(parts) > 1 else parts[0]
 
 
 def db_crumbs(path: str) -> list[tuple[str, str]]:
     """What a database object sits in, as `(path, name)`, outermost first: its server, database, schema,
-    and the table holding a column or a trigger."""
+    and the table holding a column or a trigger (what a file declares: its file, schema and table)."""
+    if path.startswith("origin:"):
+        base, _, inner = path.partition("::")
+        crumbs = [(base, base.rsplit("/", 1)[-1])] if inner else []
+        holder, _, trigger = inner.partition(":")
+        names = holder.split(".") + ([""] if trigger else [])
+        return crumbs + [(f"{base}::{'.'.join(names[:depth])}", names[depth - 1]) for depth in range(1, len(names))]
     server, *rest = path.removeprefix("db:").split("/")
     crumbs, current = [], f"db:{server}"
     if rest:
@@ -1081,7 +1123,7 @@ def size_text(size: int | None) -> str:
 
 
 def _list_columns(*columns: tuple[str, str, str]) -> list[dict]:
-    """The columns of a level of the Tables and columns list, with the page icon's own column right after
+    """The columns of a level of the Navigate Database list, with the page icon's own column right after
     Rows (or, without Rows, before Comment; else last)."""
     found = [{"key": key, "title": title, "filter": kind} for key, title, kind in columns]
     keys = [column["key"] for column in found]
@@ -1103,7 +1145,7 @@ LIST_COLUMNS = {
     "search": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("where", "Where", "text"),
                             ("rows", "Rows", "number"), ("comment", "Comment", "text")),
 }
-"""The columns of each level of DATABASE › Tables and columns (and of its Search): key, title, and whether
+"""The columns of each level of DATABASE › Navigate Database (and of its Search): key, title, and whether
 it has a filter (any value: the filter lists its values to choose from; empty: none)."""
 
 
@@ -1190,3 +1232,134 @@ def browse_url(picked: dict[str, list[str]]) -> str:
     """The address of Browse with these ticks in its path (levels missing: nothing ticked)."""
     query = [("tab", "objects"), ("mode", "browse")] + [(BROWSE_FIELDS[level], path) for level, paths in picked.items() for path in paths]
     return "/database?" + "&".join(f"{key}={quote(value, safe='')}" for key, value in query)
+
+
+# --- DATABASES in the tree: by project, its connections (what was read) and its files (what they declare).
+
+DB_GROUPS = (("table", "Tables"), ("foreign table", "Foreign tables"), ("view", "Views"), ("materialized view", "Materialized views"),
+             ("function", "Functions"), ("procedure", "Procedures"), ("aggregate", "Aggregates"), ("trigger", "Triggers"),
+             ("sequence", "Sequences"), ("type", "Types"), ("enum", "Types"), ("domain", "Domains"), ("synonym", "Synonyms"))
+"""The groups a schema (or a file) opens into, in order, by kind of object."""
+
+DB_ROLES = {"table": "struct", "foreign table": "struct", "view": "struct", "materialized view": "struct", "function": "function",
+            "procedure": "function", "aggregate": "function", "trigger": "attribute", "sequence": "attribute", "type": "type alias",
+            "enum": "enum", "domain": "type alias", "synonym": "attribute"}
+"""The role (icon and colour of the tree) each kind of database object takes."""
+
+
+def _db_groups(objects: list[tuple[str, str, str]], current: str, place: str) -> list[dict]:
+    """The kind groups of a schema or a file, each opening into its objects (`(path, kind, name)`)."""
+    groups: dict[str, dict] = {}
+    for kind, title in DB_GROUPS:
+        members = sorted((o for o in objects if o[1] == kind), key=lambda o: o[2].lower())
+        if not members:
+            continue
+        group = groups.setdefault(title, {"path": f"{place}#{title}", "name": title, "role": "package", "symbol": "",
+                                          "link": False, "current": False, "children": []})
+        group["children"] += [{"path": path, "name": name, "role": DB_ROLES.get(kind, "attribute"),
+                               "symbol": SYMBOLS.get(DB_ROLES.get(kind, "attribute"), ""), "link": True,
+                               "current": path == current, "children": []} for path, kind, name in members]
+    return list(groups.values())
+
+
+def database_tree(state: DocState, connections: list[dict], current: str = "", apart: str = "",
+                  available: dict[str, str] | None = None, read: dict[str, list[tuple[str, str, str, str]]] | None = None) -> list[dict]:
+    """DATABASES in the tree: Connections first, every connection of doctracker, each opening its own
+    screen (green it answers, red it failed, grey blocked) and holding what was read of it (› database
+    › schema › Tables, Views, Functions… › object, each to its page); then the projects, each with its SQL files and migration sets
+    in their folders (as CODE's: a folder holding only one folder shown with it on one line, a migration
+    set named after its folder), opening into what they declare (› kinds › object); the root's files
+    come straight after them.
+
+    Args:
+        state: Extracted entities, with the origins.
+        connections: Every connection of the project (`ConnectionStore.connections`).
+        current: The path of the page shown, marked in the tree.
+        apart: A folder whose subfolders are projects of their own (the examples, in doctracker itself).
+        available: By connection, whether it answers: `ok` (its last reading worked), `failed` (its last
+            reading or test failed); one missing was not read yet.
+        read: By connection, what was read of it but the columns (`CatalogStore.outline`).
+
+    Returns:
+        Nodes as the tree's `node` macro draws them (`path`, `name`, `role`, `symbol`, `link`,
+        `current`, `children`).
+    """
+    def node(path: str, name: str, link: bool = True, role: str = "package") -> dict:
+        return {"path": path, "name": name, "role": role, "symbol": "", "link": link, "current": path == current, "children": []}
+
+    # Each connection opens its own screen (DATABASE › Connections, its details), green allowed, red blocked.
+    available, read = available or {}, read or {}
+
+    def databases(objects: list[tuple[str, str, str, str]]) -> list[dict]:
+        """A connection's databases, each opening into its schemas, then their kind groups."""
+        children: dict[str, list[tuple[str, str, str, str]]] = {}
+        for item in objects:
+            children.setdefault(item[2], []).append(item)
+        found = []
+        for path, kind, _, name in objects:
+            if kind != "database":
+                continue
+            branch = node(path, name, role="database")
+            for schema_path, schema_kind, _, schema_name in children.get(path, []):
+                if schema_kind != "schema":
+                    continue
+                schema = node(schema_path, schema_name, role="folder")
+                inside = [(p, k, n) for p, k, _, n in objects if p.startswith(f"{schema_path}.")]
+                schema["children"] = _db_groups(inside, current, schema_path)
+                branch["children"].append(schema)
+            found.append(branch)
+        return found
+
+    branches = []
+    for c in connections:
+        branch = node(f"connection:{c['id']}", c["name"],
+                      role=f"connection-{available.get(c['id'], 'unread')}" if c.get("allowed") else "connection-blocked")
+        branch["children"] = databases(read.get(c["id"], [])) if c.get("allowed") else []
+        branches.append(branch)
+    tree = []
+    if branches:
+        connections_node = node("databases:connections", "Connections", link=False, role="connections")
+        connections_node["children"] = branches
+        tree.append(connections_node)
+    projects: dict[str, list[tuple[str, dict]]] = {}  # by project: (the folder it lies in, its node)
+    for origin in state.origins:
+        inside = [(path, kind, name) for path, kind, _, name in read.get(f"origin:{origin['name']}", [])  # as a connection's, from the store
+                  if kind not in ("database", "schema")]
+        branch = node(f"origin:{origin['name']}", origin["name"].rsplit("/", 1)[-1], role="module")
+        branch["children"] = _db_groups(inside, current, f"origin:{origin['name']}")
+        migrations = origin["kind"] in ("flyway", "golang-migrate", "dbmate")
+        place = str(PurePosixPath(origin["name"]).parent)  # a migration set is its folder, in the folder above it
+        projects.setdefault(project_of(state, origin["folder"] if migrations else origin["name"], apart, folder=migrations),
+                            []).append(("" if place == "." else place, branch))
+
+    def folders(placed: list[tuple[str, dict]]) -> list[dict]:
+        """The nodes in their folders, from the folder they all share on: folders first, then the files."""
+        shared = PurePosixPath(*commonprefix([PurePosixPath(place).parts for place, _ in placed])) if placed else PurePosixPath()
+        root: dict = {"folders": {}, "files": []}
+        for place, branch in placed:
+            at = root
+            for part in PurePosixPath(place).relative_to(shared).parts if place else ():
+                at = at["folders"].setdefault(part, {"folders": {}, "files": []})
+            at["files"].append(branch)
+
+        def nodes(at: dict, prefix: str) -> list[dict]:
+            found = []
+            for name, child in sorted(at["folders"].items()):
+                label = name
+                while not child["files"] and len(child["folders"]) == 1:
+                    (inner, child), = child["folders"].items()
+                    label = f"{label}/{inner}"
+                location = f"{prefix}{label}"
+                found.append({**node(f"databases-folder:{shared}/{location}", label, link=False, role="folder"),
+                              "children": nodes(child, f"{location}/")})
+            return found + sorted(at["files"], key=lambda item: item["name"])
+
+        return nodes(root, "")
+
+    for project, placed in sorted(projects.items()):
+        if project == "(root)":
+            continue
+        branch = node(f"databases:{project}", project, link=False, role="project")
+        branch["children"] = folders(placed)
+        tree.append(branch)
+    return tree + folders(projects.get("(root)", []))

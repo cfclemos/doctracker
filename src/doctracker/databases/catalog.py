@@ -26,12 +26,15 @@ CREATE TABLE IF NOT EXISTS relations (
   target TEXT NOT NULL, kind TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS relations_source ON relations (collection, source);
 CREATE INDEX IF NOT EXISTS relations_target ON relations (collection, target);
+CREATE TABLE IF NOT EXISTS origin_links (
+  origin TEXT NOT NULL, database TEXT NOT NULL, linked INTEGER NOT NULL, PRIMARY KEY (origin, database));
 CREATE TABLE IF NOT EXISTS unavailable (
   collection INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, what TEXT NOT NULL, reason TEXT NOT NULL);
 """
 """Tables: `collections` (per connection, its last successful collection and a later failed one, with
 the other `databases` on the server as JSON and a `fingerprint` of what was read), `objects` (what the collection read, `data` as JSON),
-`relations` and `unavailable`."""
+`relations` and `unavailable`; `origin_links`, the links between an origin (SQL files, migrations) and a
+database chosen by hand (`linked` 1) or taken away by hand (0)."""
 
 SEARCHED_KINDS = ("table", "view", "materialized view", "foreign table", "column", "function", "procedure",
                   "aggregate", "trigger", "sequence", "enum", "domain", "synonym")
@@ -46,6 +49,14 @@ UNIVERSE_RELATIONS = ("foreign key", "implied", "view reads", "foreign table")
 
 _CURRENT = "SELECT id FROM collections WHERE ok = 1"
 """The current collection of each connection: its last successful one, the only one kept."""
+
+ORIGINS = "origin:"
+"""What starts the connection of a collection made from a file (`databases.origins.as_collection`):
+kept beside the live databases, read by `object`, `outline`, the search and a file's own Universe,
+left out of what lists the live databases."""
+
+_LIVE = f"{_CURRENT} AND connection NOT LIKE '{ORIGINS}%'"
+"""The current collections of the live databases only."""
 
 
 class CatalogStore:
@@ -82,7 +93,7 @@ class CatalogStore:
         finally:
             connection.close()
 
-    def save(self, connection_id: str, name: str, result: dict) -> dict:
+    def save(self, connection_id: str, name: str, result: dict, tell: bool = True) -> dict:
         """Keep a collection in place of the one before; a failed one is noted beside the state read before.
 
         The wiki is told only when something read differs from the reading it replaces, so the
@@ -92,9 +103,10 @@ class CatalogStore:
             connection_id: The connection collected.
             name: The connection's name, as the user knows it.
             result: What `collect.collect` returned.
+            tell: Tell the wiki when it changed; False when the caller tells it once for several.
 
         Returns:
-            The connection's state (see `collection`).
+            The connection's state (see `collection`), with `changed`: whether it differs from the one before.
         """
         fingerprint = hashlib.sha256(json.dumps(
             [result[key] for key in ("ok", "error", "databases", "objects", "relations", "unavailable")],
@@ -118,9 +130,29 @@ class CatalogStore:
                                    [(collection, r["source"], r["target"], r["kind"]) for r in result["relations"]])
             connection.executemany("INSERT INTO unavailable VALUES (?, ?, ?)",
                                    [(collection, u["what"], u["reason"]) for u in result["unavailable"]])
-        if replaced is None or replaced["fingerprint"] != fingerprint:
+        changed = replaced is None or replaced["fingerprint"] != fingerprint
+        if changed and tell:
             self._on_change()
-        return self.collection(connection_id)
+        return {**(self.collection(connection_id) or {}), "changed": changed}
+
+    def keep_origins(self, collections: list[dict]) -> None:
+        """Keep what the project's files declare, as collections beside the live databases (connection
+        `origin:<name>`), in place of the ones before; those of files gone are dropped. The wiki is told
+        once, when any changed.
+
+        Args:
+            collections: What `databases.origins.as_collection` gives of each origin.
+        """
+        changed = False
+        for collection in collections:
+            changed |= self.save(f"{ORIGINS}{collection['database']}", collection["database"], collection, tell=False)["changed"]
+        kept = [f"{ORIGINS}{c['database']}" for c in collections]
+        with self._connect(write=True) as connection:
+            changed |= connection.execute(
+                f"DELETE FROM collections WHERE connection LIKE '{ORIGINS}%'"
+                + (f" AND connection NOT IN ({', '.join('?' * len(kept))})" if kept else ""), kept).rowcount > 0
+        if changed:
+            self._on_change()
 
     def forget(self, connection_id: str) -> None:
         """Drop what was read from a connection (blocked, changed or deleted).
@@ -171,22 +203,24 @@ class CatalogStore:
             row = connection.execute("SELECT max(started) FROM collections WHERE connection = ?", (connection_id,)).fetchone()
         return row[0] or ""
 
-    def objects(self, connection_id: str = "", kind: str = "", schema: str = "", within: str = "", name: str = "") -> list[dict]:
+    def objects(self, connection_id: str = "", kind: str = "", schema: str = "", within: str = "", name: str = "",
+                origins: bool = False) -> list[dict]:
         """The objects of the databases as last read, every connection's or one's.
 
         Args:
-            connection_id: Only this connection's; empty for all.
+            connection_id: Only this connection's (a file's: `origin:<name>`); empty for every live database's.
             kind: Only this kind (`table`, `view`, `column`, `function`...); empty for all.
             schema: Only the objects inside a schema of this name; empty for all.
             within: Only what is inside this server, database or schema (its path, e.g.
                 `db:127.0.0.1:5432/shop`); empty for all.
             name: Only the objects whose name holds this text (any case); empty for all.
+            origins: Also what the project's files declare (see `keep_origins`).
 
         Returns:
             Each object's `path`, `kind`, `parent`, `name`, `connection` and `data`, by path.
         """
         query = (f"SELECT o.*, c.connection FROM objects o JOIN collections c ON c.id = o.collection "
-                 f"WHERE o.collection IN ({_CURRENT})")
+                 f"WHERE o.collection IN ({_CURRENT if origins or connection_id else _LIVE})")
         values: list = []
         for column, value in (("c.connection", connection_id), ("o.kind", kind)):
             if value:
@@ -204,18 +238,31 @@ class CatalogStore:
         with self._connect() as connection:
             return [_object(row) for row in connection.execute(query + " ORDER BY o.path", values)]
 
+    def outline(self) -> dict[str, list[tuple[str, str, str, str]]]:
+        """What the tree shows of the databases read and of what the files declare, by connection (a
+        file's: `origin:<name>`): every object but the columns, as `(path, kind, parent, name)`, in path order."""
+        query = (f"SELECT o.path, o.kind, o.parent, o.name, c.connection FROM objects o JOIN collections c ON c.id = o.collection "
+                 f"WHERE o.collection IN ({_CURRENT}) AND o.kind != 'column' ORDER BY o.path")
+        found: dict[str, list[tuple[str, str, str, str]]] = {}
+        with self._connect() as connection:
+            for row in connection.execute(query):
+                found.setdefault(row["connection"], []).append((row["path"], row["kind"], row["parent"], row["name"]))
+        return found
+
     def object(self, path: str) -> dict | None:
         """One object of the databases as last read, with what it holds and its relations.
 
         Args:
-            path: The object's path (`db:<server>/<database>/<schema>.<name>`).
+            path: The object's path (`db:<server>/<database>/<schema>.<name>`; what a file declares:
+                `origin:<name>::<schema>.<name>`).
 
         Returns:
             The object (see `objects`) with `children` (`path`, `kind`, `name`, `data` of what it holds),
             `relations` (`source`, `target`, `kind`, both ways; a table's or view's include its columns'
             and triggers'), `ends` (`kind`, `name`, `parent` of every object those relations reach, by
-            path), `read` (when its database was read) and `unavailable` (what could not be read of its
-            database, and why); None when no database read holds it.
+            path), `read` (when its database was read; empty for a file's), `declared` (a file's: where
+            it was created and last changed) and `unavailable` (what could not be read of its database,
+            and why); None when no database read holds it.
         """
         with self._connect() as connection:
             row = connection.execute(
@@ -225,6 +272,7 @@ class CatalogStore:
                 return None
             found = _object(row)
             found["read"] = row["started"]
+            found["declared"] = found["data"].pop("declared", None)
             found["children"] = [{"path": r["path"], "kind": r["kind"], "name": r["name"], "data": json.loads(r["data"])}
                                  for r in connection.execute("SELECT * FROM objects WHERE collection = ? AND parent = ? ORDER BY rowid",
                                                              (row["collection"], path))]
@@ -242,7 +290,7 @@ class CatalogStore:
         return found
 
     def level(self, at: str = "") -> dict:
-        """One level of the SQL tree, as the Tables and columns tab browses it: what `at` holds, one row each.
+        """One level of the SQL tree, as the Navigate Database tab browses it: what `at` holds, one row each.
 
         Args:
             at: Empty for the servers; a server's path for its databases, a database's for its schemas,
@@ -305,6 +353,28 @@ class CatalogStore:
             rows.append(row)
         return {"at": at, "level": level, "rows": rows}
 
+    def origin_choices(self) -> dict[tuple[str, str], bool]:
+        """The links between origins and databases chosen by hand: True linked, False taken away."""
+        with self._connect() as connection:
+            return {(origin, database): bool(linked) for origin, database, linked in connection.execute(
+                "SELECT origin, database, linked FROM origin_links")}
+
+    def choose_origin_link(self, origin: str, database: str, linked: bool | None) -> None:
+        """Link an origin to a database by hand (True), take a link away (False), or leave it to the
+        other layers again (None).
+
+        Args:
+            origin: The origin's name (its folder or file).
+            database: The database's path (`db:<server>/<database>`).
+            linked: The choice.
+        """
+        with self._connect(write=True) as connection:
+            if linked is None:
+                connection.execute("DELETE FROM origin_links WHERE origin = ? AND database = ?", (origin, database))
+            else:
+                connection.execute("INSERT OR REPLACE INTO origin_links VALUES (?, ?, ?)", (origin, database, int(linked)))
+        self._on_change()
+
     def searchable(self) -> dict[str, dict]:
         """The objects of the databases as last read, as search documents.
 
@@ -313,7 +383,7 @@ class CatalogStore:
             `text` (kind, path, type and comment), the words the search compares.
         """
         documents = {}
-        for found in self.objects():
+        for found in self.objects(origins=True):  # what the files declare, found as the live objects are
             if found["kind"] in SEARCHED_KINDS:
                 data = found["data"]
                 described = " ".join(str(part) for part in (found["kind"], data.get("type", "")) if part)
@@ -322,8 +392,11 @@ class CatalogStore:
                     str(part) for part in (found["kind"], found["path"], data.get("type", ""), data.get("comment", "")) if part)}
         return documents
 
-    def universe(self) -> dict:
+    def universe(self, origin: str = "") -> dict:
         """The databases as last read, as the Universe draws them: the SQL tree and the relations.
+
+        Args:
+            origin: Draw what this file declares instead (its collection's connection, `origin:<name>`).
 
         Returns:
             `nodes`: `id` (the path; a server is `db:<host:port>`), `label`, `kind` (`server`, `database`,
@@ -333,12 +406,12 @@ class CatalogStore:
             table), both ends drawn.
         """
         nodes: dict[str, dict] = {}
-        for found in self.objects():
+        for found in self.objects(connection_id=origin):
             kind = UNIVERSE_KINDS.get(found["kind"])
             if kind is None:
                 continue
-            node = {"id": found["path"], "label": found["name"], "kind": kind, "parent": found["parent"]}
-            if kind == "database":
+            node = {"id": found["path"], "label": found["name"], "kind": kind, "parent": found["parent"] or None}
+            if kind == "database" and found["parent"]:
                 server = found["parent"]
                 nodes.setdefault(server, {"id": server, "label": server.removeprefix("db:"), "kind": "server", "parent": None})
             if kind == "column":
@@ -349,8 +422,10 @@ class CatalogStore:
                 node["subkind"] = found["kind"]
             nodes.setdefault(found["path"], node)
         with self._connect() as connection:
-            rows = connection.execute(f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT}) "
-                                      f"AND kind IN ({', '.join('?' * len(UNIVERSE_RELATIONS))})", UNIVERSE_RELATIONS).fetchall()
+            rows = connection.execute(f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN "
+                                      f"({_CURRENT + ' AND connection = ?' if origin else _LIVE}) "
+                                      f"AND kind IN ({', '.join('?' * len(UNIVERSE_RELATIONS))})",
+                                      ([origin] if origin else []) + list(UNIVERSE_RELATIONS)).fetchall()
         # A foreign table names its server as that server reaches it (a name inside its network, say),
         # not as doctracker does: without that exact path, the one table with its database and name.
         by_place: dict[str, list[str]] = {}

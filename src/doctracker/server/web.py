@@ -16,6 +16,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.discovery import KINDS
+from doctracker.databases.origins import compare_origin, database_object as object_with_origins, describe_origins
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
@@ -127,6 +128,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         dead_code_of=pages.dead_code_of,
         db_place=pages.db_place,
         db_marks=pages.DB_MARKS,
+        db_groups=[(title, [kind for kind, same in pages.DB_GROUPS if same == title])
+                   for title in dict.fromkeys(title for _, title in pages.DB_GROUPS)],
         browse_counts=pages.BROWSE_COUNTS,
     )
     templates.filters["size"] = pages.size_text
@@ -151,6 +154,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             content=content, page_url=url, state=state,
             tree=pages.tree(state, current, layout, shown, EXAMPLES_FOLDER if developing else ""),
             examples_tree=pages.tree(state, current, layout, shown, within=EXAMPLES_FOLDER) if developing else [],
+            database_tree=pages.database_tree(state, connections.connections(), current, EXAMPLES_FOLDER if developing else "",
+                                              availability(), catalog.outline()),
             tree_layout=layout, tree_layouts=pages.TREE_LAYOUTS, shown_languages=shown,
             diagram_tab=request.cookies.get("diagram-tab") if request.cookies.get("diagram-tab") in DIAGRAM_TABS else "architecture",
             languages_found=pages.languages_found(state), **context)
@@ -172,9 +177,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return earlier
 
     def database_object(path: str) -> dict | None:
-        """A database object's page data: what the catalog holds of it; a server, which is no object of its
-        own, as what holds its databases."""
-        found = catalog.object(path)
+        """A database object's page data, a live one's or one a file declares (the same, from the same
+        store): what the catalog holds of it; a server, which is no object of its own, as what holds its
+        databases. A live table, view or column lists the files declaring it (`declared_by`); one a file
+        declares, where it is in the databases its file describes (`found_in`)."""
+        found = object_with_origins(path, state.origins, catalog, connections.connections(), project_root)
         if found is None and path.count("/") == 0:
             databases = [o for o in catalog.objects(kind="database") if o["parent"] == path]
             if databases:
@@ -185,11 +192,29 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             found["crumbs"] = pages.db_crumbs(path)
         return found
 
+    def database_origin(name: str) -> dict | None:
+        """An origin's page data: the origin as read, the databases it describes (its links, told in one
+        line; the rest of it is DATABASE › Drift) and what it ends with (`declared`), from the same store
+        as the live databases."""
+        origin = next((o for o in state.origins if o["name"] == name), None)
+        if origin is None:
+            return None
+        return {**origin, **describe_origins(state.origins, catalog, connections.connections(), project_root)[name],
+                "declared": catalog.objects(connection_id=f"origin:{name}")}  # what it ends with, as the store keeps it
+
     async def render(request: Request, path: str) -> HTMLResponse:
-        if path.startswith("db:"):  # an object of a database the server read
+        if path.startswith("connection:"):  # a connection in the tree: its screen, DATABASE › Connections with its details open
+            context = {"path": path, "view": "database", "params": {"tab": "connections"},
+                       **database_context({"tab": "connections"}), "open_connection": path.removeprefix("connection:")}
+            return render_page(request, "database.html", f"/wiki/{path}", context)
+        if path.startswith("origin:") and "::" in path or path.startswith("db:"):  # an object, a live database's or a file's
             found = database_object(path)
             content, status = ("database_object.html", 200) if found else ("not_found.html", 404)
             return render_page(request, content, f"/wiki/{path}", {"path": path, "item": found}, status)
+        if path.startswith("origin:"):  # an origin of the schema: SQL files, migrations
+            found = database_origin(path.removeprefix("origin:"))
+            content, status = ("database_origin.html", 200) if found else ("not_found.html", 404)
+            return render_page(request, content, f"/wiki/{path}", {"path": path, "origin": found}, status)
         entity = state.entities.get(path)
         context = {"path": path, "entity": entity}
         if not state.ready:
@@ -242,7 +267,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         if view == "database":
-            # A column filter of Tables and columns may hold several values (`f_<column>` repeated).
+            # A column filter of Navigate Database may hold several values (`f_<column>` repeated).
             params["filters"] = {key[2:]: request.query_params.getlist(key) for key in request.query_params if key.startswith("f_")}
             # Browse: the servers, databases, schemas and tables ticked in the path, several each.
             params["picked"] = {level: request.query_params.getlist(field) for level, field in pages.BROWSE_FIELDS.items()}
@@ -258,8 +283,20 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
 
+    def availability() -> dict[str, str]:
+        """Whether each connection answers: `failed` when its last reading or its last test failed, `ok`
+        when it was read; a connection never read is left out."""
+        found = {}
+        for connection in connections.connections():
+            read, test = catalog.collection(connection["id"]), connection_tests.get(connection["id"])
+            if (read and read.get("failure")) or (test and not test["ok"]):
+                found[connection["id"]] = "failed"
+            elif read and read.get("started"):
+                found[connection["id"]] = "ok"
+        return found
+
     def database_context(params: dict, error: str = "") -> dict:
-        """What DATABASE shows: its tab (Connections, Universe or Tables and columns), the connections, their
+        """What DATABASE shows: its tab (Connections, Universe or Navigate Database), the connections, their
         last tests, whether the saved passwords wait for the master password, whether any database was
         read, the list of objects with its filters, and a refusal to show on top."""
         tab = params.get("tab", "connections")
@@ -269,7 +306,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                    "has_collections": bool(catalog.objects(kind="database"))}
         if tab == "objects":
             context.update(objects_list(params))
+        if tab == "drift":
+            context.update(drift=drift(), catalog_databases=catalog.objects(kind="database"))
         return context
+
+    def drift() -> list[dict]:
+        """The Drift tab: each origin (SQL files, migrations) with the databases it describes (how each
+        link was made), its suggestions and its differences from each database linked."""
+        described = describe_origins(state.origins, catalog, connections.connections(), project_root)
+        return [{**origin, **described[origin["name"]],
+                 "comparisons": {link["database"]: compare_origin(origin, catalog, link["database"]) for link in described[origin["name"]]["links"]}}
+                for origin in state.origins]
 
     OBJECTS_PER_PAGE = 50
 
@@ -301,7 +348,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return "columns", rows, crumbs
 
     def objects_list(params: dict) -> dict:
-        """The Tables and columns tab. Browse (the default): one level of the SQL tree (`at`), its own
+        """The Navigate Database tab. Browse (the default): one level of the SQL tree (`at`), its own
         columns. Search: every object read, filtered by database (or a server, from a page), schema, kind
         and name. In both, each column's own filter (the values chosen in it, `params["filters"]`) and the
         order chosen by its title; one page of the rows, the values each filter lists and the filters in use."""
@@ -366,9 +413,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         query = request.query_params
         return HTMLResponse(database_modal(query.get("details", ""), bool(query.get("edit"))))
 
+    async def refresh_quietly(connection_id: str) -> None:
+        """Read a connection again; one that cannot be opened now (locked passwords, a variable not set)
+        keeps what it had, its failure shown by its reading."""
+        try:
+            await collect_connection(connections, catalog, connection_id)
+        except (ValueError, Locked):
+            pass
+
     async def database_action(request: Request) -> Response:
         """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
-        or unlock the saved passwords.
+        unlock the saved passwords, or link an origin to a database by hand (`origin-link`).
 
         The same store the MCP tools use. Sent from a connection's details (`modal`), the details come
         back (a refusal shown in them) and its card follows; otherwise the page comes back redrawn,
@@ -378,6 +433,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return Response("", status_code=403)
         form = {key: value for key, value in (await request.form()).items()}
         name, identifier = request.path_params["action"], form.get("id", "")
+        if name == "refresh-all":  # the tree's refresh: every allowed connection read again now, in the background
+            for connection in connections.connections():
+                if connection["allowed"]:
+                    asyncio.create_task(refresh_quietly(connection["id"]))
+            return Response("", status_code=204)
+        if name == "origin-link":  # an origin linked to a database by hand, unlinked, or left to the other layers
+            choice = {"1": True, "0": False}.get(form.get("linked", ""))
+            if form.get("origin") and form.get("database"):
+                catalog.choose_origin_link(form["origin"], form["database"], choice)
+            context = {"path": "", "view": "database", "params": {"tab": "drift"}, **database_context({"tab": "drift"})}
+            return render_page(request, "database.html", "/database?tab=drift", context)
         actions = {
             "allow": lambda: connections.allow(identifier),
             "block": lambda: connections.allow(identifier, False),
@@ -717,8 +783,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "timeline":  # when each file appeared, for the timeline of the architecture
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
-        if view == "universe":  # DATABASE › Universe: the databases as the server last read them
-            return JSONResponse(catalog.universe())
+        if view == "universe":  # DATABASE › Universe: the databases as the server last read them; or what a file declares
+            return JSONResponse(catalog.universe(params.get("origin", "")))
         if view == "local":  # an entity's page: the entity and its neighbours, a few steps away
             graph = call_graph(state, params.get("focus", ""), depth_of(params), "both", kinds=LOCAL_KINDS)
             return JSONResponse(pages.visible_graph(state, graph, shown))
@@ -733,7 +799,15 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return await render(request, request.path_params["path"])
 
     async def source(request: Request) -> Response:
-        entity = state.entities.get(request.path_params["path"])
+        path = request.path_params["path"]
+        if path.startswith("file:"):  # an SQL file of an origin (DATABASES), in the origin's dialect; no other file
+            file = path.removeprefix("file:")
+            origin = next((o for o in state.origins for step in o["steps"] if file in (step["file"], step.get("down"))), None)
+            if origin is None:
+                return HTMLResponse("", status_code=404)
+            code = (project_root / file).read_text(encoding="utf-8", errors="replace")
+            return HTMLResponse(templates.get_template("source.html").render(code=code, language=origin["dialect"]))
+        entity = state.entities.get(path)
         if entity is None:
             return HTMLResponse("", status_code=404)
         code = pages.source_code(project_root, entity)
@@ -784,7 +858,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             outcome = await search.run(mode, query, DEFAULT_LIMIT, WIKI_WAIT_SECONDS, offset, shown)
             context["renamed"] = outcome.renamed
             if outcome.ready:
-                objects, rows = catalog.searchable(), []
+                objects, rows = search.database_documents(), []
                 for path, score in outcome.results:
                     if path in objects:
                         rows.append(object_row(path, objects[path], score))

@@ -53,8 +53,8 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     catalog = CatalogStore(project_root / CATALOG_DATABASE_PATH, state.notify)
 
     def documents() -> dict[str, tuple[str, str]]:
-        """Everything searchable: the code's entities, the planner items and notes, and the objects of the
-        collected databases."""
+        """Everything searchable: the code's entities, the planner items and notes, the objects of the
+        collected databases and those the project's SQL files declare."""
         found = entity_documents(state.entities)
         found.update({key: (document["title"], document["text"]) for key, document in notes.searchable().items()})
         found.update({key: (document["title"], document["text"]) for key, document in catalog.searchable().items()})
@@ -79,7 +79,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     register_tools(mcp, state, config, search)
     register_note_tools(mcp, notes, search)
     connections = ConnectionStore(project_root)
-    register_database_tools(mcp, connections, catalog)
+    register_database_tools(mcp, connections, catalog, state, project_root)
 
     app = mcp.streamable_http_app(host=config.host, transport_security=_transport_security(config))
     app.router.routes.extend(web_routes(state, project_root, config, search, notes, connections, catalog))
@@ -91,7 +91,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     async def lifespan(starlette_app: Starlette):
         async with mcp_lifespan(starlette_app) as lifespan_state:
             tasks = [
-                asyncio.create_task(watch(project_root, config, state, notes)),
+                asyncio.create_task(watch(project_root, config, state, notes, catalog)),
                 asyncio.create_task(keep_collected(connections, catalog)),
                 asyncio.create_task(embeddings.stop_when_idle()),
             ]

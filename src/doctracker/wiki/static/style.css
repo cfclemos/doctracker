@@ -332,7 +332,8 @@ main { grid-area: main; }
    icon's color, so it takes the color of its kind and follows the light/dark theme. */
 .icon-package::before, .icon-subpackage::before, .icon-module::before,
 .icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before, .icon-diagrams::before,
-.icon-database::before,
+.icon-database::before, .icon-connections::before, .icon-connection-ok::before, .icon-connection-failed::before,
+.icon-connection-blocked::before, .icon-connection-unread::before,
 .icon-dead-code::before, .icon-folder::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
 .icon-layout-folders::before, .icon-layout-languages::before {
@@ -360,6 +361,10 @@ main { grid-area: main; }
 .icon-git::before { -webkit-mask-image: url("icons/git-branch.svg"); mask-image: url("icons/git-branch.svg"); }
 .icon-notes::before { -webkit-mask-image: url("icons/notebook.svg"); mask-image: url("icons/notebook.svg"); }
 .icon-database::before { -webkit-mask-image: url("icons/database.svg"); mask-image: url("icons/database.svg"); }
+.icon-connections::before { -webkit-mask-image: url("icons/arrows-exchange.svg"); mask-image: url("icons/arrows-exchange.svg"); }
+.icon-connection-ok::before, .icon-connection-blocked::before, .icon-connection-unread::before {
+  -webkit-mask-image: url("icons/database.svg"); mask-image: url("icons/database.svg"); }
+.icon-connection-failed::before { -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
 .icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
@@ -369,6 +374,13 @@ main { grid-area: main; }
 .icon-git { --tint: var(--raises); }
 .icon-notes { --tint: var(--exports); }
 .icon-database { --tint: var(--class); }
+.icon-connections { --tint: var(--class); }
+/* A connection in the tree: green it answers, red its last reading or test failed (another icon), grey
+   blocked, uncoloured not read yet. */
+.icon-connection-ok { --tint: #2da44e; }
+.icon-connection-failed { --tint: #d1242f; }
+.icon-connection-blocked { --tint: #8c959f; }
+.icon-connection-unread { --tint: var(--muted); }
 .icon-dead-code { --tint: var(--accent); }
 .icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
 .icon.icon-examples { --tint: var(--exports); }
@@ -727,6 +739,9 @@ td p { margin: 0; }
 .connection-form:has(input[name=sign_in][value=aws-iam]:checked) .password-only { display: none; }
 .graph-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.8rem; color: var(--muted); }
 .graph-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* A ? of the legend keeps its explanation closed until hovered (the rule above would open every one). */
+.graph-legend .help-box { display: none; }
+.graph-legend .help-hover:hover .help-box, .graph-legend .help-hover:focus-within .help-box { display: block; }
 .graph-legend .line { display: inline-block; width: 1.4rem; height: 0; border-top: 2px solid; }
 .graph-legend .line.imports { border-color: var(--accent); }
 .graph-legend .line.cycle { border-color: var(--raises); }
@@ -986,13 +1001,11 @@ body.drawing-expanded::after { content: ""; position: fixed; inset: 0; z-index: 
 .graph-side-head .graph-panel-side:hover, .graph-side-head .graph-panel-page:hover, .graph-side-head .graph-close:hover { background: var(--panel); color: var(--fg); }
 
 @media (max-width: 720px) { .graph-stage { flex-direction: column; } .graph-side-panel { width: auto; border-left: 1px solid var(--border); } }
-/* The Legend button, floating in the drawing's top left corner, and the legend it opens under it in the
-   info panel's box (.graph-info): its name on top with the close button, one item per line, small. */
-.graph-canvas-box .graph-legend-open { position: absolute; top: 0.5rem; left: 0.5rem; z-index: 5; display: inline-flex; align-items: center;
-  justify-content: center; width: 1.9rem; height: 1.8rem; padding: 0; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg); color: var(--fg); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); cursor: pointer; }
-.graph-legend-open:hover, .graph-legend-open[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
-.graph-info.graph-legend-box { left: 0.6rem; right: auto; width: 15rem; }
+/* The Legend button, right of Fit in the drawing's top right corner, and the legend it opens under them,
+   in the info panel's box (.graph-info): its name on top with the close button, one item per line, small. */
+.graph-view-tools .graph-legend-open { border-radius: 4px; }
+.graph-legend-open[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.graph-info.graph-legend-box { right: 0.6rem; left: auto; width: 15rem; }
 .graph-legend-box .graph-legend { flex-direction: column; flex-wrap: nowrap; gap: 0.2rem; padding-top: 0.6rem;
   font-size: 0.8rem; line-height: 1.3; }
 .graph-legend-box .graph-legend span, .graph-legend-box .graph-kind { gap: 0.4rem; }
@@ -1776,7 +1789,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 
 /* DATABASE › Connections: a card per connection (the notes' buttons and modal are reused). */
 .database-page button, .database-page .connection-actions button { cursor: pointer; }
-.database-page, #page-dialog { --state-allowed: #2da44e; --state-blocked: #d1242f; }
+/* Whether doctracker may use a connection: allowed blue, blocked grey. Green and red are kept for whether
+   it answers (its last reading or test), in the tree. */
+.database-page, #page-dialog { --state-allowed: var(--accent); --state-blocked: #8c959f; }
 /* A connection's details take two thirds of the screen's width. */
 #page-dialog:has(.connection-details) { width: calc(100vw * 2 / 3); }
 .connection-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); grid-auto-rows: 1fr;
@@ -1796,7 +1811,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .connection-card dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connection-test { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; font-size: 0.76rem; }
 .connection-test.failed { color: var(--raises); }
-.connection-details { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0 0 0.8rem; font-size: 0.85rem; }
+.connection-details { display: grid; grid-template-columns: max-content 1fr; gap: 0 1rem; margin: 0 0 0.8rem; font-size: 0.85rem; }
+/* A line under each name and its value. */
+.connection-details > dt, .connection-details > dd { padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
 .connection-details dt { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; }
 .connection-details .help-box { width: min(22rem, 85vw); font-weight: 400; }
 .page-dialog-foot button.see-in-link:disabled { opacity: 0.45; cursor: not-allowed; border-color: var(--border); color: var(--fg); }
@@ -1818,7 +1835,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 /* DATABASE › Universe: sigma.js draws in the drawing area; the path back, a node's hover box and the
    legend's swatches, lines and column symbols around it. */
 .graph-canvas[data-view="universe"] { position: relative; overflow: hidden; }
-.universe-path { position: absolute; top: 0.5rem; left: 3rem; right: 6rem; z-index: 5; display: flex; align-items: center; gap: 0.5rem;
+.universe-path { position: absolute; top: 0.5rem; left: 0.5rem; right: 6rem; z-index: 5; display: flex; align-items: center; gap: 0.5rem;
   pointer-events: none; font-size: 0.82rem; color: var(--muted); }
 .universe-path > * { pointer-events: auto; }
 .universe-path .universe-back { height: 1.8rem; width: 1.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg);
@@ -1828,6 +1845,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .universe-crumbs a { color: var(--accent); cursor: pointer; }
 .universe-crumbs b { color: var(--fg); }
 .universe-stats { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Which engine draws the Universe, said at the bottom of the drawing only when it is not WebGL (graph.js, UniverseCanvas). */
+.universe-engine { position: absolute; bottom: 0.5rem; left: 0.75rem; right: 0.75rem; z-index: 5; text-align: center;
+  font-size: 0.75rem; color: var(--muted); pointer-events: auto; }
 .universe-hover { position: absolute; z-index: 6; display: flex; flex-direction: column; gap: 2px; max-width: 16rem; padding: 0.5rem 0.6rem;
   border: 1px solid var(--border); border-radius: 6px; background: var(--bg); box-shadow: 0 2px 8px rgb(0 0 0 / 15%); font-size: 0.76rem; line-height: 1.4; }
 .universe-hover[hidden] { display: none; }
@@ -1846,20 +1866,22 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .graph-legend .universe-relation { gap: 0.3rem; }
 .universe-filters .form-field { min-width: 0; }
 
-/* DATABASE: the pages of tables, columns and the other objects read, and the Tables and columns list. */
+/* DATABASE: the pages of tables, columns and the other objects read, and the Navigate Database list. */
 .db-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.db-table th, .db-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.db-table th, .db-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
 .db-table th { font-weight: 600; color: var(--muted); }
 .db-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0.3rem 0; font-size: 0.85rem; }
 .db-facts dt { font-weight: 600; }
 .db-facts dd { margin: 0; overflow-wrap: anywhere; }
 .db-list { margin: 0.3rem 0; padding-left: 1.2rem; font-size: 0.85rem; }
 .db-list .summary, .db-table .summary, .db-facts .summary { color: var(--muted); font-size: 0.85em; }
-.db-mark { display: inline-block; margin: 0 0.25rem 0.15rem 0; padding: 0 0.35rem; border: 1px solid var(--border); border-radius: 999px;
-  font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+/* A mark of a column or an object: a pill that never leaves its cell (a long one breaks into lines). */
+.db-mark { display: inline-block; box-sizing: border-box; max-width: 100%; margin: 0.08rem 0.12rem; padding: 0 0.35rem;
+  border: 1px solid var(--border); border-radius: 999px; font-size: 0.72rem; color: var(--muted); white-space: normal;
+  overflow-wrap: anywhere; text-align: center; }
 .objects-filter { margin: 0.6rem 0; }
 .objects-count { margin: 0.4rem 0; font-size: 0.85rem; color: var(--muted); }
-/* Tables and columns: the page takes the screen's height under the bar; the list fills what is left,
+/* Navigate Database: the page takes the screen's height under the bar; the list fills what is left,
    its rows scrolling under a fixed head, the pages always in view below; long names and comments wrap. */
 .objects-page { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height) - 3rem); min-height: 20rem; }
 .objects-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1950,3 +1972,45 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .objects-values-actions { display: inline-flex; gap: 0.35rem; }
 .objects-values-apply { padding: 0.1rem 0.6rem; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent); color: #fff; font-size: 0.75rem; cursor: pointer; }
 .objects-values-apply:hover { filter: brightness(1.1); }
+
+/* DATABASE ORIGINS: an origin's links to the databases it describes, its steps and the schema it ends with. */
+.origin-link { padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
+.origin-link-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.origin-link-actions { margin-left: auto; display: inline-flex; gap: 0.3rem; }
+.origin-choice { display: inline; }
+.origin-history { margin: 0.3rem 0 0; font-size: 0.85rem; }
+.origin-subtitle { margin: 0.8rem 0 0.2rem; font-weight: 600; font-size: 0.85rem; }
+.origin-how-chosen { border-color: var(--accent); color: var(--accent); }
+.origin-how-history { border-color: #2da44e; color: #2da44e; }
+.origin-link-form { margin-top: 0.8rem; }
+.origin-step { margin: 0.3rem 0; }
+.origin-step > summary { cursor: pointer; }
+.origin-statements { margin: 0.3rem 0; padding-left: 1.6rem; font-size: 0.85rem; }
+.origin-statements li { margin: 0.2rem 0; }
+.origin-statements li.unread { color: var(--raises); }
+.origin-statements details summary { cursor: pointer; }
+.origin-object { margin: 0.2rem 0; font-size: 0.85rem; }
+.origin-object > summary { cursor: pointer; }
+.notes-error-text { color: var(--raises); }
+/* The line between the code's sections and DATABASES in the tree. */
+.tree-divider { margin: 0.6rem 0; border: 0; border-top: 1px solid var(--border); }
+/* A subsection's title inside a page's section (a file's tables, functions, triggers...): bold, larger,
+   a rule under it. */
+.block-subtitle, .origin-subtitle { margin: 1rem 0 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--border);
+  font-size: 0.95rem; font-weight: 700; color: var(--fg); text-transform: capitalize; }
+.block-subtitle:first-child { margin-top: 0.3rem; }
+.origin-file-title { text-transform: none; }
+/* A file of an origin's Source: folded by its title (a subtitle with its rule), well apart from the next one. */
+.origin-file { margin: 1.4rem 0; }
+.origin-file:first-of-type { margin-top: 0.6rem; }
+.origin-file > summary.block-subtitle { margin: 0 0 0.5rem; cursor: pointer; }
+.origin-down { margin: 0.3rem 0 0.8rem; }
+.origin-down > summary { cursor: pointer; }
+/* The manual refresh beside Connections in the tree: reads every allowed connection again now. */
+.tree-connections { display: flex; align-items: center; gap: 0.35rem; }
+.tree-refresh { margin-left: auto; display: inline-flex; width: 1.4rem; height: 1.4rem; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); cursor: pointer; }
+.tree-refresh:hover { border-color: var(--border); color: var(--accent); }
+.tree-refresh .bar-icon { width: 0.9rem; height: 0.9rem; }
+.tree-refresh.busy .bar-icon { animation: tree-spin 1s linear infinite; }
+@keyframes tree-spin { to { transform: rotate(360deg); } }

@@ -149,8 +149,8 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   {% endif %}
   <p class="graph-warning" hidden></p>
   <div class="graph-groups" hidden></div>
-  {# The drawing, with zoom and fit floating in its top right corner and the Legend button in its top
-     left one: the legend opens in a box under it, as the info panel (open or closed, kept per browser).
+  {# The drawing, with zoom, fit and Legend floating in its top right corner: the legend opens in a box
+     under them, as the info panel (open or closed, kept per browser).
      A page may give a side panel (`panel`, e.g. the planner's details): a column beside the drawing,
      inside its area, that the bar's button opens and closes and ⇄ moves to the other side. #}
   <div class="graph-stage{% if panel %} panel-closed{% endif %}">  {# closed until live.js says otherwise #}
@@ -165,12 +165,14 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
         <button type="button" class="graph-icon graph-zoom-in" data-tip="Zoom in" aria-label="Zoom in">+</button>
       </span>
       <button type="button" class="graph-icon graph-fit" aria-label="Fit" data-tip="Fit to the screen"><i class="bar-icon bar-icon-fit"></i></button>
+      {% if caller is defined %}{# Legend, right of Fit: its legend opens under them #}
+      <button type="button" class="graph-icon graph-legend-open" aria-expanded="false" aria-label="Legend" data-tip="Legend">
+        <i class="bar-icon bar-icon-legend"></i></button>
+      {% endif %}
     </div>
     {% if caller is defined %}
-    <button type="button" class="graph-icon graph-legend-open" aria-expanded="false" aria-label="Legend" data-tip="Legend">
-      <i class="bar-icon bar-icon-legend"></i></button>
-    {# The legend opens in the info panel's own box (.graph-info), on the left side; static/graph.js
-       puts these items in it, under the same head as the info panel's. #}
+    {# The legend opens in the info panel's own box (.graph-info), in the drawing's top right corner, under
+       its button (right of Fit); static/graph.js puts these items in it, under the same head as the info panel's. #}
     <aside class="graph-info graph-legend-box" hidden></aside>
     <template class="graph-legend-items">
       {{ caller() }}

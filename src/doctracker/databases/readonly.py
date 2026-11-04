@@ -78,6 +78,10 @@ _CHECKS = {"postgresql": ("SELECT version()", "SHOW transaction_read_only"),
            "oracle": ("SELECT banner FROM v$version WHERE ROWNUM = 1", None)}
 """Per kind: the query reading the server's version, and the one telling whether the session can write."""
 
+DEFAULT_DATABASES = {"postgresql": "postgres"}
+"""The database to connect to when the connection names none: PostgreSQL would otherwise choose the one
+named like the user, which may not exist."""
+
 WRITE_PROBE = "CREATE TABLE doctracker_write_check (x INT)"
 """The write the test tries: it must be aborted before reaching the database."""
 
@@ -282,7 +286,7 @@ def open_engine(spec: dict) -> Engine:
             connect_args[{"postgresql": "ssl_context", "mysql": "ssl"}.get(kind, "ssl")] = ssl.create_default_context()
         url = URL.create(DRIVERS[kind], username=spec.get("user") or None, password=token or spec.get("password") or None,
                          host=spec.get("host") or None, port=int(spec["port"]) if str(spec.get("port", "")).isdigit() else None,
-                         database=spec.get("database") or None)
+                         database=spec.get("database") or DEFAULT_DATABASES.get(kind))
         engine = create_engine(url, connect_args=connect_args, pool_pre_ping=False)
     session = _SESSION.get(kind)
 

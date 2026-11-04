@@ -250,12 +250,13 @@ document.addEventListener("keydown", (event) => {
 // drawing only (the planner, Architecture, Classes... each its own): the key names the drawing.
 const drawingKey = (area, what) => `doctracker-${what}-${area.querySelector(".graph-canvas")?.dataset.view}`;
 
-// The Legend button of the drawings opens the legend in a box under it; × or the button again closes it.
+// The Legend button of the drawings (right of Fit) opens the legend under it, in the drawing's top right
+// corner; × or the button again closes it.
 function placeLegends() {
   for (const box of document.querySelectorAll(".graph-legend-box")) {
     const open = load(localStorage, drawingKey(box.closest(".graph-area"), "legend-open"), false);
     box.hidden = !open;
-    box.parentElement.querySelector(".graph-legend-open").setAttribute("aria-expanded", String(open));
+    box.closest(".graph-area").querySelector(".graph-legend-open")?.setAttribute("aria-expanded", String(open));
   }
 }
 document.addEventListener("DOMContentLoaded", placeLegends);
@@ -922,7 +923,7 @@ function placeHelp(event) {
 document.addEventListener("mouseover", placeHelp);
 document.addEventListener("focusin", placeHelp);
 
-// The filter boxes of a list's columns and of Browse's path (DATABASE › Tables and columns) work as
+// The filter boxes of a list's columns and of Browse's path (DATABASE › Navigate Database) work as
 // menus: one open at a time (opening one closes the others); it opens right under its icon, inside the
 // window (fixed, so the list's scrolling does not cut it), follows it when the page scrolls, and a
 // column's fetches its values again (their counts follow the other filters). Its search box narrows the
@@ -1055,6 +1056,16 @@ document.addEventListener("toggle", (event) => {
   if (!event.target.matches?.('[data-section="universe"]') || !event.target.open) return;
   const canvas = event.target.querySelector('.graph-canvas[data-view="universe"]');
   if (!canvas || canvas.dataset.url) return;
-  canvas.dataset.url = "/graph/universe";
+  canvas.dataset.url = canvas.closest("[data-universe-source]")?.dataset.universeSource || "/graph/universe";  // a file's own, or the live databases
   initViews();
 }, true);
+
+// The refresh beside Connections in the tree: every allowed connection read again now (the server
+// does it in the background; the tree follows when a reading changes). The branch does not toggle.
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".tree-refresh");
+  if (!button) return;
+  event.preventDefault();
+  button.classList.add("busy");
+  fetch("/database/refresh-all", { method: "POST" }).finally(() => setTimeout(() => button.classList.remove("busy"), 1500));
+});

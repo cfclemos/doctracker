@@ -120,7 +120,9 @@
     <ul>
       <li><b>Objects</b>: {% for kind, n in k.counts.objects | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% endfor %}</li>
       <li><b>Relations</b>: {% for kind, n in k.counts.relations | dictsort %}{{ n }} {{ kind }}{% if not loop.last %} · {% endif %}{% else %}none{% endfor %}</li>
-      {% for u in k.unavailable %}<li class="unavailable"><b>Data unavailable</b>: {{ u.what }} — {{ u.reason }}</li>{% endfor %}
+      {# The same reason in several databases: one line, the databases named after it. #}
+      {% for reason, entries in k.unavailable | groupby("reason") %}<li class="unavailable"><b>Data unavailable</b>: {{ reason }}
+        <span class="summary">{{ entries | map(attribute="what") | join(" · ") }}</span></li>{% endfor %}
       {% if k.databases %}<li><b>Not read</b>, on the same server: {% for name in k.databases %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>{% endif %}
     </ul>
     {% endif %}

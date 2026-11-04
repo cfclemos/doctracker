@@ -1,11 +1,15 @@
 {% import "macros.html" as ui %}
-{# The page of an object of a database the server read (`item`, from CatalogStore.object): a server,
-   database, schema, table, view, column, function, trigger... Folding sections from the general to the
-   specific, those that apply to its kind; what later steps of DATABASE fill says "Data unavailable".
+{# The page of a database object (`item`, from CatalogStore.object): a server, database, schema, table,
+   view, column, function, trigger..., read from a live database or declared by a file (origin:...):
+   the same page, from the same store, the header telling which (read from the live database / declared
+   in file:line). Folding sections from the general to the specific, those that apply to its kind; what
+   is not known of it, or what later steps of DATABASE fill, says "Data unavailable". Empty cells of a
+   table show "-".
    Names link to their own pages (in the consultation modal too, as the code's pages do). The Universe
    opens in the page itself, in its own section, on this object; in the modal, its footer has Close,
    Universe and Open the page, the only one that leaves for another screen. #}
 {% set kind = item.kind %}
+{% set source = "file" if item.declared else "database" %}{# who says what the page shows #}
 {% set data = item.data %}
 {% set tabular = kind in ("table", "view", "materialized view", "foreign table") %}
 {% macro link(path, name) -%}<a {{ ui.nav(path) }}>{{ name }}</a>{%- endmacro %}
@@ -23,7 +27,8 @@
   </p>
   <h1>{{ ui.icon("database") }}<span class="name">{{ item.name }}</span><span class="kind">{{ kind }}</span></h1>
   <p class="meta"><code class="path">{{ item.path }}</code>
-    {% if item.read %}<span class="location">read from the live database · {{ item.read | local_time(seconds=True) }}</span>{% endif %}</p>
+    {% if item.read %}<span class="location">read from the live database · {{ item.read | local_time(seconds=True) }}</span>{% endif %}
+    {% if item.declared %}<span class="location">declared in <code>{{ item.declared.created.file }}:{{ item.declared.created.line }}</code>{% if item.declared.changed != item.declared.created %} · last changed in <code>{{ item.declared.changed.file }}:{{ item.declared.changed.line }}</code>{% endif %}</span>{% endif %}</p>
   {% set universe_button %}{% if drawn %}<button type="button" class="see-in-link" data-open-universe>{{ ui.icon("database") }}Universe</button>{% endif %}{% endset %}
   {% if modal %}
   <footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
@@ -32,18 +37,19 @@
     <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
   </footer>
   {% elif drawn %}
-  <p class="see-in">See in {{ universe_button }}{% if kind in ("server", "database", "schema") or tabular %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Tables and columns</a>{% endif %}</p>
+  <p class="see-in">See in {{ universe_button }}{% if item.path.startswith("db:") and (kind in ("server", "database", "schema") or tabular) %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Navigate Database</a>{% endif %}</p>
   {% endif %}
 </header>
 
 {% call ui.section("description", "Description", divider=true) %}
-  {% if data.comment %}<p>{{ data.comment }}</p>{% else %}<p class="empty">The database holds no comment on it.</p>{% endif %}
+  {% if data.comment %}<p>{{ data.comment }}</p>{% else %}<p class="empty">The {{ source }} holds no comment on it.</p>{% endif %}
 {% endcall %}
 
 {% if drawn %}
 {# The Universe opened on it, drawn only once its section opens (Universe in the header or the footer). #}
 {% call ui.section("class", "Universe", name="universe", divider=true, open=false) %}
-  <div class="graph-page universe-embed">{{ ui.universe_canvas(item.path, "") }}</div>
+  {# Drawn from the live databases, or from what this object's file declares. #}
+  <div class="graph-page universe-embed" data-universe-source="/graph/universe{% if item.declared %}?origin={{ item.path.partition('::')[0] | urlencode }}{% endif %}">{{ ui.universe_canvas(item.path, "") }}</div>
 {% endcall %}
 {% endif %}
 
@@ -63,9 +69,9 @@
   <table class="db-table">
     <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Marks</th><th>Comment</th></tr></thead>
     <tbody>{% for column in columns %}
-      <tr><td><code>{{ link(column.path, column.name) }}</code></td><td><code>{{ column.data.type }}</code></td>
-        <td>{% if column.data.default %}<code>{{ column.data.default }}</code>{% elif column.data.computed %}<code>{{ column.data.computed }}</code> <span class="summary">computed</span>{% endif %}</td>
-        <td>{{ marks(column.data) }}</td><td>{{ column.data.comment or "" }}</td></tr>
+      <tr><td><code>{{ link(column.path, column.name) }}</code></td><td>{% if column.data.type %}<code>{{ column.data.type }}</code>{% else %}-{% endif %}</td>
+        <td>{% if column.data.default %}<code>{{ column.data.default }}</code>{% elif column.data.computed %}<code>{{ column.data.computed }}</code> <span class="summary">computed</span>{% else %}-{% endif %}</td>
+        {% set column_marks = marks(column.data) | trim %}<td>{{ column_marks if column_marks else "-" }}</td><td>{{ column.data.comment or "-" }}</td></tr>
     {% endfor %}</tbody>
   </table>
   {% else %}<p class="empty">No columns read.</p>{% endif %}
@@ -110,7 +116,7 @@
 {# A function, procedure, trigger, sequence, type, synonym...: what was read of it. #}
 {% call ui.section("attributes", "Properties", name="properties", divider=true) %}
   <dl class="db-facts">{% for key, value in data.items() if key not in ("comment", "definition") %}
-    <dt>{{ key | replace("_", " ") }}</dt><dd>{% if value is string and value.startswith("db:") %}{{ link(value, db_place(value)) }}{% elif value is sequence and value is not string %}<code>{{ value | join(", ") }}</code>{% else %}<code>{{ value }}</code>{% endif %}</dd>
+    <dt>{{ key | replace("_", " ") }}</dt><dd>{% if value is string and value.startswith(("db:", "origin:")) %}{{ link(value, db_place(value)) }}{% elif value is sameas true or value is sameas false %}{{ "yes" if value else "no" }}{% elif value is sequence and value is not string %}<code>{{ value | join(", ") }}</code>{% else %}<code>{{ value }}</code>{% endif %}</dd>
   {% else %}<dt></dt><dd class="empty">Nothing else was read of it.</dd>{% endfor %}</dl>
 {% endcall %}
 {% endif %}
@@ -159,10 +165,35 @@
 {% endcall %}
 {% endif %}
 
+{% if item.declared_by is defined %}
+{# The origins (SQL files, migrations) that declare it, for a database they describe, and where they differ. #}
+{% call ui.section("source", "Declared by", count=(item.declared_by or []) | length, name="declared-by", divider=true) %}
+  {% for d in item.declared_by or [] %}
+  <div class="origin-link"><div class="origin-link-head"><a {{ ui.nav("origin:" ~ d.origin) }}><code>{{ d.origin }}</code></a>
+    <span class="summary">{{ d.kind }} · created <code>{{ d.object.created.file.rsplit("/", 1)[-1] }}:{{ d.object.created.line }}</code>{% if d.object.changed != d.object.created %} · last changed <code>{{ d.object.changed.file.rsplit("/", 1)[-1] }}:{{ d.object.changed.line }}</code>{% endif %}</span></div>
+    {% if d.differences %}<ul class="db-list">{% for x in d.differences %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<p class="summary">As the files say.</p>{% endif %}</div>
+  {% else %}<p class="empty">No origin linked to this database declares it.</p>
+  {% endfor %}
+{% endcall %}
+{% endif %}
+
+{% if item.found_in is defined %}
+{# Its mirror, on what a file declares: where it is in the live databases its file describes, and where they differ. #}
+{% call ui.section("source", "Found in", count=item.found_in | length, name="found-in", divider=true) %}
+  {% for d in item.found_in %}
+  <div class="origin-link"><div class="origin-link-head"><a {{ ui.nav(d.path) }}><code>{{ db_place(d.path) }}</code></a>
+    <span class="summary">linked by {{ d.how | join(", ") }}</span></div>
+    {% if d.differences %}<ul class="db-list">{% for x in d.differences %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<p class="summary">As the database has it.</p>{% endif %}</div>
+  {% else %}<p class="empty">No database its file describes holds it.</p>
+  {% endfor %}
+{% endcall %}
+{% endif %}
+
 {% if tabular or kind in ("function", "procedure", "aggregate", "trigger") %}
 {% call ui.section("source", "Definition", name="definition", divider=true) %}
   {% if data.definition %}<pre class="code-block"><code>{{ data.definition }}</code></pre>
-  {% else %}{{ unavailable("the definition comes from the project's SQL files and migrations (a later step).") }}{% endif %}
+  {% elif item.declared %}{{ unavailable("the file gives no definition of it but its statements, in its file's Source.") }}
+  {% else %}{{ unavailable("the database gives no definition of it; the files declaring it are in Declared by.") }}{% endif %}
 {% endcall %}
 {% endif %}
 

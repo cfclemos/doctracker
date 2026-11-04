@@ -16,6 +16,7 @@ class DocState:
         dead_code: Findings of the dead code analysis (see `doctracker.analysis.scan`).
         missing_grammars: Languages left out because their grammar could not be fetched (e.g. without
             network): `language`, `grammar`, `files` and `error`.
+        origins: The SQL files and migrations declaring a database schema, as read (see `databases.origins`).
         retry: Set to read the code again at once (e.g. to try the grammars again), cleared by the watcher.
         ready: Whether the first extraction has finished.
         listeners: One queue per open wiki page, notified when the data changes.
@@ -27,6 +28,7 @@ class DocState:
     errors: list[str] = field(default_factory=list)
     dead_code: list[dict] = field(default_factory=list)
     missing_grammars: list[dict] = field(default_factory=list)
+    origins: list[dict] = field(default_factory=list)
     retry: bool = False
     ready: bool = False
     listeners: set[asyncio.Queue] = field(default_factory=set)
@@ -35,7 +37,7 @@ class DocState:
         """Replace the data with a new extraction result and notify the frontend.
 
         Args:
-            result: Output of `extract_project`: `roots`, `entities`, `edges`, `errors` and `dead_code`.
+            result: Output of `extract_project`: `roots`, `entities`, `edges`, `errors`, `dead_code` and `origins`.
         """
         self.roots = result["roots"]
         self.entities = result["entities"]
@@ -43,6 +45,7 @@ class DocState:
         self.errors = result["errors"]
         self.dead_code = result.get("dead_code", [])
         self.missing_grammars = result.get("missing_grammars", [])
+        self.origins = result.get("origins", [])
         self.ready = True
         self.notify()
 
