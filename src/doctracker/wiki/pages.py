@@ -78,14 +78,14 @@ SECTIONS = {
                 "write it through the MCP tools, and are told the relevant part at each moment (session start, "
                 "planning, a file read or edited, a commit); here you see and change the same records.",
         "pages": [
-            {"name": "planner", "title": "Planner", "icon": "planner", "url": "/notes?tab=planner", "views": ("notes",),
+            {"name": "planner", "title": "Planner", "icon": "planner", "url": "/agent/planner", "views": ("notes",),
              "tabs": ("planner",),
              "text": "The plans, their features and tasks, with their criteria, dependencies, annotations and evidence: "
                      "the record of the work until it is committed."},
-            {"name": "guidelines", "title": "Guidelines", "icon": "guidelines", "url": "/notes?tab=guidelines",
+            {"name": "guidelines", "title": "Guidelines", "icon": "guidelines", "url": "/agent/guidelines",
              "views": ("notes",), "tabs": ("guidelines",),
              "text": "How to work on the project: the rules and preferences agents must follow, each with why."},
-            {"name": "memory", "title": "Memory", "icon": "memory", "url": "/notes?tab=memory", "views": ("notes",),
+            {"name": "memory", "title": "Memory", "icon": "memory", "url": "/agent/memory", "views": ("notes",),
              "tabs": ("memory",),
              "text": "What is known about the project: decisions, context, pitfalls and references."},
         ],

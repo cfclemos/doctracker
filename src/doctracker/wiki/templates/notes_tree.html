@@ -12,7 +12,7 @@
     <ul>
       {% for note in of_type %}
       <li class="tree-note{% if 'note:' ~ note.id == selected %} current{% endif %}{% if note.status == 'superseded' %} superseded{% endif %}"
-          data-note="note:{{ note.id }}" hx-get="/notes/form?note={{ note.id }}&panel=1&tab={{ tab }}&selected=note:{{ note.id }}"
+          data-note="note:{{ note.id }}" hx-get="/agent/form?note={{ note.id }}&panel=1&tab={{ tab }}&selected=note:{{ note.id }}"
           hx-target="#planner-detail" title="{{ note.statement }}{% if note.why %}&#10;&#10;Why: {{ note.why }}{% endif %}">
         <span class="tree-text">{{ note.statement }}</span>
         {% if note.entities %}<span class="tree-meta">{{ note.entities | length }} entit{{ "ies" if note.entities | length > 1 else "y" }}</span>{% endif %}
