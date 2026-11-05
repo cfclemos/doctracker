@@ -339,7 +339,9 @@ def _as_written(node: exp.Expression, source: str, dialect: str, clause: bool = 
     return source[at:end].strip() or node.sql(dialect)
 
 
-_TYPE_END = re.compile(r"\s*(,|\)|$|\b(NOT|NULL|PRIMARY|UNIQUE|REFERENCES|CHECK|CONSTRAINT|GENERATED|COLLATE|DEFAULT|AS|ON)\b)", re.IGNORECASE)
+_TYPE_END = re.compile(r"\s*(,|\)|$|\b(NOT|NULL|PRIMARY|UNIQUE|REFERENCES|CHECK|CONSTRAINT|GENERATED|COLLATE|DEFAULT|AS|ON|"
+                       r"AUTO_INCREMENT|AUTOINCREMENT|COMMENT|CHARACTER\s+SET|CHARSET|SRID|VISIBLE|INVISIBLE|VIRTUAL|STORED|"
+                       r"COLUMN_FORMAT|STORAGE)\b)", re.IGNORECASE)
 """Where a type written after a column's name ends: a comma, the table's parenthesis, or a constraint."""
 
 
@@ -366,8 +368,8 @@ def _column(definition: exp.ColumnDef, dialect: str, place: dict, source: str = 
     """A column as a ColumnDef declares it, with what its own constraints say (its default as the file
     writes it, `source` being the statement read)."""
     kind = definition.args.get("kind")
-    written = _written_type(definition, source) if kind is not None and dialect == "sqlite" else ""
-    column = {"name": definition.name, "type": (written or kind.sql(dialect)) if kind is not None else "",  # SQLite keeps it as written
+    written = _written_type(definition, source) if kind is not None and dialect in ("sqlite", "mysql") else ""
+    column = {"name": definition.name, "type": (written or kind.sql(dialect)) if kind is not None else "",  # as written: the database's own spelling from it
               "nullable": True, "default": "", "computed": "", "identity": False, "pk": False, "unique": False,
               "references": None, "check": "", "comment": "", "created": place, "changed": place}
     for constraint in definition.args.get("constraints") or []:
@@ -419,7 +421,8 @@ def _constraint(table: dict, item: exp.Expression, dialect: str, source: str = "
     if isinstance(item, exp.UniqueColumnConstraint):
         columns = [c.name for c in (item.this.expressions if isinstance(item.this, exp.Schema) else [])]
         table["unique"].append(columns)
-        if name:
+        name = name or (item.this.this.name if isinstance(item.this, exp.Schema) and isinstance(item.this.this, exp.Identifier) else "")
+        if name:  # CONSTRAINT x UNIQUE (...), MySQL's UNIQUE KEY x (...)
             names[f"unique:{','.join(columns)}"] = name
         return f"unique ({', '.join(columns)})"
     if isinstance(item, exp.ForeignKey):
@@ -430,6 +433,13 @@ def _constraint(table: dict, item: exp.Expression, dialect: str, source: str = "
                "options": [str(o) for o in reference.args.get("options") or []], "name": name}
         table["foreign_keys"].append(key)
         return f"foreign key ({', '.join(key['columns'])}) → {target}"
+    if isinstance(item, exp.IndexColumnConstraint):  # MySQL's KEY / INDEX / FULLTEXT / SPATIAL x (...) inside the table
+        columns = []
+        for part in item.expressions:
+            inner = part.this if isinstance(part, exp.Ordered) else part
+            columns.append(inner.name if isinstance(inner, exp.Column) else inner.sql(dialect))
+        table["indexes"].append({"name": item.name, "columns": columns, "unique": False})
+        return f"index {item.name} ({', '.join(columns)})"
     if isinstance(item, exp.ExcludeColumnConstraint):  # PostgreSQL's exclusion constraint: kept by an index of its name
         parameters = item.this
         columns = [c.name for c in (parameters.find_all(exp.Column) if parameters else [])]
@@ -643,6 +653,18 @@ def _apply(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
     text = re.sub(r"^(\s*(--[^\n]*(\n|$)|/\*.*?\*/))+", "", text, flags=re.DOTALL).strip()  # the comments before it
     if not text:
         return [], True
+    if schema.dialect == "mysql" and (use := re.fullmatch(r"(?i)\s*USE\s+`?([\w$]+)`?\s*;?\s*", text)):
+        schema.default = use[1]  # MySQL: a name written without its database is in the one in use
+        return [f"used database {use[1]}"], True
+    if schema.dialect == "mysql" and (created := re.match(r"\s*CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`]+)", text, re.IGNORECASE)):
+        table_text, partitioning = _mysql_partitioning(text)
+        table_text = re.sub(r"\s+SRID\s+\d+\b", "", table_text, flags=re.IGNORECASE)  # a spatial column's: outside sqlglot's grammar
+        if table_text != text:  # what sqlglot does not read taken out, read apart
+            done, read = _apply(schema, table_text, place)
+            parts = [_plain(part) for part in created[1].split(".")]
+            if read and partitioning and (table := schema.get(parts[0] if len(parts) > 1 else "", parts[-1])) is not None:
+                table.update(partitioning)
+            return done, read
     parsed = re.sub(r"\)\s*(WITHOUT\s+ROWID|STRICT)(\s*,\s*(WITHOUT\s+ROWID|STRICT))*\s*;?\s*$", ")", text, flags=re.IGNORECASE)
     try:
         statement = sqlglot.parse_one(parsed, read=schema.dialect)
@@ -874,6 +896,57 @@ _COLUMN_END = re.compile(r"\s+(NOT\s+NULL|NULL|DEFAULT|PRIMARY\s+KEY|UNIQUE|REFE
 """Where a column's type ends in its definition: the first of its constraints."""
 
 
+def _rule_default(definition: str) -> str:
+    """The default a column's definition writes, read by our rules: a string, an expression between
+    parentheses (its own ones inside it kept), or a word."""
+    found = re.search(r"\bDEFAULT\s+", definition, re.IGNORECASE)
+    if not found:
+        return ""
+    after = definition[found.end():]
+    if after.startswith("("):
+        inner, _ = _parenthesised(after)
+        return f"({inner})"
+    word = re.match(r"'(?:[^']|'')*'|\S+", after)
+    return word[0].rstrip(",") if word else ""
+
+
+_PARTITION_BY = re.compile(r"\bPARTITION\s+BY\s+(?P<linear>LINEAR\s+)?(?P<method>RANGE|LIST|HASH|KEY)(?:\s+(?P<columns>COLUMNS))?\s*"
+                           r"(?:ALGORITHM\s*=\s*\d+\s*)?", re.IGNORECASE)
+"""Where a MySQL table's partitioning starts, and its method."""
+
+
+def _mysql_partitioning(text: str) -> tuple[str, dict]:
+    """A MySQL CREATE TABLE without its `PARTITION BY …` (outside sqlglot's grammar), and that partitioning
+    as written: `partition_method` (`RANGE`, `LIST COLUMNS`, `LINEAR HASH`…), `partition_expression` and
+    `partitions` (each `name` and `bound`, the values between the parentheses of `VALUES LESS THAN` /
+    `VALUES IN`, or `MAXVALUE`); none when the table is not partitioned."""
+    code = _QUOTED.sub(lambda m: " " * len(m[0]), text)  # the same length, its strings blank
+    depth, start = 0, -1
+    for at, char in enumerate(code):
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0 and char in "Pp" and (match := _PARTITION_BY.match(code, at)) and (at == 0 or not code[at - 1].isalnum()):
+            start = at
+            break
+    if start < 0:
+        return text, {}
+    method = " ".join(filter(None, [(match["linear"] or "").strip().upper(), match["method"].upper(), (match["columns"] or "").upper()]))
+    expression, rest = _parenthesised(text[match.end():].lstrip())
+    partitions = []
+    if count := re.match(r"\s*PARTITIONS\s+(\d+)", rest, re.IGNORECASE):
+        rest = rest[count.end():]
+    rest = re.sub(r"^\s*SUBPARTITION\s+BY\b.*?(?=\()", "", rest, flags=re.IGNORECASE | re.DOTALL)
+    definitions, _ = _parenthesised(rest.lstrip())
+    for definition in _split_top(definitions):
+        if found := re.match(r"\s*PARTITION\s+([\w`]+)", definition, re.IGNORECASE):
+            bound = re.search(r"\bVALUES\s+(?:LESS\s+THAN|IN)\s*", definition, re.IGNORECASE)
+            after = definition[bound.end():] if bound else ""
+            value = _parenthesised(after)[0] if after.startswith("(") else (after.split()[0] if after.split() else "")
+            partitions.append({"name": _plain(found[1]), "bound": " ".join(value.split()) or None})
+    if not partitions and count:  # PARTITIONS n, none written: MySQL names them p0, p1…
+        partitions = [{"name": f"p{n}", "bound": None} for n in range(int(count[1]))]
+    return text[:start].rstrip(), {"partition_method": method, "partition_expression": " ".join(expression.split()), "partitions": partitions}
+
+
 def _rule_table(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
     """CREATE TABLE that sqlglot cannot read (types of its own, options it does not know): its columns,
     primary key, uniques and foreign keys, read by our rules from the list between its parentheses."""
@@ -906,13 +979,14 @@ def _rule_table(schema: _Schema, text: str, place: dict) -> tuple[list[str], boo
             elif found := re.search(r"UNIQUE\s*(?:KEY|INDEX)?\s*[\w`\"]*\s*\(([^)]*)\)", item, re.IGNORECASE):
                 table["unique"].append(names(found[1]))
             elif found := re.search(r"(?:INDEX|KEY)\s+([\w`\"]+)\s*\(([^)]*)\)", item, re.IGNORECASE):
-                table["indexes"].append({"name": _plain(found[1]), "columns": [n.split()[0] for n in names(found[2])], "unique": False})
+                table["indexes"].append({"name": _plain(found[1]), "columns": [_plain(n.split()[0]) for n in _split_top(found[2]) if n.split()],
+                                         "unique": False})
             continue
         name = _plain(item.split(None, 1)[0])
         rest = item[len(item.split(None, 1)[0]):]
         end = _COLUMN_END.search(rest)
         column = {"name": name, "type": (rest[:end.start()] if end else rest).strip(), "nullable": not re.search(r"\bNOT\s+NULL\b|PRIMARY\s+KEY", rest, re.IGNORECASE),
-                  "default": (found[1].strip() if (found := re.search(r"\bDEFAULT\s+(\([^)]*\)|'[^']*'|\S+)", rest, re.IGNORECASE)) else ""),
+                  "default": _rule_default(rest),
                   "computed": (found[1] if (found := re.search(r"\bAS\s*(\(.*\))\s*(VIRTUAL|STORED)?", rest, re.IGNORECASE)) else ""),
                   "identity": bool(re.search(r"AUTO_?INCREMENT|IDENTITY|GENERATED\s+\w+\s+AS\s+IDENTITY", rest, re.IGNORECASE)),
                   "pk": bool(re.search(r"PRIMARY\s+KEY", rest, re.IGNORECASE)), "unique": bool(re.search(r"\bUNIQUE\b", rest, re.IGNORECASE)),
