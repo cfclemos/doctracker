@@ -4,6 +4,9 @@ import re
 import zlib
 from pathlib import Path
 
+_CONNECTION_DIALECTS = {"postgresql": "postgres", "mysql": "mysql", "mssql": "tsql", "sqlite": "sqlite", "oracle": "oracle"}
+"""The SQL dialect of each kind of connection: an origin meets only the databases of its own dialect."""
+
 HISTORY_TOOLS = {"flyway": "flyway_schema_history", "golang-migrate": "schema_migrations", "dbmate": "schema_migrations",
                  "alembic": "alembic_version", "django migrations": "django_migrations", "prisma migrations": "_prisma_migrations"}
 """The history table each migration tool keeps in the database it migrates."""
@@ -99,6 +102,12 @@ def _history_link(origin: dict, rows: list[dict], root: Path) -> dict | None:
     return None
 
 
+_DESCRIBED: dict = {}
+"""The last answer of `describe_origins`, with what it was made from: asked again by every page that shows
+"Declared by" or "Found in", it is made again only when the origins read, the databases read (the store's
+file) or the connections changed."""
+
+
 def describe_origins(origins: list[dict], catalog, connections: list[dict], root: Path) -> dict[str, dict]:
     """Which databases each origin describes, in layers, each link saying how it was made.
 
@@ -106,7 +115,8 @@ def describe_origins(origins: list[dict], catalog, connections: list[dict], root
     2. The tool's history table in a database read: the proof it migrated it (and how far).
     3. The origin's own configuration (Flyway's file), or a connection declared in the origin's folder.
     4. An ORM's models: the databases its migrations are linked to by history or declaration (`related`).
-    5. The names of its tables: only a suggestion, to confirm by hand.
+    5. The names of its tables: only a suggestion, to confirm by hand, ranked by the whole comparison
+       (the tables the same in everything first).
 
     Args:
         origins: The origins read (`extract_origins`).
@@ -117,9 +127,26 @@ def describe_origins(origins: list[dict], catalog, connections: list[dict], root
     Returns:
         By origin name: `links` (`database`, `how`: list of `chosen`, `history`, `declared`, `related`;
         `history` what its history table says; `declared` the file or connection naming it, or the
-        related origin), `unlinked` (taken away by hand), `suggestions` (`database`, `matched`, `total`),
+        related origin; a dump's, the line naming its database), `unlinked` (taken away by hand),
+        `suggestions` (`database`, `matched`, `total`, `same`: the tables with no difference at all),
         `warning` when the layers disagree and `related` (the other origin of the same ORM, or empty).
     """
+    from doctracker.databases.origins.compare import compare_origin  # compare reads the links: imported here
+
+    try:
+        stored = catalog.path.stat().st_mtime_ns
+    except OSError:
+        stored = 0
+    key = (id(origins), len(origins), stored, tuple(sorted((c.get("id"), c.get("kind"), c.get("folder")) for c in connections)))
+    if _DESCRIBED.get("key") == key:
+        return _DESCRIBED["value"]
+    _DESCRIBED["value"] = found = _describe(origins, catalog, connections, root, compare_origin)
+    _DESCRIBED["key"] = key
+    return found
+
+
+def _describe(origins: list[dict], catalog, connections: list[dict], root: Path, compare_origin) -> dict[str, dict]:
+    """What `describe_origins` gives, made from the origins and databases read."""
     databases = catalog.objects(kind="database")
     tables = catalog.objects(kind="table") + catalog.objects(kind="view") + catalog.objects(kind="materialized view") \
         + catalog.objects(kind="foreign table")
@@ -132,6 +159,8 @@ def describe_origins(origins: list[dict], catalog, connections: list[dict], root
     by_connection: dict[str, list[str]] = {}
     for database in databases:
         by_connection.setdefault(database["connection"], []).append(database["path"])
+    kinds = {c["id"]: _CONNECTION_DIALECTS.get(c.get("kind", ""), "") for c in connections}
+    dialect_of = {database["path"]: kinds.get(database["connection"], "") for database in databases}
     found = {}
     for origin in origins:
         links: dict[str, dict] = {}
@@ -147,6 +176,14 @@ def describe_origins(origins: list[dict], catalog, connections: list[dict], root
                 continue
             if (history := _history_link(origin, table["data"]["history"], root)) is not None:
                 link("/".join(table["path"].split("/")[:2]), "history", history=history)
+        written = origin.get("dump") or {}
+        if "database" in written:  # the database a dump says it came from (and its host, when written)
+            host = (written.get("host") or {}).get("value", "")
+            for database in databases:
+                server, _, database_name = database["path"].removeprefix("db:").partition("/")
+                if database_name == written["database"]["value"] and (not host or _same_host(server.rpartition(":")[0]) == _same_host(host)) \
+                        and dialect_of.get(database["path"]) in ("", origin["dialect"]):  # a MySQL dump is no PostgreSQL database's
+                    link(database["path"], "declared", declared=f"{origin.get('part_of') or origin['name']}:{written['database']['line']}")
         for file, host, port, name in _declared_urls(root, origin):
             for database in databases:
                 server, _, database_name = database["path"].removeprefix("db:").partition("/")
@@ -170,12 +207,15 @@ def describe_origins(origins: list[dict], catalog, connections: list[dict], root
         suggestions = []
         if own:
             for database, held in names.items():
-                if database in links or database in unlinked:
+                if database in links or database in unlinked or dialect_of.get(database, "") not in ("", origin["dialect"]):
                     continue
                 matched = sum(1 for key in own if key in held or key.split(".", 1)[-1] in held)
                 if matched / len(own) >= 0.5:
                     suggestions.append({"database": database, "matched": matched, "total": len(own)})
-        suggestions.sort(key=lambda s: -s["matched"])
+        for suggestion in suggestions:  # ranked by the whole comparison: tables the same in everything first
+            compared = compare_origin(origin, catalog, suggestion["database"])
+            suggestion["same"] = sum(1 for table in compared["tables"].values() if not table["differences"])
+        suggestions.sort(key=lambda s: (-s["same"], -s["matched"]))
         history = {d for d, e in links.items() if "history" in e["how"]}
         declared = {d for d, e in links.items() if "declared" in e["how"]}
         warning = ("Its configuration names one database, but its history is in another."

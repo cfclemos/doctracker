@@ -23,6 +23,7 @@ connection's `host:port` (`sqlite` for a file).
 """
 
 import asyncio
+import re
 import multiprocessing
 import time
 import warnings
@@ -132,6 +133,10 @@ _QUERIES = {
     "sqlite": {
         "triggers": "SELECT 'main', tbl_name, name, NULL, NULL, NULL, sql, NULL FROM sqlite_master WHERE type = 'trigger'",
         "view sql": "SELECT name, sql FROM sqlite_master WHERE type = 'view'",
+        # what SQLAlchemy's reflection of SQLite leaves out: indexes on expressions, the actions of foreign keys
+        "index sql": "SELECT tbl_name, name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL",
+        "key actions": """SELECT m.name, k.id, k."from", k."table", k.on_update, k.on_delete
+            FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) k WHERE m.type = 'table'""",
     },
 }
 """Our own catalog queries, per kind of database: what the Inspector does not read."""
@@ -327,6 +332,8 @@ def _read_structure(found: _Collection, connection: Connection, kind: str, datab
             def read(part=part, call=call) -> None:
                 parts[part] = multi(call)
             found.attempt(f"{part} of {schema}", connection, read)
+        if kind == "sqlite":
+            found.attempt(f"unique constraints and autoincrement of {schema}", connection, lambda: _sqlite_parts(connection, parts))
         for name in kinds:
             _add_table(found, schema, name, {part: values.get(name) for part, values in parts.items()})
         for name, object_kind in kinds.items():
@@ -349,6 +356,24 @@ def _read_structure(found: _Collection, connection: Connection, kind: str, datab
                                   checks=[c.get("check") for c in item.get("constraints") or []])
             found.attempt(f"{object_kind}s of {schema}", connection, extras)
 
+
+def _sqlite_parts(connection: Connection, parts: dict) -> None:
+    """Complete what SQLAlchemy's reflection of SQLite misses, from SQLite's own pragmas and table SQL: the
+    unique constraints it does not find in a table's text (quoted names), and the `AUTOINCREMENT` keys."""
+    uniques: dict[tuple[str, str], list[str]] = {}
+    for table, index, column in connection.execute(text(
+            "SELECT m.name, l.name, i.name FROM sqlite_master m JOIN pragma_index_list(m.name) l JOIN pragma_index_info(l.name) i "
+            "WHERE m.type = 'table' AND l.origin = 'u' ORDER BY m.name, l.name, i.seqno")):
+        uniques.setdefault((table, index), []).append(column)
+    for (table, _), columns in uniques.items():
+        held = parts["unique"].setdefault(table, []) if "unique" in parts else None
+        if held is not None and all(u["column_names"] != columns for u in held):
+            held.append({"name": None, "column_names": columns})
+    for table, sql in connection.execute(text("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'")):
+        for match in re.finditer(r"[\"`\[]?(\w+)[\"`\]]?\s+INTEGER\s+(?:NOT\s+NULL\s+)?PRIMARY\s+KEY\s+(?:ASC\s+|DESC\s+)?AUTOINCREMENT", sql, re.IGNORECASE):
+            for column in (parts.get("columns") or {}).get(table) or []:
+                if column["name"] == match[1]:
+                    column["autoincrement"] = True
 
 def _add_table(found: _Collection, schema: str, name: str, parts: dict) -> None:
     """Add a table's (or view's) columns with their marks, its keys, constraints, indexes and comment,
@@ -469,6 +494,32 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
             if found.path(schema) in found.objects:
                 found.add(found.path(schema, name), "synonym", found.path(schema), name, target=target)
 
+    def index_sql() -> None:  # SQLite: an index on an expression, which the Inspector skips, from its own SQL
+        for table, name, sql in rows("index sql"):
+            path = known("main", table)
+            data = found.objects[path]["data"] if path else None
+            if data is None or any(i.get("name") == name for i in data.get("indexes") or []):
+                continue
+            inner = re.search(r"\bON\s+[\w\"`\[\]]+\s*\((.*)\)", sql, re.IGNORECASE | re.DOTALL)
+            parts = [p.strip() for p in re.split(r",(?![^()]*\))", re.sub(r"\)\s*WHERE\b.*$", ")", inner[1], flags=re.IGNORECASE | re.DOTALL))] if inner else []
+            data.setdefault("indexes", []).append({"name": name, "columns": [p.strip('"`[]') for p in parts if "(" not in p],
+                                                   "expressions": [p for p in parts if "(" in p],
+                                                   "unique": bool(re.match(r"\s*CREATE\s+UNIQUE\b", sql, re.IGNORECASE))})
+
+    def key_actions() -> None:  # SQLite: ON DELETE / ON UPDATE of each foreign key, which the Inspector leaves empty
+        actions: dict[tuple[str, int], dict] = {}
+        for table, key, column, target, on_update, on_delete in rows("key actions"):
+            entry = actions.setdefault((table, key), {"columns": [], "target": target, "options": {}})
+            entry["columns"].append(column)
+            for word, action in (("onupdate", on_update), ("ondelete", on_delete)):
+                if action and action.upper() != "NO ACTION":
+                    entry["options"][word] = action.upper()
+        for (table, _), entry in actions.items():
+            path = known("main", table)
+            for key in (found.objects[path]["data"].get("foreign_keys") or []) if path else []:
+                if key["columns"] == entry["columns"] and entry["options"]:
+                    key["options"] = {**(key.get("options") or {}), **entry["options"]}
+
     def column_types() -> None:  # the type as the database writes it (the Inspector loses "with time zone", composite types)
         for schema, table, column, type_ in rows("column types"):
             path = known(schema, table)
@@ -487,7 +538,8 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
 
     readers = {"view reads": view_reads, "view sql": view_reads_sqlite, "routines": routines, "triggers": triggers,
                "parents": parents, "partitions": partitions, "foreign targets": foreign_targets,
-               "synonyms": synonyms, "column types": column_types, "statistics": statistics}
+               "synonyms": synonyms, "column types": column_types, "statistics": statistics, "index sql": index_sql,
+               "key actions": key_actions}
     for name in queries:
         found.attempt(name, connection, readers[name])
     tables = [o for o in found.objects.values() if o["kind"] in ("table", "materialized view") and o["path"].startswith(found.base + "/")]

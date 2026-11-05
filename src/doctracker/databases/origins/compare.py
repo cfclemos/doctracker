@@ -38,7 +38,8 @@ def _default(text: str, dialect: str = "postgres") -> str:
     while text.startswith("(") and text.endswith(")"):
         text = text[1:-1].strip()
     text = text.strip("'")
-    return _SAME_DEFAULTS.get(text, text)
+    text = re.sub(r"nextval\('([^']*)'\)", lambda m: f"nextval('{m[1].replace(chr(34), '')}')", text)  # "public".x_seq is public.x_seq
+    return "" if text == "null" else _SAME_DEFAULTS.get(text, text)  # DEFAULT NULL: no default
 
 
 def compare_origin(origin: dict, catalog, database: str) -> dict:

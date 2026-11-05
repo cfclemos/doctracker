@@ -171,11 +171,15 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             (statements not understood), `objects` (how many it ends with) and `links`: the databases it
             describes, each with `how` the link was made (`chosen` by the user, the tool's `history`
             table, `declared` in its configuration) and what its history says (steps applied, pending).
+            A dump also has `tool`, `dump` (what it writes of itself, each with its line), `generated`
+            (`at`, and `source`: `dump` with its line, `git` with its commit, or none) and, for one
+            database of a dump holding several (`<file>@<database>`: `@`, not `#`, which a URL cuts), `part_of` and `lines`.
         """
         described = describe_origins(state.origins, catalog, connections.connections(), project_root)
         return [{"name": o["name"], "kind": o["kind"], "dialect": o["dialect"], "steps": len(o["steps"]),
                  "unread": sum(step["unread"] for step in o["steps"]), "objects": len(o["objects"]),
-                 "links": described[o["name"]]["links"], "suggestions": described[o["name"]]["suggestions"]}
+                 "links": described[o["name"]]["links"], "suggestions": described[o["name"]]["suggestions"],
+                 **{key: o[key] for key in ("tool", "dump", "generated", "part_of", "lines") if key in o}}
                 for o in state.origins]
 
     @mcp.tool()
