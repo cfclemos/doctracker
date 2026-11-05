@@ -1,6 +1,7 @@
 """In-memory documentation data shared by the MCP tools and the frontend."""
 
 import asyncio
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 
 
@@ -19,6 +20,8 @@ class DocState:
         origins: The SQL files and migrations declaring a database schema, as read (see `databases.origins`).
         retry: Set to read the code again at once (e.g. to try the grammars again), cleared by the watcher.
         ready: Whether the first extraction has finished.
+        progress: Where the extraction running is (`step`, `steps`, `title`, `done`, `total`, `unit`, see
+            `extraction.griffe_loader._report`), shared with its worker process; empty before it starts.
         listeners: One queue per open wiki page, notified when the data changes.
     """
 
@@ -31,6 +34,7 @@ class DocState:
     origins: list[dict] = field(default_factory=list)
     retry: bool = False
     ready: bool = False
+    progress: MutableMapping = field(default_factory=dict)
     listeners: set[asyncio.Queue] = field(default_factory=set)
 
     def update(self, result: dict) -> None:

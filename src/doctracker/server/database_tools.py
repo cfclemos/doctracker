@@ -73,7 +73,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
 
     @mcp.tool()
     @refusals_reported
-    async def refresh_database(connection_id: str) -> dict:
+    async def refresh_database(connection_id: str, sample_again: bool = False) -> dict:
         """Read an allowed connection's database again now, from its catalog, read only.
 
         The server already reads every allowed connection by itself (when allowed, at start and every
@@ -83,10 +83,13 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         tables, columns (type, null, default, comment, marks), keys, constraints, indexes, sequences,
         types, functions, procedures, triggers, comments, row estimates and sizes; and the relations
         (foreign key, implied, view reads, foreign table, partition of, inherits, trigger calls).
-        Only the state last read is kept; the other tools give it.
+        Only the state last read is kept; the other tools give it. The tables new or changed are sampled
+        (rows at random, kept only as masked column profiles; `database_object` gives them) and the
+        `contained in` relations found again through the samples.
 
         Args:
             connection_id: The connection, from `list_connections`.
+            sample_again: Sample every table of the database again, changed or not (its data changed).
 
         Returns:
             The database's state: `started` (when read), `seconds`, `version`, `server`, `database`,
@@ -95,7 +98,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             when reading it again failed (the state read before is kept).
         """
         try:
-            return await collect_connection(connections, catalog, connection_id)
+            return await collect_connection(connections, catalog, connection_id, sample_again="db:" if sample_again else "")
         except Locked as locked:
             raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASE › Connections).") from locked
 
@@ -255,7 +258,13 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             `declared` (a file's: where it was created and last changed), `unavailable` (what could not be
             read of its database, and why) and, for a table, view or column, `declared_by` on a live one
             (the origins declaring it and where they differ) or `found_in` on a file's (where it is in the
-            databases its file describes, and where they differ).
+            databases its file describes, and where they differ). A table's or view's `sample` (`read`,
+            `rows` sampled at random, `columns`, `shown`: at most 20 rows, `profiles` by column) and a
+            column's `profile` (`read`, `rows`, `sensitive`: why, or empty; `nulls`, `distinct`, `min`,
+            `max`, `min_length`, `max_length`, `frequent`, `formats`, `values`): a sensitive column's values
+            masked, each letter and digit as `*`; `unavailable` and why when there is none (a view, a
+            file other than a dump with rows). A relation found through the samples (`contained in`)
+            carries its `ratio`.
         """
         found = object_with_origins(path, state.origins, catalog, connections.connections(), project_root)
         if found is None:

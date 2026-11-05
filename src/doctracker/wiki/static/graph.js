@@ -900,8 +900,10 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   // kind off, nothing is drawn. Kept per diagram and browser tab.
   const kindsKey = `doctracker-diagram-kinds-off-${canvas.dataset.view}`;
   let kindsOff = new Set();
-  try { kindsOff = new Set(JSON.parse(sessionStorage.getItem(kindsKey) || "[]")); } catch {}
   const kindButtons = [...page.querySelectorAll(".graph-kind")];
+  // Kinds marked data-off in the legend start off, until the reader turns them on.
+  kindsOff = new Set(kindButtons.filter((button) => button.dataset.off).map((button) => button.dataset.kind));
+  try { kindsOff = new Set(JSON.parse(sessionStorage.getItem(kindsKey) ?? JSON.stringify([...kindsOff]))); } catch {}
   for (const button of kindButtons) {
     button.setAttribute("aria-pressed", String(!kindsOff.has(button.dataset.kind)));
     button.addEventListener("click", () => {
@@ -1078,6 +1080,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   const label = (id) => data.nodes.find((node) => node.id === id)?.label || id;
   const title = (edge) => {
     if (edge.reason) return `${label(edge.target)} waits for ${label(edge.source)}: ${edge.reason}`;
+    if (edge.ratio != null) return `${label(edge.source)}.${edge.via} contained in ${label(edge.target)}.${edge.to}: ${Math.round(edge.ratio * 1000) / 10}% of its sampled values`;
     if (edge.directed !== false) return `${label(edge.source)} → ${label(edge.target)}${edge.weight > 1 ? ` (${edge.weight} imports)` : ""}`;
     const ways = Object.entries(edge.counts || {}).map(([pair, count]) => {
       const [from, to] = pair.split("->");
@@ -1594,7 +1597,8 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
 // in its kind's colour, a column's with its symbols. The view opened, the relations and the filters are
 // kept for the browser tab, so a redraw (a database read again and changed) comes back where it was.
 const UNIVERSE_COLORS = { server: "#24292f", database: "#bc4c00", schema: "#8250df", table: "#0969da", view: "#1a7f37", column: "#6e7781" };
-const UNIVERSE_LINKS = { contains: "#8c959f", "foreign key": "#cf222e", implied: "#bf8700", "view reads": "#1a7f37", "foreign table": "#1b7c83" };
+const UNIVERSE_LINKS = { contains: "#8c959f", "foreign key": "#cf222e", implied: "#bf8700", "view reads": "#1a7f37", "foreign table": "#1b7c83",
+                         "contained in": "#8250df" };
 const UNIVERSE_OUTSIDE = "#9cc3f5";  // a node outside the one opened, drawn only because a link reaches it
 // ForceAtlas2 pushes two nodes apart by the product of their masses (1 + the weight of their links); a
 // link from a node to itself adds mass without pulling anything, so schemas and tables push harder.
@@ -1857,8 +1861,10 @@ async function drawUniverse(canvas) {
     const nodes = new Map(), links = new Map();
     const node = (id, extra = {}) => { if (!nodes.has(id)) nodes.set(id, { id, kind: byId.get(id).kind, ...extra }); };
     // One line per pair of nodes and kind of relation, both directions summed.
-    const link = (a, b, kind) => { if (a === b) return; const key = (a < b ? `${a}|${b}` : `${b}|${a}`) + `|${kind}`;
-      if (!links.has(key)) links.set(key, { a, b, kinds: {} }); const k = links.get(key).kinds; k[kind] = (k[kind] ?? 0) + 1; };
+    // A relation found through the samples (contained in) brings its share of values, shown on hover.
+    const link = (a, b, kind, ratio) => { if (a === b) return; const key = (a < b ? `${a}|${b}` : `${b}|${a}`) + `|${kind}`;
+      if (!links.has(key)) links.set(key, { a, b, kinds: {}, ratios: [] }); const l = links.get(key); l.kinds[kind] = (l.kinds[kind] ?? 0) + 1;
+      if (ratio != null) l.ratios.push(ratio); };
     const chosen = relations.filter((e) => themes.has(e.kind));
     const focus = path.at(-1), at = focus ? Math.min(level(focus) + 1, 3) : 0;  // the level drawn
     const home = focus ? up(focus, Math.min(level(focus), 2)) : null;        // what counts as inside
@@ -1882,7 +1888,7 @@ async function drawUniverse(canvas) {
       // The table opened links through its columns; everything else node to node.
       const from = a === table ? up(e.source, 4) : a, to = b === table ? up(e.target, 4) : b;
       if (from !== a) node(from); if (to !== b) node(to);
-      link(from, to, e.kind);
+      link(from, to, e.kind, e.ratio);
     }
     if (table) for (const c of children.get(table) ?? []) { node(c); link(table, c, "contains"); }
     else if (focus) for (const t of reached) if (byId.get(t).parent === focus) link(focus, t, "contains");
@@ -1930,7 +1936,7 @@ async function drawUniverse(canvas) {
     }
     for (const l of links.values()) {
       const [kind, total] = Object.entries(l.kinds)[0];
-      graph.addEdge(l.a, l.b, { kind, kinds: l.kinds, weight: kind === "contains" ? 3 : 1, color: UNIVERSE_LINKS[kind],
+      graph.addEdge(l.a, l.b, { kind, kinds: l.kinds, ratios: l.ratios, weight: kind === "contains" ? 3 : 1, color: UNIVERSE_LINKS[kind],
         size: kind === "contains" ? 0.5 : Math.min(1 + Math.log2(total) * 1.2, 9) });
     }
     // Two kinds between the same pair: the lines bend apart instead of covering each other.
@@ -2087,7 +2093,9 @@ async function drawUniverse(canvas) {
   renderer.on("enterEdge", ({ edge }) => {
     const k = graph.getEdgeAttribute(edge, "kinds"); if (!k || k.contains || !tooltip) return;
     const bounds = area.getBoundingClientRect();
-    tooltip.innerHTML = `<span>${esc(byId.get(graph.source(edge)).label)} — ${esc(byId.get(graph.target(edge)).label)}</span><span>${Object.entries(k).map(([kind, n]) => `${n} ${esc(kind)}`).join(" · ")}</span>`;
+    const ratios = graph.getEdgeAttribute(edge, "ratios") ?? [], pct = (r) => `${Math.round(r * 1000) / 10}%`;
+    const share = !ratios.length ? "" : ratios.length === 1 ? ` (${pct(ratios[0])} of the values)` : ` (${pct(Math.min(...ratios))} to ${pct(Math.max(...ratios))} of the values)`;
+    tooltip.innerHTML = `<span>${esc(byId.get(graph.source(edge)).label)} — ${esc(byId.get(graph.target(edge)).label)}</span><span>${Object.entries(k).map(([kind, n]) => `${n} ${esc(kind)}`).join(" · ")}${share}</span>`;
     tooltip.style.left = `${mouse[0] - bounds.left + 12}px`; tooltip.style.top = `${mouse[1] - bounds.top + 12}px`; tooltip.hidden = false;
   });
   renderer.on("leaveEdge", () => { if (tooltip) tooltip.hidden = true; });

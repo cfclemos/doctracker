@@ -401,7 +401,8 @@ def as_collection(origin: dict) -> dict:
 
     Paths: `origin:<name>` (the origin, as a database), `origin:<name>::<schema>` and
     `origin:<name>::<schema>.<object>`; each object's `data` also holds `declared` (`created`,
-    `changed`: file and line).
+    `changed`: file and line). A dump's tables carry the samples of the rows it holds (`samples`, as a
+    live collection's); one it holds no rows of says so.
 
     Args:
         origin: The origin read (`read_origin`).
@@ -532,6 +533,13 @@ def as_collection(origin: dict) -> dict:
                 found.objects[path]["data"]["inherits"] = parent
                 found.relate(path, parent, "inherits")
     _implied(found)
+    taken = []
+    if "samples" in origin:  # a dump: each table's sample of its rows, or why there is none
+        for key, obj in objects.items():
+            if obj["kind"] == "table":
+                data = origin["samples"].get(key) or {"unavailable": "The dump holds no rows of it."}
+                taken.append({"path": found.path(obj["schema"], obj["name"]), "signature": "", "data": data})
     return {"ok": True, "error": "", "version": "", "kind": dialect, "server": "", "database": origin["name"], "started": "",
             "seconds": 0, "databases": [], "objects": list(found.objects.values()), "relations": found.relations,
-            "unavailable": [{"what": "row estimates and sizes", "reason": "A file declares no rows."}]}
+            "unavailable": [{"what": "row estimates and sizes", "reason": "A dump keeps no estimates nor sizes of its tables."
+                             if "samples" in origin else "A file declares no rows."}], "samples": taken}

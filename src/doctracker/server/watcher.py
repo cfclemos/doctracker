@@ -92,7 +92,10 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
     loop = asyncio.get_running_loop()
     repository = await git_dir(project_root)
     # spawn, not fork: a forked worker would keep the server's listening socket after the server stops.
-    with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as executor:
+    context = multiprocessing.get_context("spawn")
+    # The worker tells how far a reading is through a dict it shares with the server (the loading screen).
+    with ProcessPoolExecutor(max_workers=1, mp_context=context) as executor, context.Manager() as manager:
+        state.progress = manager.dict()
         previous_code = previous_git = None
         while True:
             code = await loop.run_in_executor(executor, snapshot, project_root)
@@ -105,6 +108,7 @@ async def watch(project_root: Path, config: Config, state: DocState, notes: Note
                     str(project_root),
                     config.docstring_style,
                     config.show_private,
+                    state.progress,
                 )
                 state.update(result)
                 catalog.keep_origins(result.get("origin_collections", []))

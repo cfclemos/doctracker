@@ -297,7 +297,7 @@ main { grid-area: main; }
 #tree details[open] > summary > .icon-folder::before { -webkit-mask-image: url("icons/folder-open.svg"); mask-image: url("icons/folder-open.svg"); }
 #tree a, #tree summary > span[class^="role-"] { flex: 1; min-width: 0; display: block; padding: 0.1rem 0.3rem; border-radius: 4px; color: var(--fg); overflow-wrap: anywhere; }
 #tree summary > span[class^="role-"] { cursor: pointer; }
-#tree .role-folder { font-weight: 600; }
+#tree .role-folder, #tree .role-schema { font-weight: 600; }
 #tree .role-language { font-weight: 700; font-size: 0.9rem; }
 #tree li:has(> details > summary > .role-project) + li { margin-top: 0.5rem; }
 /* CODE, with the switch of the tree's format beside it. */
@@ -334,7 +334,7 @@ main { grid-area: main; }
 .icon-architecture::before, .icon-classes::before, .icon-calls::before, .icon-git::before, .icon-notes::before, .icon-diagrams::before,
 .icon-database::before, .icon-connections::before, .icon-connection-ok::before, .icon-connection-failed::before,
 .icon-connection-blocked::before, .icon-connection-unread::before,
-.icon-dead-code::before, .icon-folder::before, .icon-language::before, .icon-project::before,
+.icon-dead-code::before, .icon-folder::before, .icon-schema::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
 .icon-layout-folders::before, .icon-layout-languages::before {
   content: "";
@@ -354,6 +354,7 @@ main { grid-area: main; }
 .icon-examples::before { -webkit-mask-image: url("icons/puzzle.svg"); mask-image: url("icons/puzzle.svg"); }
 .icon-file::before { -webkit-mask-image: url("icons/file.svg"); mask-image: url("icons/file.svg"); }
 .icon-folder::before, .icon-layout-folders::before { -webkit-mask-image: url("icons/folder.svg"); mask-image: url("icons/folder.svg"); }
+.icon-schema::before { -webkit-mask-image: url("icons/category.svg"); mask-image: url("icons/category.svg"); }
 .icon-language::before, .icon-layout-languages::before { -webkit-mask-image: url("icons/braces.svg"); mask-image: url("icons/braces.svg"); }
 .icon-architecture::before, .icon-diagrams::before { -webkit-mask-image: url("icons/sitemap.svg"); mask-image: url("icons/sitemap.svg"); }
 .icon-classes::before { -webkit-mask-image: url("icons/binary-tree.svg"); mask-image: url("icons/binary-tree.svg"); }
@@ -385,6 +386,7 @@ main { grid-area: main; }
 .icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
 .icon.icon-examples { --tint: var(--exports); }
 .icon.icon-subpackage, .icon.icon-folder { --tint: var(--folder); }
+.icon.icon-schema { --tint: var(--class); }
 .icon.icon-language { --tint: var(--method); }
 .icon.icon-project { --tint: var(--attribute); }
 
@@ -1870,6 +1872,14 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .db-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .db-table th, .db-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
 .db-table th { font-weight: 600; color: var(--muted); }
+.loading-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem; min-height: 70vh; text-align: center; }
+.loading-page h1 { margin: 0.6rem 0 0; }
+.reading-progress { width: min(28rem, 100%); }
+.reading-bar { height: 0.5rem; border-radius: 0.25rem; background: var(--border); overflow: hidden; }
+.reading-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.reading-progress .summary { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.85rem; }
+.db-sample-values code { display: inline-block; margin: 0.1rem 0.2rem; }
+.sample-again { margin-top: 0.5rem; }
 .db-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0.3rem 0; font-size: 0.85rem; }
 .db-facts dt { font-weight: 600; }
 .db-facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -2074,6 +2084,7 @@ html.loading::before {
 .uml-canvas[data-view="er"] .uml-line.view-reads { stroke: var(--attribute); stroke-dasharray: 2 3; }
 .uml-canvas[data-view="er"] .uml-line.partition-of, .uml-canvas[data-view="er"] .uml-line.inherits { stroke: var(--function); }
 .uml-canvas[data-view="er"] .uml-line.foreign-table { stroke: var(--returns); stroke-dasharray: 8 3; }
+.uml-canvas[data-view="er"] .uml-line.contained-in { stroke: var(--exports); stroke-dasharray: 1 4; stroke-linecap: round; }
 .er-marker { fill: none; stroke: var(--fg); stroke-width: 1.5; }
 .er-marker-circle { fill: var(--bg); }
 .er-multiplicity { fill: var(--fg); font-size: 11px; font-family: system-ui, sans-serif; }
@@ -2082,6 +2093,7 @@ html.loading::before {
 .graph-legend .line.view-reads { border-color: var(--attribute); border-top-style: dotted; }
 .graph-legend .line.partition-of { border-color: var(--function); }
 .graph-legend .line.foreign-table { border-color: var(--returns); border-top-style: dashed; }
+.graph-legend .line.contained-in { border-color: var(--exports); border-top-style: dotted; }
 .graph-legend .box.er-connection { background: var(--folder); }
 .graph-legend .box.er-database { background: #bc4c00; }
 .graph-legend .box.er-table { background: var(--accent); }

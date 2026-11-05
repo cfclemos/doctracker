@@ -20,6 +20,7 @@ but doctracker does not read in full (YAML, JSON, TOML, Markdown...) are a modul
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import tree_sitter_language_pack as pack
@@ -48,7 +49,8 @@ _MACRO_TAG = re.compile(r"\{%-?\s*(macro|endmacro)\b")
 _DOC_TAGS = re.compile(r"</?(?:summary|remarks|returns|param|typeparam|value|example|para)\b[^>]*>")
 
 
-def extract_code(root: Path, files: list[str], entities: dict[str, dict]) -> tuple[dict[str, dict], list[dict]]:
+def extract_code(root: Path, files: list[str], entities: dict[str, dict],
+                 on_file: Callable[[int, int], None] | None = None) -> tuple[dict[str, dict], list[dict]]:
     """Read every file that is not Python into entities, through the language pack.
 
     Args:
@@ -56,6 +58,7 @@ def extract_code(root: Path, files: list[str], entities: dict[str, dict]) -> tup
         files: The project's files (`config.project_files`); those of a language the pack reads are read.
         entities: The Python entities already extracted; a file inside a Python package is also
             added to the `members` of that package.
+        on_file: Told, before each file, how many files are read and how many there are to read.
 
     Returns:
         The entities, by path, with the keys of the Python ones plus `kind_label`, `signature` and
@@ -80,7 +83,9 @@ def extract_code(root: Path, files: list[str], entities: dict[str, dict]) -> tup
                if grammar in errors]
     wanted = [(file, language) for file, language in wanted if grammar_of(file, language) not in errors]
     found: dict[str, dict] = {}
-    for file_path, language in wanted:
+    for index, (file_path, language) in enumerate(wanted):
+        if on_file is not None:
+            on_file(index, len(wanted))
         try:
             source = (root / file_path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

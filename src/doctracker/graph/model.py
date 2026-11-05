@@ -491,16 +491,17 @@ def class_diagram(state: DocState, package: str = "", apart: str = "", project: 
     return {"nodes": nodes, "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept]}
 
 
-ER_KINDS = ("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")
+ER_KINDS = ("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table", "contained-in")
 """The relations of the ER diagram: a foreign key and an implied one (from a column's row to a column's
 row, with their cardinality), a view reading a table, a partition or child table and its parent, a
-foreign table and the table it stands for."""
+foreign table and the table it stands for, a column contained in a key column (found through the
+samples, with its `ratio`)."""
 
 _ER_TABLES = {"table": "table", "foreign table": "foreign-table", "view": "view", "materialized view": "materialized-view"}
 """What the ER diagram draws as boxes, and the role each kind takes."""
 
 _ER_RELATIONS = {"implied": "implied", "view reads": "view-reads", "partition of": "partition-of", "inherits": "inherits",
-                 "foreign table": "foreign-table"}
+                 "foreign table": "foreign-table", "contained in": "contained-in"}
 """The catalog's relations the ER diagram draws besides the foreign keys (read from each table's keys)."""
 
 
@@ -509,7 +510,7 @@ def _er_frame_role(node: dict) -> str:
     role, path = node["role"], node["path"]
     if role.startswith("connection-"):
         return "connection"
-    if role == "folder":  # a schema of a database, or a folder of files
+    if role in ("folder", "schema"):  # a schema of a database, or a folder of files
         return "schema" if path.startswith(("db:", "origin:")) else "folder"
     return {"module": "file", "connections": "connections"}.get(role, role)
 
@@ -537,7 +538,7 @@ def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "
         database, schema) and the tables and views as boxes (`role` table, view, materialized-view,
         foreign-table; `columns`: name, type, marks, nullable, comment, path), each with `id` (its path),
         `label`, `parent`, `page`, `summary`; `edges`: `source` and `target` (tables), `kind` (one of
-        `ER_KINDS`); a foreign key and an implied one also with `via` and `to` (the columns of each end),
+        `ER_KINDS`); a foreign key, an implied one and a contained one also with `via` and `to` (the columns of each end),
         `source_end` (`zero-one` when its columns are unique, else `zero-many`) and `target_end` (`one`
         when its columns are NOT NULL, else `zero-one`).
     """
@@ -602,15 +603,16 @@ def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "
         kind, source, target = _ER_RELATIONS[relation["kind"]], relation["source"], relation["target"]
         if kind == "foreign-table" and target not in objects and len(by_place.get(target.split("/", 1)[-1], [])) == 1:
             target = by_place[target.split("/", 1)[-1]][0]
-        if kind == "implied":  # column to column
+        if kind in ("implied", "contained-in"):  # column to column
             source_table, target_table = column_table.get(source), column_table.get(target)
             if not source_table or not target_table:
                 continue
             via, to = source.rsplit(".", 1)[-1], target.rsplit(".", 1)[-1]
-            edges.append({"id": f"implied:{source}->{target}", "source": source_table, "target": target_table, "kind": kind,
+            edges.append({"id": f"{kind}:{source}->{target}", "source": source_table, "target": target_table, "kind": kind,
                           "via": via, "to": to, "columns": [via], "target_columns": [to],
                           "source_end": "zero-one" if unique(objects[source_table], [via]) else "zero-many",
-                          "target_end": "zero-one" if nullable(source_table, [via]) else "one"})
+                          "target_end": "zero-one" if nullable(source_table, [via]) else "one",
+                          **({"ratio": relation["ratio"]} if "ratio" in relation else {})})
         elif source in objects and target in objects and source != target:
             edges.append({"id": f"{kind}:{source}->{target}", "source": source, "target": target, "kind": kind})
     edges = list({edge["id"]: edge for edge in edges}.values())

@@ -13,6 +13,10 @@ Relations between objects: foreign key (column to column), implied (a `<name>_id
 declared key, matched by name to a one-column primary key), view reads, foreign table (to the table
 it stands for, in another database), partition of, inherits and trigger calls (trigger to function).
 
+Each table's data is sampled too (`samples`): rows taken at random, kept only as column profiles and
+masked rows, and the values of its key columns; a table is sampled when it is new, when its columns
+change, or when asked to again, not at every reading.
+
 Nothing is guessed: what a query cannot read (the user's permissions, a database without that
 catalog, statistics never gathered) goes to `unavailable` with the reason. Every statement passes
 through the read-only engine of `readonly.py`, so a write would be aborted before being sent.
@@ -23,11 +27,13 @@ connection's `host:port` (`sqlite` for a file).
 """
 
 import asyncio
+import contextlib
 import re
 import multiprocessing
 import time
 import warnings
 from collections import defaultdict
+from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +43,7 @@ from sqlglot import exp
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection, Inspector, ObjectKind
 
+from doctracker.databases import samples
 from doctracker.databases.catalog import CatalogStore
 from doctracker.databases.discovery import DEFAULT_PORTS
 from doctracker.databases.readonly import _CHECKS, DIALECTS, _message, opened
@@ -173,6 +180,8 @@ class _Collection:
         objects: Objects by path: `path`, `kind`, `parent`, `name` and `data`.
         relations: `source`, `target` and `kind` of each relation.
         unavailable: `what` could not be read, and the `reason`.
+        sampled: By table path, the signature of the sample already kept: those tables are not sampled again.
+        samples: The tables sampled (`path`, `signature`, `data`).
     """
 
     def __init__(self, base: str, separator: str = "/") -> None:
@@ -182,6 +191,8 @@ class _Collection:
         self.objects: dict[str, dict] = {}
         self.relations: list[dict] = []
         self.unavailable: list[dict] = []
+        self.sampled: dict[str, str] = {}
+        self.samples: list[dict] = []
 
     def path(self, schema: str, *names: str) -> str:
         """The path of a schema, or of an object inside it."""
@@ -214,13 +225,16 @@ def collect(spec: dict) -> dict:
     Runs in a process apart (see `run_collect`), on a read-only engine; the transaction is rolled back.
 
     Args:
-        spec: The resolved connection (see `readonly.open_engine`), with `ssh` when it goes through a tunnel.
+        spec: The resolved connection (see `readonly.open_engine`), with `ssh` when it goes through a tunnel,
+            and `sampled`: by table path, the signature of the sample already kept (see `samples.signature`);
+            a table missing from it, or whose signature changed, is sampled.
 
     Returns:
         `ok`, `error`, `version`, `kind`, `server`, `database` (empty when every database was read),
         `started` (ISO 8601, UTC), `seconds`, `databases` (the other databases on the server, not read),
-        `objects` (path, kind, parent, name, data), `relations` (source, target, kind) and
-        `unavailable` (what, reason).
+        `objects` (path, kind, parent, name, data), `relations` (source, target, kind),
+        `unavailable` (what, reason) and `samples` (`path`, `signature`, `data`: see `samples.table_sample`,
+        with `keys`, or `unavailable` and the reason) of the tables sampled now.
     """
     began = time.monotonic()
     warnings.filterwarnings("ignore", message="Did not recognize type")  # completed by our own queries
@@ -228,10 +242,11 @@ def collect(spec: dict) -> dict:
     kind = spec["kind"]
     result = {"ok": False, "error": "", "version": "", "kind": kind, "server": server_name(spec), "database": "",
               "started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "databases": [],
-              "objects": [], "relations": [], "unavailable": []}
+              "objects": [], "relations": [], "unavailable": [], "samples": []}
     everything = not spec.get("database") and kind in _DATABASES
     first = {**spec, "database": _FIRST_DATABASE.get(kind, "")} if everything else spec
     found = _Collection(f"db:{result['server']}")
+    found.sampled = spec.get("sampled") or {}
     try:
         with opened(first) as (engine, _tunnel), engine.connect() as connection:
             result["version"] = str(connection.execute(text(_CHECKS[kind][0])).scalar() or "").splitlines()[0][:160]
@@ -260,7 +275,7 @@ def collect(spec: dict) -> dict:
                 found.unavailable.append({"what": f"database {name}", "reason": _message(failed)})
         _implied(found)
         result.update(ok=True, objects=list(found.objects.values()), relations=found.relations,
-                      unavailable=found.unavailable)
+                      unavailable=found.unavailable, samples=found.samples)
     except Exception as failed:  # any driver's or SSH error is reported to the user as it is
         result["error"] = _message(failed)
     result["seconds"] = round(time.monotonic() - began, 2)
@@ -275,6 +290,54 @@ def _read_database(found: _Collection, connection: Connection, kind: str, databa
     _read_structure(found, connection, kind, database)
     _read_catalog(found, connection, kind)
     _read_history(found, connection, kind)
+    _read_samples(found, connection, kind)
+
+
+def _read_samples(found: _Collection, connection: Connection, kind: str) -> None:
+    """Sample the database's tables that are new, changed, or asked for again (see `samples`): their
+    rows at random and the distinct values of their key columns. A query that fails or takes too long
+    leaves that table with the reason, and the others are still sampled."""
+    columns: dict[str, list[dict]] = defaultdict(list)
+    for obj in found.objects.values():
+        if obj["kind"] == "column":
+            columns[obj["parent"]].append(obj)
+    for obj in [o for o in found.objects.values() if o["kind"] in samples.SAMPLED_KINDS and o["path"].startswith(found.base + "/")]:
+        held = sorted(columns[obj["path"]], key=lambda c: c["data"].get("position", 0))
+        signature = samples.signature(held)
+        if found.sampled.get(obj["path"]) == signature:
+            continue
+        schema = obj["parent"].rsplit("/", 1)[-1]
+        try:
+            with _time_limit(connection, kind):
+                result = connection.execute(text(samples.sample_query(kind, schema, obj["name"])))
+                names = list(result.keys())
+                rows = [[samples.as_text(value) for value in row] for row in result]
+                data = samples.table_sample(held, names, rows)
+                pk = (obj["data"].get("primary_key") or {}).get("columns") or []
+                data["keys"] = {}
+                for column in samples.key_columns(data, pk):
+                    values = [samples.as_text(row[0]) for row in connection.execute(text(samples.keys_query(kind, schema, obj["name"], column)))]
+                    data["keys"][column] = values[:samples.KEY_VALUES]
+            connection.rollback()
+        except Exception as failed:  # too long, or not allowed: this table only; the connection is made again
+            data = {"unavailable": _message(failed)}
+            connection.invalidate()
+            connection.rollback()
+        found.samples.append({"path": obj["path"], "signature": signature, "data": data})
+
+
+@contextlib.contextmanager
+def _time_limit(connection: Connection, kind: str) -> Iterator[None]:
+    """Stop a SQLite query after `samples.QUERY_SECONDS` (the other drivers stop theirs by their own timeout)."""
+    raw = connection.connection.dbapi_connection if kind == "sqlite" else None
+    if raw is not None:
+        deadline = time.monotonic() + samples.QUERY_SECONDS
+        raw.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
+    try:
+        yield
+    finally:
+        if raw is not None:
+            raw.set_progress_handler(None, 0)
 
 
 HISTORY_TABLES = {"flyway_schema_history": "flyway", "schema_migrations": "golang-migrate or dbmate",
@@ -645,7 +708,8 @@ async def run_collect(spec: dict) -> dict:
             return {"ok": False, "error": f"Not finished in {COLLECT_TIMEOUT_SECONDS} seconds.", "version": "",
                     "kind": spec["kind"], "server": server_name(spec), "database": spec.get("database", ""),
                     "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "seconds": COLLECT_TIMEOUT_SECONDS, "databases": [], "objects": [], "relations": [], "unavailable": []}
+                    "seconds": COLLECT_TIMEOUT_SECONDS, "databases": [], "objects": [], "relations": [], "unavailable": [],
+                    "samples": []}
 
 
 REFRESH_SECONDS = 60
@@ -658,16 +722,20 @@ _reading: dict[str, asyncio.Lock] = {}
 """One lock per connection, so a database is never read twice at the same time."""
 
 
-async def collect_connection(connections: ConnectionStore, catalog: CatalogStore, connection_id: str) -> dict | None:
+async def collect_connection(connections: ConnectionStore, catalog: CatalogStore, connection_id: str,
+                             sample_again: str = "") -> dict | None:
     """Read an allowed connection's database now and keep it as its current state (the wiki's Refresh,
     the MCP tool, and the server's own readings).
 
-    When the database is already being read, waits for that reading instead of starting another.
+    When the database is already being read, waits for that reading instead of starting another
+    (and then reads it again when tables are to be sampled again).
 
     Args:
         connections: The connections.
         catalog: Where the state of each database is kept.
         connection_id: The connection; it must be allowed.
+        sample_again: Sample again the tables whose path starts with this (a table's path, or `db:` for
+            every one); empty to sample only the tables new or changed.
 
     Returns:
         The connection's state (see `CatalogStore.collection`).
@@ -677,12 +745,13 @@ async def collect_connection(connections: ConnectionStore, catalog: CatalogStore
         Locked: When its password is saved and the key is not available.
     """
     lock = _reading.setdefault(connection_id, asyncio.Lock())
-    if lock.locked():
+    if lock.locked() and not sample_again:
         async with lock:
             return catalog.collection(connection_id)
     async with lock:
         spec = connections.spec(connection_id)
         name = next(c["name"] for c in connections.connections() if c["id"] == connection_id)
+        spec["sampled"] = catalog.signatures(connection_id, sample_again)
         return catalog.save(connection_id, name, await run_collect(spec))
 
 

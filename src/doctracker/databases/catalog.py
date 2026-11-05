@@ -4,6 +4,11 @@ Only the last successful collection of each connection is kept (its objects, rel
 was unavailable): it is what the search, the MCP tools and the wiki show. A collection that fails
 keeps the state read before, with the failure noted beside it until a collection succeeds again.
 No history is kept: the evolution of a database comes from its migrations and commits.
+
+Each table's sample (`samples`) is kept apart from the readings: a reading replaces the objects every
+minute, while a table is sampled only when new, changed or asked for again. The `contained in`
+relations found through the samples (`samples.containment`) are kept apart too, and given with the
+others, carrying their `ratio`.
 """
 
 import hashlib
@@ -12,6 +17,8 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+from doctracker.databases import samples as sampling
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS collections (
@@ -30,11 +37,18 @@ CREATE TABLE IF NOT EXISTS origin_links (
   origin TEXT NOT NULL, database TEXT NOT NULL, linked INTEGER NOT NULL, PRIMARY KEY (origin, database));
 CREATE TABLE IF NOT EXISTS unavailable (
   collection INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, what TEXT NOT NULL, reason TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS samples (
+  connection TEXT NOT NULL, path TEXT NOT NULL, signature TEXT NOT NULL, read TEXT NOT NULL, data TEXT NOT NULL,
+  PRIMARY KEY (connection, path));
+CREATE TABLE IF NOT EXISTS data_relations (
+  connection TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, ratio REAL NOT NULL);
 """
 """Tables: `collections` (per connection, its last successful collection and a later failed one, with
 the other `databases` on the server as JSON and a `fingerprint` of what was read), `objects` (what the collection read, `data` as JSON),
 `relations` and `unavailable`; `origin_links`, the links between an origin (SQL files, migrations) and a
-database chosen by hand (`linked` 1) or taken away by hand (0)."""
+database chosen by hand (`linked` 1) or taken away by hand (0); `samples`, each table's sample (`data` as
+JSON, see `samples.table_sample`) with the `signature` of the columns it was taken from; `data_relations`,
+the `contained in` relations found through the samples, by the source's connection."""
 
 SEARCHED_KINDS = ("table", "view", "materialized view", "foreign table", "column", "function", "procedure",
                   "aggregate", "trigger", "sequence", "enum", "domain", "synonym")
@@ -44,7 +58,7 @@ UNIVERSE_KINDS = {"database": "database", "schema": "schema", "table": "table", 
                   "view": "view", "materialized view": "view", "column": "column"}
 """What the Universe draws of each kind of object (the SQL tree), as the kind it is drawn as."""
 
-UNIVERSE_RELATIONS = ("foreign key", "implied", "view reads", "foreign table")
+UNIVERSE_RELATIONS = ("foreign key", "implied", "view reads", "foreign table", "contained in")
 """The relations the Universe draws."""
 
 _CURRENT = "SELECT id FROM collections WHERE ok = 1"
@@ -57,6 +71,14 @@ left out of what lists the live databases."""
 
 _LIVE = f"{_CURRENT} AND connection NOT LIKE '{ORIGINS}%'"
 """The current collections of the live databases only."""
+
+_RELATIONS = ("(SELECT collection, source, target, kind, NULL AS ratio FROM relations UNION ALL "
+              "SELECT c.id, d.source, d.target, 'contained in', d.ratio FROM data_relations d "
+              "JOIN collections c ON c.connection = d.connection AND c.ok = 1)")
+"""Every relation, as a table: those read with each collection and those found through the samples."""
+
+_TABULAR = ("table", "view", "materialized view", "foreign table")
+"""The kinds of object that hold columns."""
 
 
 class CatalogStore:
@@ -130,10 +152,64 @@ class CatalogStore:
                                    [(collection, r["source"], r["target"], r["kind"]) for r in result["relations"]])
             connection.executemany("INSERT INTO unavailable VALUES (?, ?, ?)",
                                    [(collection, u["what"], u["reason"]) for u in result["unavailable"]])
-        changed = replaced is None or replaced["fingerprint"] != fingerprint
+            sampled = self._keep_samples(connection, connection_id, result) if result["ok"] else False
+        if sampled:
+            self._contain()
+        changed = replaced is None or replaced["fingerprint"] != fingerprint or sampled
         if changed and tell:
             self._on_change()
         return {**(self.collection(connection_id) or {}), "changed": changed}
+
+    @staticmethod
+    def _keep_samples(connection: sqlite3.Connection, connection_id: str, result: dict) -> bool:
+        """Keep the samples a collection took (in place of those before), and drop those of tables gone.
+
+        Returns:
+            Whether any sample kept differs from before.
+        """
+        changed = False
+        for taken in result.get("samples") or []:
+            data = json.dumps(taken["data"], sort_keys=True, default=str)
+            before = connection.execute("SELECT data FROM samples WHERE connection = ? AND path = ?",
+                                        (connection_id, taken["path"])).fetchone()
+            changed |= before is None or before["data"] != data
+            connection.execute("INSERT OR REPLACE INTO samples VALUES (?, ?, ?, ?, ?)",
+                               (connection_id, taken["path"], taken["signature"], result["started"], data))
+        tables = {o["path"] for o in result["objects"] if o["kind"] in sampling.SAMPLED_KINDS}
+        gone = [row["path"] for row in connection.execute("SELECT path FROM samples WHERE connection = ?", (connection_id,))
+                if row["path"] not in tables]
+        connection.executemany("DELETE FROM samples WHERE connection = ? AND path = ?", [(connection_id, path) for path in gone])
+        return changed or bool(gone)
+
+    def _contain(self) -> None:
+        """Find again the `contained in` relations through every sample kept (`samples.containment`): the
+        live databases with each other, what a file declares within that file."""
+        with self._connect(write=True) as connection:
+            tables = [{"path": row["path"], "connection": row["connection"], "data": json.loads(row["data"]),
+                       "scope": row["connection"] if row["connection"].startswith(ORIGINS) else "live"}
+                      for row in connection.execute("SELECT * FROM samples WHERE connection IN (SELECT connection FROM collections WHERE ok = 1)")]
+            tables = [table for table in tables if "profiles" in table["data"]]
+            owner = {table["path"]: table["connection"] for table in tables}
+            connection.execute("DELETE FROM data_relations")
+            connection.executemany("INSERT INTO data_relations VALUES (?, ?, ?, ?)",
+                                   [(owner[found["table"]], found["source"], found["target"], found["ratio"])
+                                    for found in sampling.containment(tables)])
+
+    def signatures(self, connection_id: str, again: str = "") -> dict[str, str]:
+        """The signature of each table's sample kept for a connection (see `samples.signature`): the tables
+        a collection need not sample again.
+
+        Args:
+            connection_id: The connection.
+            again: Leave out the tables whose path starts with this (to sample them again); empty for none.
+
+        Returns:
+            By table path, its sample's signature.
+        """
+        with self._connect() as connection:
+            return {row["path"]: row["signature"] for row in connection.execute(
+                "SELECT path, signature FROM samples WHERE connection = ?", (connection_id,))
+                if not again or not row["path"].startswith(again)}
 
     def keep_origins(self, collections: list[dict]) -> None:
         """Keep what the project's files declare, as collections beside the live databases (connection
@@ -147,11 +223,13 @@ class CatalogStore:
         for collection in collections:
             changed |= self.save(f"{ORIGINS}{collection['database']}", collection["database"], collection, tell=False)["changed"]
         kept = [f"{ORIGINS}{c['database']}" for c in collections]
+        others = f" AND connection NOT IN ({', '.join('?' * len(kept))})" if kept else ""
         with self._connect(write=True) as connection:
-            changed |= connection.execute(
-                f"DELETE FROM collections WHERE connection LIKE '{ORIGINS}%'"
-                + (f" AND connection NOT IN ({', '.join('?' * len(kept))})" if kept else ""), kept).rowcount > 0
-        if changed:
+            changed |= connection.execute(f"DELETE FROM collections WHERE connection LIKE '{ORIGINS}%'" + others, kept).rowcount > 0
+            gone = connection.execute(f"DELETE FROM samples WHERE connection LIKE '{ORIGINS}%'" + others, kept).rowcount > 0
+        if gone:
+            self._contain()
+        if changed or gone:
             self._on_change()
 
     def forget(self, connection_id: str) -> None:
@@ -162,6 +240,9 @@ class CatalogStore:
         """
         with self._connect(write=True) as connection:
             removed = connection.execute("DELETE FROM collections WHERE connection = ?", (connection_id,)).rowcount
+            sampled = connection.execute("DELETE FROM samples WHERE connection = ?", (connection_id,)).rowcount
+        if sampled:
+            self._contain()
         if removed:
             self._on_change()
 
@@ -192,7 +273,7 @@ class CatalogStore:
                     "counts": {"objects": {kind: n for kind, n in connection.execute(
                                    "SELECT kind, count(*) FROM objects WHERE collection = ? GROUP BY kind", (row["id"],))},
                                "relations": {kind: n for kind, n in connection.execute(
-                                   "SELECT kind, count(*) FROM relations WHERE collection = ? GROUP BY kind", (row["id"],))}},
+                                   f"SELECT kind, count(*) FROM {_RELATIONS} WHERE collection = ? GROUP BY kind", (row["id"],))}},
                     "unavailable": [dict(u) for u in connection.execute(
                         "SELECT what, reason FROM unavailable WHERE collection = ?", (row["id"],))]})
         return found
@@ -251,13 +332,14 @@ class CatalogStore:
             kinds: Only these kinds (`foreign key`, `implied`, `view reads`…); empty for all.
 
         Returns:
-            Each relation's `source`, `target` and `kind`, once.
+            Each relation's `source`, `target` and `kind`, once; one found through the samples (`contained
+            in`) also with its `ratio`.
         """
-        query = f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT})"
+        query = f"SELECT DISTINCT source, target, kind, ratio FROM {_RELATIONS} WHERE collection IN ({_CURRENT})"
         if kinds:
             query += f" AND kind IN ({', '.join('?' * len(kinds))})"
         with self._connect() as connection:
-            return [dict(row) for row in connection.execute(query, list(kinds))]
+            return [_relation(row) for row in connection.execute(query, list(kinds))]
 
     def outline(self) -> dict[str, list[tuple[str, str, str, str]]]:
         """What the tree shows of the databases read and of what the files declare, by connection (a
@@ -280,10 +362,13 @@ class CatalogStore:
         Returns:
             The object (see `objects`) with `children` (`path`, `kind`, `name`, `data` of what it holds),
             `relations` (`source`, `target`, `kind`, both ways; a table's or view's include its columns'
-            and triggers'), `ends` (`kind`, `name`, `parent` of every object those relations reach, by
-            path), `read` (when its database was read; empty for a file's), `declared` (a file's: where
-            it was created and last changed) and `unavailable` (what could not be read of its database,
-            and why); None when no database read holds it.
+            and triggers'; `ratio` for one found through the samples), `ends` (`kind`, `name`, `parent` of
+            every object those relations reach, by path), `read` (when its database was read; empty for a
+            file's), `declared` (a file's: where it was created and last changed), `unavailable` (what
+            could not be read of its database, and why); a table's or view's `sample` (`read`, `rows`,
+            `columns`, `shown`, `profiles`, see `samples.table_sample`), a column's `profile` (`read`,
+            `rows` and its profile), each `unavailable` with the reason when there is none; None when no
+            database read holds it.
         """
         with self._connect() as connection:
             row = connection.execute(
@@ -298,8 +383,8 @@ class CatalogStore:
                                  for r in connection.execute("SELECT * FROM objects WHERE collection = ? AND parent = ? ORDER BY rowid",
                                                              (row["collection"], path))]
             inside = row["kind"] in ("table", "view", "materialized view", "foreign table")
-            found["relations"] = [dict(r) for r in connection.execute(
-                f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT}) AND (source = ? OR target = ?"
+            found["relations"] = [_relation(r) for r in connection.execute(
+                f"SELECT DISTINCT source, target, kind, ratio FROM {_RELATIONS} WHERE collection IN ({_CURRENT}) AND (source = ? OR target = ?"
                 + (" OR source LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\'" if inside else "") + ")",
                 (path, path, *((f"{_like(path)}.%", f"{_like(path)}.%", f"{_like(path)}:%") if inside else ())))]
             ends = {end for r in found["relations"] for end in (r["source"], r["target"])}
@@ -308,6 +393,18 @@ class CatalogStore:
                 f"AND path IN ({', '.join('?' * len(ends))})", list(ends))} if ends else {}
             found["unavailable"] = [dict(u) for u in connection.execute(
                 "SELECT what, reason FROM unavailable WHERE collection = ?", (row["collection"],))]
+            if inside or found["kind"] == "column":
+                table = connection.execute("SELECT kind FROM objects WHERE collection = ? AND path = ?",
+                                           (row["collection"], path if inside else found["parent"])).fetchone()
+                held = connection.execute("SELECT read, data FROM samples WHERE connection = ? AND path = ?",
+                                          (found["connection"], path if inside else found["parent"])).fetchone()
+                sample = _sample(held, found["connection"], table["kind"] if table else "")
+                if inside:
+                    found["sample"] = sample
+                else:
+                    found["profile"] = ({"unavailable": sample["unavailable"]} if "unavailable" in sample else
+                                        {"read": sample["read"], "rows": sample["rows"], **(sample["profiles"].get(found["name"])
+                                         or {"unavailable": "The sample read no values of it."})})
         return found
 
     def level(self, at: str = "") -> dict:
@@ -322,7 +419,8 @@ class CatalogStore:
             `path`, `name` and what that level shows of it — servers: `databases`, `read`; databases:
             `schemas`, `tables`, `views`, `comment`; schemas: `tables`, `views`, `functions`, `comment`;
             tables and views: `kind`, `columns`, `rows`, `size`, `comment`; columns: `type`, `null`,
-            `default`, `marks`, `comment`. Rows that hold a next level have `down` true.
+            `default`, `marks` (with `sensitive` when its sample says so), `nulls` (% of the sampled rows),
+            `distinct` (in the sample), `comment`. Rows that hold a next level have `down` true.
         """
         tables, views = ("table", "foreign table"), ("view", "materialized view")
         if not at:
@@ -345,10 +443,15 @@ class CatalogStore:
             level, holders = "tables", [o for o in inside if o["parent"] == at and o["kind"] in tables + views]
         elif found and found["kind"] in tables + views:
             columns = [c for c in found["children"] if c["kind"] == "column"]
+            sample = found["sample"]
+            profiles, sampled = sample.get("profiles") or {}, sample.get("rows") or 0
             return {"at": at, "level": "columns", "rows": [
                 {"path": c["path"], "name": c["name"], "type": c["data"].get("type", ""),
                  "null": "yes" if c["data"].get("nullable", True) else "no", "default": c["data"].get("default") or c["data"].get("computed") or "",
-                 "marks": [m for m in c["data"].get("marks", []) if m != "null"], "comment": c["data"].get("comment", ""), "down": False}
+                 "marks": [m for m in c["data"].get("marks", []) if m != "null"] + (["sensitive"] if (profiles.get(c["name"]) or {}).get("sensitive") else []),
+                 "nulls": round(100 * profiles[c["name"]]["nulls"] / sampled, 1) if c["name"] in profiles and sampled else None,
+                 "distinct": profiles[c["name"]]["distinct"] if c["name"] in profiles else None,
+                 "comment": c["data"].get("comment", ""), "down": False}
                 for c in columns]}
         else:
             return {"at": at, "level": "", "rows": []}
@@ -424,7 +527,7 @@ class CatalogStore:
             `schema`, `table` for tables and foreign tables, `view` for views and materialized views,
             `column`), `parent`, and for columns `type`, `flags` (pk, fk, unique, index, null, generated)
             and `comment`. `edges`: `source`, `target`, `kind` (foreign key, implied, view reads, foreign
-            table), both ends drawn.
+            table, contained in, this one with its `ratio`), both ends drawn.
         """
         nodes: dict[str, dict] = {}
         for found in self.objects(connection_id=origin):
@@ -443,7 +546,7 @@ class CatalogStore:
                 node["subkind"] = found["kind"]
             nodes.setdefault(found["path"], node)
         with self._connect() as connection:
-            rows = connection.execute(f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN "
+            rows = connection.execute(f"SELECT DISTINCT source, target, kind, ratio FROM {_RELATIONS} WHERE collection IN "
                                       f"({_CURRENT + ' AND connection = ?' if origin else _LIVE}) "
                                       f"AND kind IN ({', '.join('?' * len(UNIVERSE_RELATIONS))})",
                                       ([origin] if origin else []) + list(UNIVERSE_RELATIONS)).fetchall()
@@ -453,17 +556,46 @@ class CatalogStore:
         for path in nodes:
             by_place.setdefault(path.split("/", 1)[-1], []).append(path)
         edges = []
-        for source, target, kind in rows:
+        for source, target, kind, ratio in rows:
             if kind == "foreign table" and target not in nodes and len(by_place.get(target.split("/", 1)[-1], [])) == 1:
                 target = by_place[target.split("/", 1)[-1]][0]
             if source in nodes and target in nodes:
-                edges.append({"source": source, "target": target, "kind": kind})
+                edges.append({"source": source, "target": target, "kind": kind, **({"ratio": ratio} if ratio is not None else {})})
         return {"nodes": list(nodes.values()), "edges": edges}
 
 
 def _like(text: str) -> str:
     """Text for a LIKE pattern, its own `%`, `_` and `\\` taken literally (with ESCAPE '\\')."""
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _relation(row: sqlite3.Row) -> dict:
+    """A relation row as the store gives it: `ratio` only for one found through the samples."""
+    found = {"source": row["source"], "target": row["target"], "kind": row["kind"]}
+    if row["ratio"] is not None:
+        found["ratio"] = row["ratio"]
+    return found
+
+
+_HIDDEN = ("probe", "family", "marks")
+"""What a column's profile keeps only to find containment: not shown."""
+
+
+def _sample(held: sqlite3.Row | None, connection_id: str, kind: str) -> dict:
+    """A table's sample as shown (`read`, `rows`, `columns`, `shown`, `profiles`), or `unavailable` and why."""
+    if held is None:
+        if connection_id.startswith(ORIGINS):
+            return {"unavailable": "A file declares no rows: only the rows a dump holds are read."}
+        if kind == "foreign table":
+            return {"unavailable": "A foreign table is not sampled: reading it reads another database."}
+        if kind not in sampling.SAMPLED_KINDS:
+            return {"unavailable": "A view is not sampled: reading it runs its query."}
+        return {"unavailable": "Not sampled yet: it is sampled at the next reading of its database."}
+    data = json.loads(held["data"])
+    if "unavailable" in data:
+        return {"unavailable": data["unavailable"]}
+    return {"read": held["read"], "rows": data["rows"], "columns": data["columns"], "shown": data["shown"],
+            "profiles": {name: {k: v for k, v in found.items() if k not in _HIDDEN} for name, found in data["profiles"].items()}}
 
 
 def _object(row: sqlite3.Row) -> dict:
