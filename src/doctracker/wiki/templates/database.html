@@ -1,14 +1,15 @@
 {% import "macros.html" as ui %}
-{# DATABASE: the project's databases. Connections: what the project declares (blocked until allowed)
-   and what the user enters; every form posts to /database/<action>, the same store the MCP tools use,
+{# DATABASES' pages, one view each (`tab`, its address in pages.DATABASE_URLS); Navigate and Diagrams show
+   their two views as tabs. Connections: what the project declares (blocked until allowed)
+   and what the user enters; every form posts to /databases/<action>, the same store the MCP tools use,
    and the page comes back redrawn; the notes' buttons and modal are reused. Universe: the databases the
-   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame. Navigate Database:
-   every object read, filtered, one page at a time; a name opens its page in the consultation modal. #}
+   server read, drawn by static/graph.js (drawUniverse) in the diagrams' frame (Navigate › By Graph). Navigate
+   › By Level: every object read, filtered, one page at a time; a name opens its page in the consultation modal. #}
 {# A connection's card: its name and state, kind and server; a click on it opens the rest in the consultation modal.
    Its colour, on the pill and the side, tells the state: green allowed, red blocked; sent again out of band
    after a change made in its details. #}
 {% macro card(c, test, oob=False) -%}
-<article id="connection-{{ c.id }}" hx-get="/database/form?details={{ c.id }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ c.name }}" class="connection-card {% if c.allowed %}allowed{% else %}blocked{% endif %}"{% if oob %} hx-swap-oob="true"{% endif %}>
+<article id="connection-{{ c.id }}" hx-get="/databases/form?details={{ c.id }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ c.name }}" class="connection-card {% if c.allowed %}allowed{% else %}blocked{% endif %}"{% if oob %} hx-swap-oob="true"{% endif %}>
   <h3 title="{{ c.name }}">{{ ui.icon("database") }}<span class="connection-name">{{ c.name }}</span>
     <span class="notes-pill {% if c.allowed %}connection-allowed{% else %}connection-blocked{% endif %}">{% if c.allowed %}allowed{% else %}blocked{% endif %}</span></h3>
   <dl>
@@ -30,9 +31,9 @@
   {%- else %}<a href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}"><code>{{ value }}</code></a>{% endif %}
 {%- elif key == "found_in" %}{% for place in value %}<code>{{ place }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}
 {%- elif key == "state" %}{% if value == "accepted" %}<span class="lint-accepted" title="Accepted {{ row.accepted | local_time }}">accepted: {{ row.reason }}</span>
-  {%- if actions %}<form class="lint-action" hx-post="/database/lint-reopen" hx-target="#content"><input type="hidden" name="key" value="{{ row.key }}">
+  {%- if actions %}<form class="lint-action" hx-post="/databases/lint-reopen" hx-target="#content"><input type="hidden" name="key" value="{{ row.key }}">
     <button type="submit" class="see-in-link" title="Open it again: listed as a finding to look at"><i class="bar-icon bar-icon-cancel"></i>Undo</button></form>{% endif %}
-  {%- else %}open{% if actions %} <button type="button" class="see-in-link lint-action" hx-get="/database/lint-form?key={{ row.key | urlencode }}" hx-target="#database-dialog-body"
+  {%- else %}open{% if actions %} <button type="button" class="see-in-link lint-action" hx-get="/databases/lint-form?key={{ row.key | urlencode }}" hx-target="#database-dialog-body"
     title="Accept it, saying why: it stays listed, as accepted"><i class="bar-icon bar-icon-allow"></i>Accept</button>{% endif %}{% endif %}
 {%- elif key == "page" %}<a class="objects-page-link" href="/wiki/{{ 'origin:' ~ row.origin if row.origin else row.path }}" data-page-modal="{{ 'origin:' ~ row.origin if row.origin else row.path }}" title="Open its page" aria-label="Open the page of {{ row.object }}"><i class="bar-icon bar-icon-link"></i></a>
 {%- elif value is none or value == "" or value == [] -%}-
@@ -40,17 +41,18 @@
 {%- endif -%}
 {%- endmacro %}
 {% macro post(action, confirm="", title="") -%}
-hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
+hx-post="/databases/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}
 
 <div class="{% if tab in ('universe', 'diagram', 'evolution') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab in ('objects', 'lint') %} objects-page{% endif %}">
-  {{ ui.view_header("database", "DATABASE", "") }}
-  {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
-             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("slices", "Slices", "/database?tab=slices"),
-             ("evolution", "Evolution", "/database?tab=evolution"),
-             ("lint", "Lint", "/database?tab=lint"),
-             ("objects", "Navigate Database", "/database?tab=objects"),
-             ("drift", "Drift", "/database?tab=drift")), tab) }}
+  {# The page of DATABASES this view belongs to (pages.SECTIONS); Navigate and Diagrams hold two views each, as tabs. #}
+  {% set shown = namespace(page=none) %}{% for p in sections.databases.pages if tab in p.tabs %}{% set shown.page = p %}{% endfor %}
+  {{ ui.view_header("database", "DATABASES :: " ~ shown.page.title, shown.page.text) }}
+  {% if shown.page.name == "navigate" %}
+  {{ ui.tabs((("objects", "By Level", db_urls.objects), ("universe", "By Graph", db_urls.universe)), tab) }}
+  {% elif shown.page.name == "diagrams" %}
+  {{ ui.tabs((("diagram", "ER Diagrams", db_urls.diagram), ("slices", "Sub-Diagrams", db_urls.slices)), tab) }}
+  {% endif %}
   {% if tab == "universe" %}
   <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
   {{ ui.universe_canvas(params.open or "", "/graph/universe" if has_collections else "",
@@ -59,8 +61,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   <p class="tab-description">The entity-relationship diagram of the databases read and of what the project's files declare, in the levels of the tree: each table and view with its columns, the foreign keys from a column to the column it refers to, with how many rows each end may have. Click a level to open it, its title to close it; choose in the legend which relations to see, and on the bar the notation.</p>
   {% set bar_filters %}
   <div class="graph-toolbar filters-line er-filters">
-    <form class="graph-filter" hx-get="/database" hx-target="#content" hx-push-url="true" hx-trigger="change">
-      <input type="hidden" name="tab" value="diagram">
+    <form class="graph-filter" hx-get="{{ db_urls.diagram }}" hx-target="#content" hx-push-url="true" hx-trigger="change">
       {% call ui.form_field("Project", "Only what one project of the repository holds: its connections' databases and its files.", wide=False) %}
       <select name="project"><option value="">All</option>{% for p in er_projects %}<option value="{{ p.path }}"{% if params.project == p.path %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>{% endcall %}
       {% call ui.form_field("Focus", "A table or view: only it and the tables a few relations away (Depth). A database, schema or file: only what it holds. Type its name or path.") %}
@@ -97,12 +98,12 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {% elif tab == "slices" %}
   <p class="tab-description">Slices of the schema: a few tables kept together, cut from the whole — a part of the system with a name and a text saying what it is for, its boxes placed in the Diagram as you left them. Each slice is a file in doc/slices/, versioned with the project; its tables are found where they were taken from, or by their name elsewhere. The agents read them too.</p>
   <div class="graph-toolbar">
-    <button type="button" class="notes-button primary" hx-get="/database/slice-form" hx-target="#database-dialog-body">New slice</button>
+    <button type="button" class="notes-button primary" hx-get="/databases/slice-form" hx-target="#database-dialog-body">New slice</button>
   </div>
   {% if not slices %}<p class="empty">No slice yet: make one with “New slice”, or choose tables in the Diagram (Ctrl + click) and Save as slice.</p>{% endif %}
   <div class="connection-cards">
     {% for s in slices %}
-    <article hx-get="/database/slice-form?details={{ s.name | urlencode }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ s.name }}" class="connection-card slice-card">
+    <article hx-get="/databases/slice-form?details={{ s.name | urlencode }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ s.name }}" class="connection-card slice-card">
       <h3 title="{{ s.name }}">{{ ui.icon("database") }}<span class="connection-name">{{ s.name }}</span>
         {% set missing = s.tables | rejectattr("found") | list | length %}{% if missing %}<span class="notes-pill connection-blocked">{{ missing }} not found</span>{% endif %}</h3>
       <p class="slice-of">a slice of {{ s.databases | map("replace", "db:", "") | map("replace", "origin:", "") | join(", ") or "nothing read" }}: {{ s.tables | selectattr("found") | list | length }} of {{ s.total }} tables</p>
@@ -137,7 +138,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   </div>
   {% endset %}
   {% set diff_row %}
-  <form class="graph-toolbar filters-line evo-diff-form" hx-get="/database/evolution" hx-target="#evolution-diff" hx-trigger="change">
+  <form class="graph-toolbar filters-line evo-diff-form" hx-get="/databases/evolution/part" hx-target="#evolution-diff" hx-trigger="change">
     {% call ui.form_field("A", "The first moment: the schema as it was then (a migration step: the steps up to it applied; a commit: the origin's files as they were). Also chosen by clicking a moment in the drawing while this row is open: the first click is A, the second B.") %}
     <select name="a" class="evo-a">{{ moment_options(params.a) }}</select>{% endcall %}
     {% call ui.form_field("B", "The second moment, compared with A: what B has that A had not is added, what it lost removed.") %}
@@ -154,7 +155,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     <span title="Changes not committed yet"><i class="evo-dot evo-now"></i>not committed</span>
     <span title="A step follows the step it revises; two steps revising the same one are a branch, a step revising two is a merge"><i class="line evo-line"></i>follows (branches and merges)</span>
   {% endcall %}
-  <div id="evolution-diff" class="evo-diff">{% if params.a and params.b %}<p class="empty" hx-get="/database/evolution?a={{ params.a | urlencode }}&b={{ params.b | urlencode }}&view={{ params.view or 'only' }}" hx-trigger="load" hx-target="#evolution-diff">Loading…</p>{% endif %}</div>
+  <div id="evolution-diff" class="evo-diff">{% if params.a and params.b %}<p class="empty" hx-get="/databases/evolution/part?a={{ params.a | urlencode }}&b={{ params.b | urlencode }}&view={{ params.view or 'only' }}" hx-trigger="load" hx-target="#evolution-diff">Loading…</p>{% endif %}</div>
   {% elif tab == "drift" %}
   <p class="tab-description">Where the project's SQL files, migrations and ORM models and the live databases they describe differ. An origin is linked to a database by hand, by the migration tool's history table in that database (the proof it was migrated, how far, and steps changed since), by its configuration, or — an ORM's models — through its migrations; the names of its tables only suggest a database, to link by hand. An ORM's models are also compared with its migrations: a model changed without its migration shows there.</p>
   {% set HOW = {"chosen": ("chosen by you", "You linked it by hand."),
@@ -162,7 +163,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
                 "declared": ("declared", "The origin's configuration, or a connection declared in its folder, names this database."),
                 "related": ("through its migrations", "The ORM's migrations are linked to this database (by its history or its configuration): its models describe the same one.")} %}
   {% macro choose(origin, database, linked, label, icon) -%}
-  <form class="origin-choice" hx-post="/database/origin-link" hx-target="#content">
+  <form class="origin-choice" hx-post="/databases/origin-link" hx-target="#content">
     <input type="hidden" name="origin" value="{{ origin }}"><input type="hidden" name="database" value="{{ database }}">
     <input type="hidden" name="linked" value="{{ linked }}"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-{{ icon }}"></i>{{ label }}</button>
   </form>
@@ -226,7 +227,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
       <span class="origin-link-actions">{{ choose(origin.name, database, "", "Undo", "cancel") }}</span></div></div>
     {% endfor %}
     {% endif %}
-    <form class="graph-toolbar filters-line origin-link-form" hx-post="/database/origin-link" hx-target="#content">
+    <form class="graph-toolbar filters-line origin-link-form" hx-post="/databases/origin-link" hx-target="#content">
       <input type="hidden" name="origin" value="{{ origin.name }}"><input type="hidden" name="linked" value="1">
       {% call ui.form_field("Database", "A database read from the allowed connections that this origin describes: linked by hand, it wins over the other ways (history table, configuration); it can be unlinked again.", wide=False) %}
       <select name="database" required><option value="">Choose…</option>{% for d in catalog_databases %}<option value="{{ d.path }}">{{ db_place(d.path) }}</option>{% endfor %}</select>{% endcall %}
@@ -238,30 +239,30 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {% elif tab == "lint" %}
   <p class="tab-description">What in the databases' schema and in the project's migrations deserves a look: tables without a primary key, foreign keys without an index, relations only by name, destructive migration steps, and more — each rule's ? says why it matters and how to fix it. The databases read and the project's files are linted alike; the same finding in several of them is one row, Found in telling where. A finding you accept, with its reason, stays listed as accepted (the State filter shows it), kept in doc/lint/accepted.json with the project.</p>
   {# The counters of the open findings, by level and by rule: a click lists only those. #}
-  <form id="lint-filter" class="lint-filter"><input type="hidden" name="tab" value="lint">
+  <form id="lint-filter" class="lint-filter">
     <input type="hidden" name="sort" value="{{ listing.sort }}"><input type="hidden" name="dir" value="{{ listing.direction }}"></form>
   <div class="lint-summary">
-    <span class="lint-levels">{% for level, count in lint_levels %}<a class="lint-count lint-{{ level }}" {{ ui.nav_url("/database?tab=lint&f_level=" ~ level) }}
+    <span class="lint-levels">{% for level, count in lint_levels %}<a class="lint-count lint-{{ level }}" {{ ui.nav_url("/databases/lint?f_level=" ~ level) }}
       title="List only the open findings of level {{ level }}"><b>{{ "{:,}".format(count) }}</b> {{ level }}{% if count != 1 %}s{% endif %}</a>{% endfor %}
-      {% if lint_accepted %}<a class="lint-count" {{ ui.nav_url("/database?tab=lint&f_state=accepted") }} title="List the findings accepted"><b>{{ lint_accepted }}</b> accepted</a>{% endif %}</span>
+      {% if lint_accepted %}<a class="lint-count" {{ ui.nav_url("/databases/lint?f_state=accepted") }} title="List the findings accepted"><b>{{ lint_accepted }}</b> accepted</a>{% endif %}</span>
     <span class="lint-rules">{% for r in lint_rules %}<span class="lint-rule">{{ ui.help_hover(r.title, r.help) }}<a class="lint-count lint-{{ r.level }}"
-      {{ ui.nav_url("/database?tab=lint&f_rule=" ~ (r.title | urlencode)) }} title="List only these findings">{{ r.title }} <b>{{ "{:,}".format(r.count) }}</b></a></span>{% endfor %}</span>
+      {{ ui.nav_url("/databases/lint?f_rule=" ~ (r.title | urlencode)) }} title="List only these findings">{{ r.title }} <b>{{ "{:,}".format(r.count) }}</b></a></span>{% endfor %}</span>
   </div>
   {% set label %}{{ "{:,}".format(listing.total) }} finding{% if listing.total != 1 %}s{% endif %}{% endset %}
-  {% call(row, key, value) ui.list_table("lint", "#lint-filter", listing, label) %}{{ lint_cell(row, key, value) }}{% endcall %}
+  {% call(row, key, value) ui.list_table("lint", "#lint-filter", listing, label, db_urls.lint) %}{{ lint_cell(row, key, value) }}{% endcall %}
   {% elif tab == "objects" %}
   <p class="tab-description">Every object doctracker read from the allowed connections. Browse goes down the SQL tree one level at a time (servers, databases, schemas, tables and views, columns): a name goes into it, the path above goes back. Search lists every object at once. A column's title sorts by it, its filter icon filters it; the page icon opens the object's page.</p>
   {# The mode, and what goes with every request of the list: the level (Browse) or the filters above
      (Search), the order chosen (sort, dir). #}
-  <form id="objects-filter" class="graph-toolbar filters-line objects-filter" hx-get="/database" hx-target="#content" hx-push-url="true"
+  <form id="objects-filter" class="graph-toolbar filters-line objects-filter" hx-get="{{ db_urls.objects }}" hx-target="#content" hx-push-url="true"
         hx-trigger="change, input changed delay:400ms from:input[name=name], path-changed"{% if mode == "search" %} hx-include=".objects-table thead"{% endif %} hx-disinherit="*">
-    <input type="hidden" name="tab" value="objects"><input type="hidden" name="mode" value="{{ mode }}">
+    <input type="hidden" name="mode" value="{{ mode }}">
     <input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="dir" value="{{ direction }}">
     <div class="search-modes objects-modes" role="radiogroup" aria-label="How to list">
       {% for name, label, tip in (("browse", "Browse", "One level of the SQL tree at a time: servers, databases, schemas, tables and views, columns"),
                                   ("search", "Search", "Every object read at once, filtered by database, schema, kind and name")) %}
       <button type="button" role="radio" aria-checked="{{ 'true' if mode == name else 'false' }}" title="{{ tip }}"
-              hx-get="/database?tab=objects&mode={{ name }}" hx-target="#content" hx-push-url="true">{{ label }}</button>
+              hx-get="/databases/navigate/level?mode={{ name }}" hx-target="#content" hx-push-url="true">{{ label }}</button>
       {% endfor %}
     </div>
     {% if mode == "browse" %}
@@ -307,13 +308,13 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {% if not has_collections %}<p class="empty">No database read yet: allow a connection in Connections.</p>
   {% else %}
   {% set label %}{{ listing.total }} {% if mode == "browse" %}{{ level if listing.total != 1 else level[:-1] }}{% else %}object{% if listing.total != 1 %}s{% endif %}{% endif %}{% endset %}
-  {% call(row, key, value) ui.list_table("objects", "#objects-filter", listing, label) %}
+  {% call(row, key, value) ui.list_table("objects", "#objects-filter", listing, label, db_urls.objects) %}
   {%- if row is none -%}
     {%- if key == "size" %}{{ value | int | size }}{% elif key == "read" %}{{ value | local_time(seconds=True) }}{% elif key == "marks" %}{{ db_marks.get(value, value) }}{% else %}{{ value }}{% endif -%}
   {%- else -%}
   {%- set value = row[key] -%}
   {%- if key == "name" -%}
-    {%- if row.down %}<a {{ ui.nav_url("/database?tab=objects&mode=browse&at=" ~ (row.path | urlencode)) }} title="Go into it"><code>{{ row.name }}</code></a>
+    {%- if row.down %}<a {{ ui.nav_url("/databases/navigate/level?mode=browse&at=" ~ (row.path | urlencode)) }} title="Go into it"><code>{{ row.name }}</code></a>
     {%- else %}<a href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}"><code>{{ row.name }}</code></a>{% endif -%}
   {%- elif key == "page" -%}<a class="objects-page-link" href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}" title="Open its page" aria-label="Open the page of {{ row.name }}"><i class="bar-icon bar-icon-link"></i></a>
   {%- elif value is none or value == "" or value == [] -%}-
@@ -341,7 +342,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {% endif %}
 
   <div class="graph-toolbar">
-    <button type="button" class="notes-button primary" hx-get="/database/form" hx-target="#database-dialog-body">New connection</button>
+    <button type="button" class="notes-button primary" hx-get="/databases/form" hx-target="#database-dialog-body">New connection</button>
   </div>
 
   {% if not connections %}<p class="empty">Nothing found in the project's files. Enter a connection with “New connection”.</p>{% endif %}
@@ -350,7 +351,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   </div>
 
   {% if open_connection %}{# reached from the tree: the connection's details open at once #}
-  <div hidden hx-get="/database/form?details={{ open_connection }}" hx-target="#page-dialog-body" hx-trigger="load"></div>{% endif %}
+  <div hidden hx-get="/databases/form?details={{ open_connection }}" hx-target="#page-dialog-body" hx-trigger="load"></div>{% endif %}
   {% endif %}
   <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
 </div>

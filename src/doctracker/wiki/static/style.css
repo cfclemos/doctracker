@@ -104,7 +104,7 @@ code, pre { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-s
 /* Tree width: drag the resizer; the toggle button hides the tree completely. */
 #tree-resizer { grid-area: resizer; cursor: col-resize; background: var(--border); opacity: 0.4; }
 #tree-resizer:hover, body.resizing #tree-resizer { background: var(--accent); opacity: 1; }
-body.resizing { cursor: col-resize; user-select: none; }
+body.resizing, body.resizing-column { cursor: col-resize; user-select: none; }
 body.tree-hidden { grid-template-columns: 0 0 1fr; }
 body.tree-hidden #tree, body.tree-hidden #tree-resizer { visibility: hidden; overflow: hidden; padding: 0; border: 0; }
 main { grid-area: main; }
@@ -1799,7 +1799,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .git-planned-head { color: var(--muted); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 .git-planned-list { margin: 0 0 0.4rem; padding-left: 1.1rem; }
 
-/* DATABASE › Connections: a card per connection (the notes' buttons and modal are reused). */
+/* DATABASES › Connections: a card per connection (the notes' buttons and modal are reused). */
 .database-page button, .database-page .connection-actions button { cursor: pointer; }
 /* Whether doctracker may use a connection: allowed blue, blocked grey. Green and red are kept for whether
    it answers (its last reading or test), in the tree. */
@@ -1844,7 +1844,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .database-unlock { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.8rem;
   padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: 0.85rem; }
 
-/* DATABASE › Universe: sigma.js draws in the drawing area; the path back, a node's hover box and the
+/* DATABASES › Navigate › By Graph: sigma.js draws in the drawing area; the path back, a node's hover box and the
    legend's swatches, lines and column symbols around it. */
 .graph-canvas[data-view="universe"] { position: relative; overflow: hidden; }
 .universe-path { position: absolute; top: 0.5rem; left: 0.5rem; right: 6rem; z-index: 5; display: flex; align-items: center; gap: 0.5rem;
@@ -1878,7 +1878,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .graph-legend .universe-relation { gap: 0.3rem; }
 .universe-filters .form-field { min-width: 0; }
 
-/* DATABASE: the pages of tables, columns and the other objects read, and the Navigate Database list. */
+/* DATABASES: the pages of tables, columns and the other objects read, and the Navigate › By Level list. */
 .db-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .db-table th, .db-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
 .db-table th { font-weight: 600; color: var(--muted); }
@@ -1901,7 +1901,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
   overflow-wrap: anywhere; text-align: center; }
 .objects-filter { margin: 0.6rem 0; }
 .objects-count { margin: 0.4rem 0; font-size: 0.85rem; color: var(--muted); }
-/* Navigate Database: the page takes the screen's height under the bar; the list fills what is left,
+/* Navigate › By Level: the page takes the screen's height under the bar; the list fills what is left,
    its rows scrolling under a fixed head, the pages always in view below; long names and comments wrap. */
 .objects-page { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height) - 3rem); min-height: 20rem; }
 .objects-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1933,7 +1933,11 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .objects-filter-box .field input { width: 100%; box-sizing: border-box; }
 /* Every cell's data centred, across and down; the heads follow. */
 .objects-table td, .objects-table th { text-align: center; vertical-align: middle; }
-.objects-table .objects-head { justify-content: center; }
+/* A title's cell keeps room around its title: the column is never narrower than the title needs. */
+.objects-table th { padding: 0.35rem 0.75rem; }
+.objects-table .objects-head { justify-content: center; width: max-content; margin: 0 auto; }
+/* Any line between two columns can be dragged, in the head or in the rows (static/live.js). */
+.objects-table.at-line, .objects-table.at-line * { cursor: col-resize; }
 .objects-table .objects-sort { flex: none; text-align: center; }
 /* The filters in use, beside the count: one badge each, × removes it. */
 .objects-count { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
@@ -1951,7 +1955,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .objects-page-link { display: inline-flex; color: var(--muted); }
 .objects-page-link:hover { color: var(--accent); }
 .objects-modes { margin-right: 0.5rem; }
-/* DATABASE › Lint: the counters of the open findings (by level, then by rule, a click lists only those),
+/* DATABASES › Lint: the counters of the open findings (by level, then by rule, a click lists only those),
    each level in its colour, on its badges and in the list; an object's page shows its own findings. */
 .lint-summary { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.4rem 0 0.6rem; font-size: 0.85rem; }
 .lint-levels, .lint-rules { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
@@ -2067,7 +2071,7 @@ html.loading::before {
 }
 @keyframes loading-bar { 0% { left: -30%; } 100% { left: 100%; } }
 
-/* DATABASE › Diagram (ER): the levels of the DATABASES tree as frames (Connections and each connection,
+/* DATABASES › Diagrams › ER Diagrams: the levels of the DATABASES tree as frames (Connections and each connection,
    the files of a project, a database and its schemas), the tables and views as boxes with their columns,
    the relations coloured as in the Universe. */
 .arch-connections, .arch-connection { --arch: color-mix(in srgb, var(--fg) 75%, var(--bg)); }
@@ -2115,7 +2119,7 @@ html.loading::before {
 /* Nothing of a drawing is selected or dragged by the browser itself: the mouse moves the drawing. */
 .uml-canvas, .graph-canvas[data-view="universe"] { user-select: none; -webkit-user-select: none; }
 
-/* DATABASE › Evolution: a lane per origin (its name on the left, a light band of its colour), the moments
+/* DATABASES › Evolution: a lane per origin (its name on the left, a light band of its colour), the moments
    as dots (a step filled, a commit hollow, a changed step ringed red, what is not committed dashed), the
    lines a step follows; A and B written over the moments chosen for the diff. */
 .bar-icon-diff { --icon: url("icons/arrows-exchange.svg"); }

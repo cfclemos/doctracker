@@ -959,7 +959,7 @@ function placeHelp(event) {
 document.addEventListener("mouseover", placeHelp);
 document.addEventListener("focusin", placeHelp);
 
-// The filter boxes of a list's columns and of Browse's path (DATABASE › Navigate Database) work as
+// The filter boxes of a list's columns and of Browse's path (DATABASES › Navigate › By Level) work as
 // menus: one open at a time (opening one closes the others); it opens right under its icon, inside the
 // window (fixed, so the list's scrolling does not cut it), follows it when the page scrolls, and a
 // column's fetches its values again (their counts follow the other filters). Its search box narrows the
@@ -969,7 +969,7 @@ const filterTicks = new WeakMap();  // the values ticked in each box as it opene
 function applyFilterBox(box) {
   if (!box) return;
   filterTicks.delete(box);  // what it holds now is what applies
-  if (box.matches(".evo-origins")) {  // DATABASE › Evolution: the lanes shown, drawn again (graph.js)
+  if (box.matches(".evo-origins")) {  // DATABASES › Evolution: the lanes shown, drawn again (graph.js)
     box.open = false;
     box.dispatchEvent(new Event("change", { bubbles: true }));
   } else if (box.matches(".objects-crumb")) {  // a part of the path: the parts below it were chosen under it
@@ -1045,33 +1045,65 @@ document.addEventListener("keydown", (event) => {
   box.querySelector("summary").focus();
 });
 
-// Its columns' widths: the right edge of a title, dragged, makes the column wider or narrower (the list
-// grows sideways and scrolls); the widths are kept per level, in this browser.
+// Its columns' widths: a line between two columns, dragged anywhere along it (the title's edge or any
+// row's), makes the column on its left wider or narrower (the list grows sideways and scrolls); never
+// narrower than its title needs (the title, its filter icon and the cell's padding). The widths are kept
+// per level, in this browser.
 const WIDTHS_KEY = "doctracker-objects-widths";
-function applyWidths(table) {
-  const widths = load(localStorage, WIDTHS_KEY, {})[table.dataset.level];
-  if (!widths) return;
-  const cols = [...table.querySelectorAll("col")];
-  cols.forEach((col, i) => { if (widths[i]) col.style.width = `${widths[i]}px`; });
-  table.style.width = `${cols.reduce((sum, col) => sum + (parseFloat(col.style.width) || 0), 0)}px`;
+const EDGE = 5;  // how near a column's line (px) the pointer grabs it
+function smallestWidth(th) {  // what the title cell needs: its head as it is, plus its padding
+  const style = getComputedStyle(th);
+  const head = th.querySelector(".objects-head");
+  return Math.ceil((head ? head.getBoundingClientRect().width : 0) + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)) + 1;
+}
+function applyWidths(table) {  // the widths kept, and no column narrower than its title, kept or not
+  const kept = load(localStorage, WIDTHS_KEY, {})[table.dataset.level] || [];
+  const cols = [...table.querySelectorAll("col")], heads = [...table.querySelectorAll("thead th")];
+  if (!heads.length) return;
+  const shown = heads.map((th) => th.getBoundingClientRect().width);
+  let changed = kept.length > 0;
+  const widths = cols.map((col, i) => {
+    const least = heads[i] ? smallestWidth(heads[i]) : 0;
+    if (kept[i]) return Math.max(kept[i], least);
+    if (shown[i] < least) changed = true;
+    return Math.max(shown[i] || 0, least);
+  });
+  if (!changed) return;  // every column already fits its title: the list keeps the page's width
+  cols.forEach((col, i) => { col.style.width = `${widths[i]}px`; });
+  table.style.width = `${widths.reduce((sum, width) => sum + width, 0)}px`;
 }
 document.addEventListener("htmx:afterSettle", () => document.querySelectorAll(".objects-table").forEach(applyWidths));
 document.addEventListener("DOMContentLoaded", () => document.querySelectorAll(".objects-table").forEach(applyWidths));
+function columnLine(event) {  // the column whose right line the pointer is on, in a list's head or rows: [table, index]
+  const cell = event.target.closest?.(".objects-table th, .objects-table td");
+  if (!cell || event.target.closest(".objects-filter-box")) return null;
+  const box = cell.getBoundingClientRect(), row = [...cell.parentElement.children], at = row.indexOf(cell);
+  if (event.target.closest(".objects-resize") || box.right - event.clientX <= EDGE) return [cell.closest("table"), at];
+  if (event.clientX - box.left <= EDGE && at > 0) return [cell.closest("table"), at - 1];
+  return null;
+}
+document.addEventListener("pointermove", (event) => {  // the resize cursor wherever a line can be grabbed
+  if (document.body.classList.contains("resizing-column")) return;
+  const table = event.target.closest?.(".objects-table");
+  if (table) table.classList.toggle("at-line", Boolean(columnLine(event)));
+});
 document.addEventListener("pointerdown", (event) => {
-  const handle = event.target.closest(".objects-resize");
-  if (!handle) return;
+  const found = columnLine(event);
+  if (!found) return;
   event.preventDefault();
-  const table = handle.closest("table"), heads = [...handle.closest("tr").children], index = heads.indexOf(handle.closest("th"));
+  const [table, index] = found, heads = [...table.querySelectorAll("thead th")];
   const cols = [...table.querySelectorAll("col")];
-  const start = heads.map((th) => th.getBoundingClientRect().width), x = event.clientX;
+  const start = heads.map((th) => th.getBoundingClientRect().width), x = event.clientX, least = smallestWidth(heads[index]);
   cols.forEach((col, i) => { col.style.width = `${start[i]}px`; });  // every width fixed in pixels from now on
+  document.body.classList.add("resizing-column");
   const move = (moved) => {
-    cols[index].style.width = `${Math.max(48, start[index] + moved.clientX - x)}px`;
+    cols[index].style.width = `${Math.max(least, start[index] + moved.clientX - x)}px`;
     table.style.width = `${cols.reduce((sum, col) => sum + parseFloat(col.style.width), 0)}px`;
   };
   const stop = () => {
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", stop);
+    document.body.classList.remove("resizing-column");
     const all = load(localStorage, WIDTHS_KEY, {});
     all[table.dataset.level] = cols.map((col) => Math.round(parseFloat(col.style.width)));
     try { localStorage.setItem(WIDTHS_KEY, JSON.stringify(all)); } catch {}
@@ -1080,7 +1112,7 @@ document.addEventListener("pointerdown", (event) => {
   document.addEventListener("pointerup", stop);
 });
 
-// An object's page of DATABASE (in the consultation modal too): Universe, in its header or the modal's
+// An object's page of DATABASES (in the consultation modal too): Universe, in its header or the modal's
 // footer, opens the page's own Universe section and goes to it; the drawing is made when that section
 // first opens (its address set then), so a page that never shows it never draws it.
 document.addEventListener("click", (event) => {
@@ -1106,7 +1138,7 @@ document.addEventListener("click", (event) => {
   if (!button) return;
   event.preventDefault();
   button.classList.add("busy");
-  fetch("/database/refresh-all", { method: "POST" }).finally(() => setTimeout(() => button.classList.remove("busy"), 1500));
+  fetch("/databases/refresh-all", { method: "POST" }).finally(() => setTimeout(() => button.classList.remove("busy"), 1500));
 });
 
 // A slice saved or deleted from the consultation modal: the page comes back redrawn, the modal closes.

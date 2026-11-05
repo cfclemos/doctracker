@@ -128,7 +128,7 @@ def compare_origin(origin: dict, catalog, database: str) -> dict:
 def comparisons(origin: dict, described: dict, catalog) -> dict[str, dict]:
     """Where an origin differs from each database it is linked to and, for an ORM, from its other origin
     (its models from its migrations): `compare_origin` of each, by the database's path or `origin:<name>`.
-    What DATABASE › Drift and the MCP tool `database_origin` show.
+    What DATABASES › Drift and the MCP tool `database_origin` show.
 
     Args:
         origin: The origin read.

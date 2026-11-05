@@ -354,7 +354,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {%- else %}<label class="field"><span class="field-label">{{ label }}{% if required %} *{% endif %}</span>{{ caller() }}</label>{% endif %}</div>
 {%- endmacro %}
 
-{# A list of DATABASE (Navigate Database, Lint; an object's page): its filters in use and how many rows, then
+{# A list of DATABASES (Navigate › By Level, Lint; an object's page): its filters in use and how many rows, then
    the table, whose head stays while the rows scroll, then its pages. `name` names its parts (`<name>-rows`,
    `-count`, `-pages`); `form` is the form holding what goes with every request (the tab, the filters
    above); `listing` what `web.list_page` gives (rows, columns, values, sort, pages, filters in use);
@@ -362,7 +362,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
    column's filter, `caller(none, key, value)`. Without `interactive`: the table alone, no sorting,
    filters nor pages (an object's page). Typing in a column's filter redraws only the rows, the count and
    the pages, so the field keeps the cursor. #}
-{% macro list_table(name, form, listing, label, url="/database", interactive=True) -%}
+{% macro list_table(name, form, listing, label, url="", interactive=True) -%}
 {%- set cell = caller -%}
 {%- set include = form ~ ", ." ~ name ~ "-table thead" -%}
 <div class="objects-list">
@@ -469,7 +469,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 </select>
 {%- endmacro %}
 
-{# DATABASE's Universe: the drawing static/graph.js (drawUniverse) makes of the databases read, with its
+{# DATABASES › Navigate › By Graph: the drawing static/graph.js (drawUniverse) makes of the databases read, with its
    filters (Depth, Outside) and its legend (the kinds' colours, the relation kinds each with a ? saying
    what it is, the column symbols, the mouse). In the Universe tab, and in an object's page opened on it
    (`focus`); there `data_url` stays empty until its section opens (static/live.js sets it). #}
@@ -507,7 +507,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   {% endcall %}
 {%- endmacro %}
 
-{# DATABASE › Evolution: a moment clicked, in the drawing's Details panel — a step and what each of its
+{# DATABASES › Evolution: a moment clicked, in the drawing's Details panel — a step and what each of its
    statements did, or a commit and the files it changed. #}
 {% macro evolution_moment(moment, detail) -%}
 {% if not moment %}<p class="empty">This moment is no longer there.</p>{% else %}
@@ -525,7 +525,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endif %}
 {%- endmacro %}
 
-{# DATABASE › Evolution: the diff of two moments, side by side (both schemas, aligned by name) or only what
+{# DATABASES › Evolution: the diff of two moments, side by side (both schemas, aligned by name) or only what
    differs (as the Drift's differences). #}
 {% macro evolution_diff(diff, a, b, view, labels) -%}
 {% if not a or not b %}<p class="empty">Choose the moments A and B (in the fields, or by clicking two moments in the drawing).</p>
