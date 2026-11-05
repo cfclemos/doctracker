@@ -5,6 +5,7 @@ process boundaries and be stored later without depending on griffe objects.
 """
 
 import logging
+from collections.abc import MutableMapping
 from pathlib import Path, PurePosixPath
 
 import griffe
@@ -18,8 +19,19 @@ from doctracker.extraction.graph import extract_edges
 MEMBER_KINDS = ("module", "class", "function", "attribute", "type alias")
 """Kinds of members kept from griffe; anything else (e.g. aliases created by imports) is skipped."""
 
+STEPS = ("Listing the files", "Python packages", "Other languages", "Relations", "Dead code", "Database origins")
+"""The steps of a reading of the project, in order, as the loading screen names them."""
 
-def extract_project(project_root: str, docstring_style: str, show_private: bool) -> dict:
+
+def _report(progress: MutableMapping | None, step: int, done: int = 0, total: int = 0, unit: str = "") -> None:
+    """Tell where the reading is: its step (1 to `len(STEPS)`) and, inside a step that reads one thing at
+    a time, how many of how many `unit` (files, packages, origins) are read."""
+    if progress is not None:
+        progress.update(step=step, steps=len(STEPS), title=STEPS[step - 1], done=done, total=total, unit=unit)
+
+
+def extract_project(project_root: str, docstring_style: str, show_private: bool,
+                    progress: MutableMapping | None = None) -> dict:
     """Read every file of a known language in the project statically and turn it into plain data.
 
     Runs in a worker process, so it takes and returns only built-in types.
@@ -30,6 +42,8 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
         project_root: Root of the documented project.
         docstring_style: `google`, `numpy` or `sphinx`.
         show_private: Keep `_private` members.
+        progress: Where the reading tells how far it is (see `_report`), shared with the server (a
+            `multiprocessing.Manager` dict); None to tell no one.
 
     Returns:
         `roots` (paths of the loaded Python packages and modules), `entities` (every entity by path),
@@ -41,13 +55,15 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
+    _report(progress, 1)
     files = project_files(root)
     search_paths, names = python_roots(files)
     paths = [str(root / folder) for folder in search_paths]
     entities: dict[str, dict] = {}
     roots = []
     errors = []
-    for package in names:
+    for index, package in enumerate(names):
+        _report(progress, 2, index, len(names), "packages")
         try:
             module = griffe.load(
                 package,
@@ -60,12 +76,15 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool)
             continue
         roots.append(module.path)
         _collect(module, root, docstring_style, show_private, entities)
-    code, missing_grammars = extract_code(root, files, entities)
+    code, missing_grammars = extract_code(root, files, entities, lambda done, total: _report(progress, 3, done, total, "files"))
     entities.update(code)
+    _report(progress, 4)
     edges = extract_edges(entities, root)
-    origins = extract_origins(root, files)
+    _report(progress, 5)
+    dead_code = scan(root, entities, edges)
+    origins = extract_origins(root, files, lambda done, total: _report(progress, 6, done, total, "origins"))
     return {"roots": roots, "entities": entities, "edges": edges, "errors": errors,
-            "missing_grammars": missing_grammars, "dead_code": scan(root, entities, edges),
+            "missing_grammars": missing_grammars, "dead_code": dead_code,
             "origins": origins, "origin_collections": [as_collection(origin) for origin in origins]}
 
 

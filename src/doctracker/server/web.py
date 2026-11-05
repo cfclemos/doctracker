@@ -622,7 +622,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     async def database_action(request: Request) -> Response:
         """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
-        unlock the saved passwords, or link an origin to a database by hand (`origin-link`).
+        unlock the saved passwords, link an origin to a database by hand (`origin-link`), or sample a
+        table again (`sample-again`: the connection's `id` and the table's `path`).
 
         The same store the MCP tools use. Sent from a connection's details (`modal`), the details come
         back (a refusal shown in them) and its card follows; otherwise the page comes back redrawn,
@@ -664,6 +665,12 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 catalog.choose_origin_link(form["origin"], form["database"], choice)
             context = {"path": "", "view": "database", "params": {"tab": "drift"}, **database_context({"tab": "drift"})}
             return render_page(request, "database.html", "/database?tab=drift", context)
+        if name == "sample-again":  # an object's page: its table sampled again now; the page follows by itself
+            try:
+                await collect_connection(connections, catalog, identifier, sample_again=form.get("path", ""))
+            except (ValueError, Locked):
+                pass
+            return Response("", status_code=204)
         actions = {
             "allow": lambda: connections.allow(identifier),
             "block": lambda: connections.allow(identifier, False),
@@ -1122,6 +1129,13 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         templates.globals["code_theme"] = name
         return Response("", status_code=204)
 
+    async def progress(request: Request) -> Response:
+        """How far the first reading of the code is: the loading screen's bar, which asks every half second.
+        Once the reading is done, the page is told to load again (as the `changed` event does)."""
+        if state.ready:
+            return HTMLResponse("", headers={"HX-Refresh": "true"})
+        return HTMLResponse(templates.get_template("macros.html").module.reading_progress(dict(state.progress)))
+
     async def events(request: Request) -> Response:
         queue = state.subscribe()
 
@@ -1164,5 +1178,6 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/settings/code-theme", set_code_theme, methods=["POST"]),
         Route("/grammars/retry", retry_grammars, methods=["POST"]),
         Route("/events", events),
+        Route("/progress", progress),
         Mount("/static", StaticFiles(packages=[("doctracker.wiki", "static")]), name="static"),
     ]

@@ -91,7 +91,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     <span title="A view or materialized view"><i class="box er-view"></i>view</span>
     <span title="Items with no relation at all, at each level"><i class="box unconnected"></i>unconnected</span>
     <span title="A closed level: how many tables it holds; click to open it, click its title to close it"><i class="box closed">3 ▸</i>closed (click to open)</span>
-    {{ ui.relation_kinds(("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")) }}
+    {{ ui.relation_kinds(("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table", "contained-in"), off=("contained-in",)) }}
     <span class="er-ends" title="Crow's foot: what each end of a key's line allows"><b>||</b> one · <b>o|</b> zero or one · <b>o&lt;</b> zero or many</span>
   {% endcall %}
   {% elif tab == "slices" %}

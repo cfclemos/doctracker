@@ -19,6 +19,13 @@
 {% for mark in (found.marks or []) %}{% if mark != "null" %}<span class="db-mark" title="{{ db_marks[mark] }}">{{ db_marks[mark] }}</span>{% endif %}{% endfor %}
 {%- if found.nullable is defined and not found.nullable %}<span class="db-mark" title="not null">not null</span>{% endif %}
 {%- endmacro %}
+{# Sample the table again now (a live one's): the page follows by itself once it is read. #}
+{% macro sample_again(table) -%}
+{% if item.read %}<form class="sample-again" hx-post="/database/sample-again" hx-swap="none" hx-disabled-elt="find button">
+  <input type="hidden" name="id" value="{{ item.connection }}"><input type="hidden" name="path" value="{{ table }}">
+  <button type="submit" class="see-in-link" title="Take its sample again now, read only: rows at random, masked where sensitive"><i class="bar-icon bar-icon-refresh"></i>Sample again</button></form>{% endif %}
+{%- endmacro %}
+{% macro sampled(found) -%}{{ "{:,}".format(found.rows) }} rows taken at random{% if found.read %} · {{ found.read | local_time(seconds=True) }}{% endif %}{%- endmacro %}
 {% set drawn = kind in ("server", "database", "schema", "table", "view", "materialized view", "foreign table", "column") %}
 {% set table_list = "/database?tab=objects&mode=browse&at=" ~ (item.path | urlencode) %}
 
@@ -127,7 +134,7 @@
   {% for group in item.groups %}
   <h4>{{ group.kind }} {% if group.direction == "out" %}→{% else %}←{% endif %} <span class="count">{{ group["items"] | length }}</span></h4>
   <ul class="db-list">{% for relation in group["items"] %}
-    <li>{{ link(relation.source.path, relation.source.place) }} → {{ link(relation.target.path, relation.target.place) }}</li>
+    <li>{{ link(relation.source.path, relation.source.place) }} → {{ link(relation.target.path, relation.target.place) }}{% if relation.ratio is not none %} <span class="summary">{{ (relation.ratio * 100) | round(1) }}% of its sampled values</span>{% endif %}</li>
   {% endfor %}</ul>
   {% else %}<p class="empty">No relations read.</p>
   {% endfor %}
@@ -198,10 +205,52 @@
 {% endcall %}
 {% endif %}
 
-{% if tabular or kind == "column" %}
-{% if kind == "column" %}
-{% call ui.section("warns", "Samples and profile", name="samples", divider=true) %}{{ unavailable("samples and profiles of the values come in a later step.") }}{% endcall %}
+{% if tabular %}
+{# Its sample, one line per column: the column, and beside it the values taken at random (each once,
+   a sensitive column's masked: each letter and digit as *). #}
+{% set sample = item.sample %}
+{% call ui.section("attributes", "Sample", count=(sample.columns or []) | length, name="sample", divider=true) %}
+  {% if sample.unavailable %}{{ unavailable(sample.unavailable) }}
+  {% else %}
+  <p class="summary">{{ sampled(sample) }}; each column's values shown once, at most 20, sensitive ones masked.</p>
+  {% if sample.rows %}
+  <table class="db-table">
+    <thead><tr><th>Column</th><th>Sample</th></tr></thead>
+    <tbody>{% for name in sample.columns %}{% set found = sample.profiles[name] %}
+      <tr><td><code>{{ link(item.path ~ "." ~ name, name) }}</code>{% if found.sensitive %} <span class="db-mark" title="sensitive: {{ found.sensitive }}">sensitive</span>{% endif %}</td>
+        <td class="db-sample-values">{% for value in found["values"] %}<code>{{ value }}</code>{% else %}-{% endfor %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p class="empty">The table holds no rows.</p>{% endif %}
+  {% endif %}
+  {{ sample_again(item.path) }}
+{% endcall %}
 {% endif %}
+
+{% if kind == "column" %}
+{# What its sampled values show: the profile, a sensitive column's values masked. #}
+{% set found = item.profile %}
+{% call ui.section("attributes", "Data", name="data", divider=true) %}
+  {% if found.unavailable %}{{ unavailable(found.unavailable) }}
+  {% else %}
+  <dl class="db-facts">
+    <dt>Sample</dt><dd>{{ sampled(found) }}</dd>
+    <dt>Sensitive</dt><dd>{% if found.sensitive %}yes, by its {{ found.sensitive | replace("format:", "values' format:") }}: its values are masked{% else %}no{% endif %}</dd>
+    <dt>Nulls</dt><dd>{{ "{:,}".format(found.nulls) }}{% if found.rows %} ({{ (100 * found.nulls / found.rows) | round(1) }}%){% endif %}</dd>
+    <dt>Distinct</dt><dd>{{ "{:,}".format(found.distinct) }}</dd>
+    <dt>Smallest</dt><dd>{% if found.min is not none %}<code>{{ found.min }}</code>{% else %}-{% endif %}</dd>
+    <dt>Largest</dt><dd>{% if found.max is not none %}<code>{{ found.max }}</code>{% else %}-{% endif %}</dd>
+    <dt>Length</dt><dd>{% if found.min_length is not none %}{{ found.min_length }} to {{ found.max_length }} characters{% else %}-{% endif %}</dd>
+    <dt>Most frequent</dt><dd>{% for value, count in found.frequent %}<code>{{ value }}</code> <span class="summary">{{ count }}×</span>{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</dd>
+    <dt>Formats</dt><dd>{% for name, count in found.formats.items() %}{{ name }} <span class="summary">{{ count }}</span>{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</dd>
+    <dt>Values</dt><dd>{% for value in found["values"] %}<code>{{ value }}</code>{% if not loop.last %} {% endif %}{% else %}-{% endfor %}</dd>
+  </dl>
+  {% endif %}
+  {{ sample_again(item.parent) }}
+{% endcall %}
+{% endif %}
+
+{% if tabular or kind == "column" %}
 {% call ui.section("warns", "Use in the code", name="code-use", divider=true) %}{{ unavailable("the links to the code that uses it come in a later step.") }}{% endcall %}
 {% if tabular %}{% call ui.section("warns", "Lint", count=item.lint | length, name="lint", divider=true) %}
   {% if item.lint %}{% call(row, key, value) ui.list_table("lint-object", "", item.lint_listing, "", interactive=False) %}{{ lint_cell(row, key, value, actions=false) }}{% endcall %}

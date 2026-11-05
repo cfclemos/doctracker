@@ -54,7 +54,7 @@ renames another and adds an index: what a migration lint must flag):
 | Django | `origins/django/shop/` — models and five migrations |
 | SQLAlchemy models | `origins/sqlalchemy/models.py` |
 | Prisma | `origins/prisma/schema.prisma` |
-| Dumps | `origins/dumps/` — Postgres (both databases), MySQL, SQLite, made by `make_dumps.sh` (passwords replaced) |
+| Dumps | `origins/dumps/` — Postgres (both databases), MySQL, SQLite with their data (Postgres `acme` as `COPY`, `acme_warehouse` as `INSERT`), and the whole Postgres server without data (`postgres-cluster.sql`), made by `make_dumps.sh` (passwords replaced) |
 | Large variant | `origins/large/generate.py` — 600 tables in 12 schemas, a fifth of the relations only by name |
 
 `python origins/compare_origins.py` loads each origin into a database of its own (`origin_<name>`) and

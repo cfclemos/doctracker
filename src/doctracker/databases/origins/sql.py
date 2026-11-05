@@ -8,6 +8,7 @@ every object remembering the file and line that created it and the last that cha
 
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import sqlglot
@@ -133,13 +134,15 @@ def split_statements(text: str, dialect: str) -> list[tuple[int, str]]:
     """Cut a file's SQL into statements, each with the line it starts on.
 
     The dialect's own tokenizer finds the semicolons (so none inside a string or a function body
-    counts); T-SQL's `GO` lines end a statement too; dbmate's `-- migrate:down` part is left out.
+    counts); T-SQL's `GO` lines end a statement too; dbmate's `-- migrate:down` part is left out, and so
+    are the rows of a dump's `COPY … FROM stdin` (no SQL; `dumps.rows` reads them).
 
     Returns:
         `(line, text)` of each statement, in order.
     """
     if (cut := re.search(r"^--\s*migrate:down\b", text, re.IGNORECASE | re.MULTILINE)):
         text = text[:cut.start()]
+    text = dumps.COPY_DATA.sub(lambda match: match[1] + re.sub(r"[^\n]", " ", match["data"]), text)  # rows, blanked
     # psql's own commands (\set, \connect, \restrict...) are no SQL: blanked, keeping the lines where they are.
     text = re.sub(r"^\\.*$", lambda match: " " * len(match.group(0)), text, flags=re.MULTILINE)
     if re.search(r"^\s*DELIMITER\s+\S+", text, re.IGNORECASE | re.MULTILINE):
@@ -759,7 +762,7 @@ _RULES = [
 """Our rules for what sqlglot leaves as a raw command: the kind of object and where its name is."""
 
 
-_IGNORED = re.compile(r"^\s*(ANALYZE|VACUUM|ALTER\s+FOREIGN\s+TABLE|ALTER\s+TABLE\s+(ONLY\s+)?[\w.\"]+\s+(ENABLE|DISABLE|FORCE|NO\s+FORCE|OWNER|REPLICA|CLUSTER)\b|CREATE\s+(DEFINER\s*=\s*\S+\s+)?EVENT|COMMENT\s+ON\s+(OPERATOR|EXTENSION|COLLATION|SERVER|PUBLICATION|SUBSCRIPTION|POLICY|RULE|TEXT\s+SEARCH|CAST|SCHEMA|DATABASE|ROLE|EVENT)|ALTER\s+TEXT\s+SEARCH|CREATE\s+(PARTITION\s+(FUNCTION|SCHEME)|SECURITY\s+POLICY|EXTENSION|ROLE|USER|DATABASE|PUBLICATION|SUBSCRIPTION|SERVER|USER\s+MAPPING|POLICY|RULE|STATISTICS|EVENT\s+TRIGGER|OPERATOR|CAST|COLLATION|TEXT\s+SEARCH|TABLESPACE|EVENT|LOGIN|FOREIGN\s+DATA)|GRANT|REVOKE|SET|USE|SELECT|INSERT|UPDATE|DELETE|COPY|BEGIN|COMMIT|START|LOCK|UNLOCK|DELIMITER|PRAGMA|EXEC|EXECUTE|IF\s|PRINT|DECLARE|\\\\|ALTER\s+(DEFAULT\s+PRIVILEGES|ROLE|USER|DATABASE|SEQUENCE|SCHEMA|EXTENSION|FUNCTION|PROCEDURE|TYPE|DOMAIN|VIEW|MATERIALIZED|INDEX|PUBLICATION|SUBSCRIPTION|SERVER|POLICY)|SELECT\s+pg_catalog|DROP\s+(EXTENSION|ROLE|USER|DATABASE|POLICY|RULE|EVENT|PUBLICATION|SUBSCRIPTION))\b", re.IGNORECASE)
+_IGNORED = re.compile(r"^\s*(ANALYZE|VACUUM|REFRESH\s+MATERIALIZED\s+VIEW|ALTER\s+FOREIGN\s+TABLE|ALTER\s+TABLE\s+(ONLY\s+)?[\w.\"`]+\s+(ENABLE|DISABLE|FORCE|NO\s+FORCE|OWNER|REPLICA|CLUSTER)\b|CREATE\s+(DEFINER\s*=\s*\S+\s+)?EVENT|COMMENT\s+ON\s+(OPERATOR|EXTENSION|COLLATION|SERVER|PUBLICATION|SUBSCRIPTION|POLICY|RULE|TEXT\s+SEARCH|CAST|SCHEMA|DATABASE|ROLE|EVENT)|ALTER\s+TEXT\s+SEARCH|CREATE\s+(PARTITION\s+(FUNCTION|SCHEME)|SECURITY\s+POLICY|EXTENSION|ROLE|USER|DATABASE|PUBLICATION|SUBSCRIPTION|SERVER|USER\s+MAPPING|POLICY|RULE|STATISTICS|EVENT\s+TRIGGER|OPERATOR|CAST|COLLATION|TEXT\s+SEARCH|TABLESPACE|EVENT|LOGIN|FOREIGN\s+DATA)|GRANT|REVOKE|SET|USE|SELECT|INSERT|UPDATE|DELETE|COPY|BEGIN|COMMIT|START|LOCK|UNLOCK|DELIMITER|PRAGMA|EXEC|EXECUTE|IF\s|PRINT|DECLARE|\\\\|ALTER\s+(DEFAULT\s+PRIVILEGES|ROLE|USER|DATABASE|SEQUENCE|SCHEMA|EXTENSION|FUNCTION|PROCEDURE|TYPE|DOMAIN|VIEW|MATERIALIZED|INDEX|PUBLICATION|SUBSCRIPTION|SERVER|POLICY)|SELECT\s+pg_catalog|DROP\s+(EXTENSION|ROLE|USER|DATABASE|POLICY|RULE|EVENT|PUBLICATION|SUBSCRIPTION))\b", re.IGNORECASE)
 """Statements that hold no schema object of the drawing (roles, grants, settings, data, sessions...): read, nothing to record."""
 
 
@@ -1082,7 +1085,8 @@ def read_origin(root: Path, origin: dict, dialect: str = "", project: orm.Projec
 
     Returns:
         The origin with `dialect`, `objects` (see `_Schema`), and in each step its `statements`
-        (`line`, `text`, `effects`, `read`) and how many were `unread`. An ORM's also with
+        (`line`, `text`, `effects`, `read`) and how many were `unread`. A dump's also with `samples`: by
+        table (`schema.name`, lower case), what is kept of the rows it holds (`dumps.table_samples`). An ORM's also with
         `dialect_from`, `unresolved`, `expects` and `mapping` (see `orm.read`); its statements' text
         is the DDL its ORM would send, their line the line of the code declaring it.
     """
@@ -1125,21 +1129,29 @@ def read_origin(root: Path, origin: dict, dialect: str = "", project: orm.Projec
             if parent:
                 own = {c["name"].lower() for c in table["columns"]}
                 table["columns"] = [c for c in parent["columns"] if c["name"].lower() not in own] + table["columns"]
+    if origin["kind"] == "dump":  # the rows it holds, as a live table's are sampled
+        extra["samples"] = dumps.table_samples(
+            (row for file, text in texts.items() for row in dumps.rows(text, given.get(file, []), dialect, origin.get("lines"))),
+            schema.get)
     return {**origin, "dialect": dialect, "steps": steps, "objects": schema.objects, "servers": schema.servers,
             "default_schema": schema.default, **extra}
 
 
-def extract_origins(root: Path, files: list[str]) -> list[dict]:
+def extract_origins(root: Path, files: list[str], on_file: Callable[[int, int], None] | None = None) -> list[dict]:
     """Find and read every origin of the project: its SQL files (see `find_origins`) and its ORM code
     (see `orm.find`); a file whose statements, once read, declare nothing (data, grants, settings) is
-    left out."""
+    left out. `on_file`, when given, is told before each origin how many are read and how many there are."""
     project = orm.Project(root, files)
     found = find_origins(root, files) + orm.find(root, files, project)
     names = {origin["name"]: origin for origin in found}
     for origin in found:  # an ORM's two origins point to each other (a Prisma schema and its SQL migrations)
         if origin.get("related") in names and not names[origin["related"]].get("related"):
             names[origin["related"]]["related"] = origin["name"]
-    origins = [read_origin(root, origin, project=project) for origin in found]
+    origins = []
+    for index, origin in enumerate(found):
+        if on_file is not None:
+            on_file(index, len(found))
+        origins.append(read_origin(root, origin, project=project))
     return [o for o in origins if o["objects"] or any(s["effects"] for step in o["steps"] for s in step["statements"])]
 
 

@@ -1071,7 +1071,7 @@ def dead_code_of(state: DocState, path: str) -> dict | None:
 # --- Database objects (DATABASE): their pages and the Navigate Database list.
 
 DB_MARKS = {"pk": "primary key", "fk": "foreign key", "unique": "unique", "index": "indexed",
-            "generated": "computed by the database", "null": "null allowed"}
+            "generated": "computed by the database", "null": "null allowed", "sensitive": "sensitive"}
 """The marks of a column, as the pages name them (no `null` mark: not null)."""
 
 
@@ -1118,7 +1118,8 @@ def db_relation_groups(found: dict) -> list[dict]:
 
     Returns:
         Each group's `kind`, `direction` (`out`: from the object or what it holds; `in`: towards it) and
-        `items`: `source` and `target` (path, `name` and `place` of each end), in the order read.
+        `items`: `source` and `target` (path, `name` and `place` of each end), and `ratio` for one found
+        through the samples, in the order read.
     """
     path = found["path"]
     mine = lambda end: end == path or end.startswith((f"{path}.", f"{path}:"))  # noqa: E731
@@ -1127,7 +1128,7 @@ def db_relation_groups(found: dict) -> list[dict]:
     for relation in found["relations"]:
         direction = "out" if mine(relation["source"]) else "in"
         groups.setdefault((relation["kind"], direction), []).append(
-            {"source": end(relation["source"]), "target": end(relation["target"])})
+            {"source": end(relation["source"]), "target": end(relation["target"]), "ratio": relation.get("ratio")})
     return [{"kind": kind, "direction": direction, "items": items} for (kind, direction), items in groups.items()]
 
 
@@ -1161,7 +1162,8 @@ LIST_COLUMNS = {
     "tables": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("columns", "Columns", "number"),
                             ("rows", "Rows", "number"), ("size", "Size", "number"), ("comment", "Comment", "text")),
     "columns": _list_columns(("name", "Column", "text"), ("type", "Type", "text"), ("null", "Null", "choice"),
-                             ("default", "Default", "text"), ("marks", "Marks", "choice"), ("comment", "Comment", "text")),
+                             ("default", "Default", "text"), ("marks", "Marks", "choice"), ("nulls", "Nulls %", "number"),
+                             ("distinct", "Distinct", "number"), ("comment", "Comment", "text")),
     "search": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("where", "Where", "text"),
                             ("rows", "Rows", "number"), ("comment", "Comment", "text")),
     "lint": _list_columns(("level", "Level", "choice"), ("rule", "Rule", "choice"), ("object", "Object", "text"),
@@ -1293,7 +1295,7 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
     screen (green it answers, red it failed, grey blocked) and holding what was read of it (› database
     › schema › Tables, Views, Functions… › object, each to its page); then the projects, each with its SQL files and migration sets
     in their folders (as CODE's: a folder holding only one folder shown with it on one line, a migration
-    set named after its folder), opening into what they declare (› kinds › object); the root's files
+    set named after its folder), opening into what they declare as a database does (› schema › kinds › object); the root's files
     come straight after them.
 
     Args:
@@ -1315,23 +1317,26 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
     # Each connection opens its own screen (DATABASE › Connections, its details), green allowed, red blocked.
     available, read = available or {}, read or {}
 
+    def schemas(objects: list[tuple[str, str, str, str]], database: str) -> list[dict]:
+        """A database's schemas (a live one's, or what a file declares), each opening into its kind groups."""
+        found = []
+        for schema_path, schema_kind, parent, schema_name in objects:
+            if schema_kind != "schema" or parent != database:
+                continue
+            schema = node(schema_path, schema_name, role="schema")
+            inside = [(p, k, n) for p, k, _, n in objects if p.startswith(f"{schema_path}.")]
+            schema["children"] = _db_groups(inside, current, schema_path)
+            found.append(schema)
+        return found
+
     def databases(objects: list[tuple[str, str, str, str]]) -> list[dict]:
         """A connection's databases, each opening into its schemas, then their kind groups."""
-        children: dict[str, list[tuple[str, str, str, str]]] = {}
-        for item in objects:
-            children.setdefault(item[2], []).append(item)
         found = []
         for path, kind, _, name in objects:
             if kind != "database":
                 continue
             branch = node(path, name, role="database")
-            for schema_path, schema_kind, _, schema_name in children.get(path, []):
-                if schema_kind != "schema":
-                    continue
-                schema = node(schema_path, schema_name, role="folder")
-                inside = [(p, k, n) for p, k, _, n in objects if p.startswith(f"{schema_path}.")]
-                schema["children"] = _db_groups(inside, current, schema_path)
-                branch["children"].append(schema)
+            branch["children"] = schemas(objects, path)
             found.append(branch)
         return found
 
@@ -1349,11 +1354,10 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
     projects: dict[str, list[tuple[str, dict]]] = {}  # by project: (the folder it lies in, its node)
     dumps: dict[str, dict] = {}  # a dump of several databases: its file's node, the databases under it
     for origin in state.origins:
-        inside = [(path, kind, name) for path, kind, _, name in read.get(f"origin:{origin['name']}", [])  # as a connection's, from the store
-                  if kind not in ("database", "schema")]
+        inside = schemas(read.get(f"origin:{origin['name']}", []), f"origin:{origin['name']}")  # as a connection's, from the store
         if origin.get("part_of"):  # one database of a dump holding several: under its file, named after the database
             branch = node(f"origin:{origin['name']}", origin["name"].rsplit("@", 1)[-1], role="database")
-            branch["children"] = _db_groups(inside, current, f"origin:{origin['name']}")
+            branch["children"] = inside
             if origin["part_of"] in dumps:
                 dumps[origin["part_of"]]["children"].append(branch)
                 continue
@@ -1364,7 +1368,7 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
             projects.setdefault(project_of(state, origin["part_of"], apart), []).append(("" if place == "." else place, holder))
             continue
         branch = node(f"origin:{origin['name']}", origin["name"].rsplit("/", 1)[-1], role="module")
-        branch["children"] = _db_groups(inside, current, f"origin:{origin['name']}")
+        branch["children"] = inside
         migrations = origin["kind"] in ("flyway", "golang-migrate", "dbmate")
         place = str(PurePosixPath(origin["name"]).parent)  # a migration set is its folder, in the folder above it
         projects.setdefault(project_of(state, origin["folder"] if migrations else origin["name"], apart, folder=migrations),
