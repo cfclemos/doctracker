@@ -75,7 +75,24 @@
 {% endif %}
 {%- endmacro %}
 
-{% if slice_mode %}
+{% if lint_mode %}
+{# A finding of the lint accepted: what it is, and why it is accepted (required); in the notes' modal, posted to /database/lint-accept. #}
+<div class="dialog-head">
+  <h2>Accept finding</h2>
+  <button type="button" class="dialog-close" aria-label="Close" title="Close">×</button>
+</div>
+{% if finding %}
+<form hx-post="/database/lint-accept" hx-target="#content" class="form-group lint-form">
+  {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+  <input type="hidden" name="key" value="{{ finding.key }}">
+  <p><span class="lint-level lint-{{ finding.level }}">{{ finding.level }}</span> <b>{{ finding.title }}</b>: <code>{{ finding.object }}</code> — {{ finding.detail }}</p>
+  <p class="summary">Found in {% for place in finding.found_in %}<code>{{ place | replace("db:", "") | replace("origin:", "") }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% call ui.form_field("Reason", "Why this finding is accepted as it is (e.g. a log table that needs no primary key, a rename already deployed with its code). It is kept with the finding in doc/lint/accepted.json, versioned with the project, and the agents read it: say it so whoever comes later understands.", required=True) %}
+  <textarea name="reason" class="grow-line" rows="3" required>{{ reason }}</textarea>{% endcall %}
+  <div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">Accept</button></div>
+</form>
+{% else %}<p class="empty">This finding is no longer found: the lint was read again.</p>{% endif %}
+{% elif slice_mode %}
 {# A slice of the schema: its details in the consultation modal (its text, its tables as found now, Open in
    Diagram, Edit, Delete), or its form — name, text, the tables ticked in the box of ticks (searched), and a
    table with its neighbours to start from — in the same modal; a new slice's form in the notes' modal. #}

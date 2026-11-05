@@ -6,9 +6,10 @@ import json
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from jinja2 import Environment, PackageLoader, select_autoescape
+from starlette.datastructures import QueryParams
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
@@ -17,6 +18,7 @@ from starlette.staticfiles import StaticFiles
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.discovery import KINDS
+from doctracker.databases.lint import LEVELS as LINT_LEVELS, Lint
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.origins.evolution import describe_moment, moments, renames_between, schema_at, schema_diff
 from doctracker.databases.slices import SliceStore, resolve as resolve_slice, table_key
@@ -194,6 +196,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if found is not None:
             found["groups"] = pages.db_relation_groups(found)
             found["crumbs"] = pages.db_crumbs(path)
+            found["lint"] = lint.for_object(path, state.origins, connections.connections())
+            found["lint_listing"] = list_page(lint_rows(found["lint"]), pages.LIST_COLUMNS["lint object"], {}, "lint-object")
         return found
 
     def database_origin(name: str) -> dict | None:
@@ -271,11 +275,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         if view == "database":
-            # A column filter of Navigate Database may hold several values (`f_<column>` repeated).
-            params["filters"] = {key[2:]: request.query_params.getlist(key) for key in request.query_params if key.startswith("f_")}
-            # Browse: the servers, databases, schemas and tables ticked in the path, several each.
-            params["picked"] = {level: request.query_params.getlist(field) for level, field in pages.BROWSE_FIELDS.items()}
-            context.update(database_context(params))
+            params = database_params(request.query_params)
+            context.update(database_context(params))  # with its params
         url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
         template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
         response = render_page(request, template if state.ready else "loading.html", url, context)
@@ -287,6 +288,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
     slices = SliceStore(project_root, state.notify)  # the slices of the schema, doc/slices/ (the MCP tools read the same files)
+    lint = Lint(project_root, catalog, slices, state.notify)  # the lint, its accepted findings in doc/lint/ (the MCP tools read the same)
 
     def availability() -> dict[str, str]:
         """Whether each connection answers: `failed` when its last reading or its last test failed, `ok`
@@ -299,6 +301,14 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             elif read and read.get("started"):
                 found[connection["id"]] = "ok"
         return found
+
+    def database_params(query: QueryParams) -> dict:
+        """What an address of DATABASE asks for: its fields, each list's column filters (`f_<column>`, several
+        values each) and Browse's ticks (the servers, databases, schemas and tables ticked in its path)."""
+        params: dict = dict(query)
+        params["filters"] = {key[2:]: query.getlist(key) for key in query if key.startswith("f_")}
+        params["picked"] = {level: query.getlist(field) for level, field in pages.BROWSE_FIELDS.items()}
+        return params
 
     def database_context(params: dict, error: str = "") -> dict:
         """What DATABASE shows: its tab (Connections, Universe or Navigate Database), the connections, their
@@ -319,6 +329,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context.update(evolution=evolution_moments(), evolution_labels=evolution_labels())
         if tab == "slices":
             context.update(slices=[resolve_slice(found, catalog) for found in slices.slices()])
+        if tab == "lint":
+            context.update(lint_list(params))
         return context
 
     def table_choices() -> list[dict]:
@@ -364,6 +376,15 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             chosen = [{"path": path} for path in dict.fromkeys(ticked + neighbours(query["start"], int(query.get("steps") or 1)))]
         return HTMLResponse(slice_modal(query.get("details", ""), bool(query.get("edit")), chosen,
                                         {"name": query.get("name", ""), "text": query.get("text", ""), "previous": query.get("previous", "")}))
+
+    def lint_modal(key: str, reason: str = "", error: str = "") -> str:
+        """The form accepting a finding of the lint: what it is, and the reason asked."""
+        finding = next((f for f in lint.findings(state.origins, connections.connections()) if f["key"] == key), None)
+        return templates.get_template("database_form.html").render(lint_mode=True, finding=finding, reason=reason, error=error)
+
+    async def lint_form(request: Request) -> Response:
+        """The form accepting a finding of the lint: `?key=<the finding's key>`."""
+        return HTMLResponse(lint_modal(request.query_params.get("key", "")))
 
     evolution_cache: dict = {}  # the moments, kept until the origins are read again or git changes
 
@@ -492,21 +513,52 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             columns = [columns[0], {"key": "in", "title": "In", "filter": "list"}, *columns[1:]]
             for row in rows:
                 row["in"] = pages.db_place(row["parent"])
-        chosen = params.get("filters", {})  # by column, the values chosen in its filter
+        context["listing"] = list_page(rows, columns, params, level if mode == "browse" else "search",
+                                       [entry for entry in top if entry[2]])
+        return context
+
+    def list_page(rows: list[dict], columns: list[dict], params: dict, level: str, top: list | None = None,
+                  chosen: dict[str, list[str]] | None = None) -> dict:
+        """One page of a list of DATABASE (Navigate Database, Lint), as `macros.list_table` draws it: the rows
+        its columns' filters let through (`params["filters"]`, or `chosen`), in the order chosen by a title
+        (`sort`, `dir`), `page`; with the values each filter lists and the filters in use (`top`: those above
+        the list, `(field, label, shown)`)."""
+        chosen = params.get("filters", {}) if chosen is None else chosen  # by column, the values chosen in its filter
         values = pages.filter_values(rows, columns, chosen)
         rows, in_use = pages.filter_rows(rows, columns, chosen)
         sort = params.get("sort", "") if any(c["key"] == params.get("sort") for c in columns) else ""
         descending = params.get("dir") == "desc"
         if sort:
             rows.sort(key=lambda row: pages.sort_key(row.get(sort)), reverse=descending)
-        page = int(params.get("page", "1")) if params.get("page", "1").isdigit() else 1
+        page = int(params.get("page", "1")) if str(params.get("page", "1")).isdigit() else 1
         offset = OBJECTS_PER_PAGE * (max(1, page) - 1)
-        context.update(objects=rows[offset:offset + OBJECTS_PER_PAGE], objects_total=len(rows),
-                       objects_pages=pages.pagination(len(rows), offset, OBJECTS_PER_PAGE),
-                       list_columns=columns, values=values, sort=sort, direction="desc" if descending else "asc",
-                       column_filters={c["key"]: [v for v in chosen.get(c["key"], []) if v] for c in columns}, empty=pages.EMPTY,
-                       in_use=[entry for entry in top if entry[2]] + in_use)
-        return context
+        return {"rows": rows[offset:offset + OBJECTS_PER_PAGE], "total": len(rows), "level": level,
+                "pages": pages.pagination(len(rows), offset, OBJECTS_PER_PAGE), "columns": columns, "values": values,
+                "sort": sort, "direction": "desc" if descending else "asc", "empty": pages.EMPTY,
+                "column_filters": {c["key"]: [v for v in chosen.get(c["key"], []) if v] for c in columns},
+                "in_use": (top or []) + in_use}
+
+    def lint_rows(found: list[dict]) -> list[dict]:
+        """The findings of the lint as rows of a list (see `list_page`)."""
+        return [{**f, "rule": f["title"], "rule_id": f["rule"],
+                 "found_in": [place.removeprefix("db:").removeprefix("origin:") for place in f["found_in"]]} for f in found]
+
+    def lint_list(params: dict) -> dict:
+        """The Lint tab: the counters of the open findings (by level, by rule) and one page of the findings.
+        Opened without a State filter (a link, the tab), only the open ones are listed; the list sends its
+        State filter always, so clearing it lists the accepted ones too."""
+        found = lint.findings(state.origins, connections.connections())
+        chosen = dict(params.get("filters", {}))
+        if "state" not in chosen:
+            chosen["state"] = ["open"]
+        opened = [f for f in found if f["state"] == "open"]
+        rules: dict[str, dict] = {}
+        for f in opened:
+            rules.setdefault(f["title"], {"title": f["title"], "level": f["level"], "help": f["help"], "count": 0})["count"] += 1
+        return {"lint_levels": [(level, sum(1 for f in opened if f["level"] == level)) for level in LINT_LEVELS],
+                "lint_rules": sorted(rules.values(), key=lambda r: (LINT_LEVELS.index(r["level"]), r["title"])),
+                "lint_accepted": len(found) - len(opened),
+                "listing": {**list_page(lint_rows(found), pages.LIST_COLUMNS["lint"], params, "lint", chosen=chosen), "kept": ("state",)}}
 
     def database_modal(details: str = "", editing: bool = False, oob: bool = False, error: str = "") -> str:
         """The modals of DATABASE: everything about a connection (`details`, changed in place with
@@ -587,6 +639,25 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return Response("", status_code=204)
         if name.startswith("slice-"):
             return await slice_action(request, name, form)
+        if name in ("lint-accept", "lint-reopen"):  # a finding of the lint accepted (with its reason), or open again
+            if name == "lint-reopen":
+                lint.reopen(form.get("key", ""))
+            else:
+                finding = next((f for f in lint.findings(state.origins, connections.connections()) if f["key"] == form.get("key")), None)
+                try:
+                    if finding is None:
+                        raise ValueError("This finding is no longer found: the lint was read again.")
+                    lint.accept(finding, form.get("reason", ""))
+                except ValueError as problem:
+                    return HTMLResponse(lint_modal(form.get("key", ""), form.get("reason", ""), str(problem)),
+                                        headers={"HX-Retarget": "#database-dialog-body"})
+            # The list comes back as it was (its filters, order and page): the address the page is at.
+            query = urlsplit(request.headers.get("HX-Current-URL", "")).query
+            params = database_params(QueryParams(query))
+            if params.get("tab") != "lint":
+                query, params = "tab=lint", database_params(QueryParams("tab=lint"))
+            context = {"path": "", "view": "database", "params": params, **database_context(params)}
+            return render_page(request, "database.html", f"/database?{query}", context)
         if name == "origin-link":  # an origin linked to a database by hand, unlinked, or left to the other layers
             choice = {"1": True, "0": False}.get(form.get("linked", ""))
             if form.get("origin") and form.get("database"):
@@ -1080,6 +1151,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/database/form", database_form),
         Route("/database/evolution", evolution_part),
         Route("/database/slice-form", slice_form),
+        Route("/database/lint-form", lint_form),
         Route("/database/{action}", database_action, methods=["POST"]),
         Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),

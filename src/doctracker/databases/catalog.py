@@ -197,6 +197,12 @@ class CatalogStore:
                         "SELECT what, reason FROM unavailable WHERE collection = ?", (row["id"],))]})
         return found
 
+    def kinds(self) -> dict[str, str]:
+        """The kind of database each current collection was read from, by connection: a live one's
+        (`postgresql`, `mysql`, `mssql`, `sqlite`...), a file's its dialect (`postgres`, `tsql`...)."""
+        with self._connect() as connection:
+            return {row["connection"]: row["kind"] for row in connection.execute(f"SELECT connection, kind FROM collections WHERE id IN ({_CURRENT})")}
+
     def last_try(self, connection_id: str) -> str:
         """When a connection was last read, successfully or not (ISO 8601, UTC); empty when never."""
         with self._connect() as connection:

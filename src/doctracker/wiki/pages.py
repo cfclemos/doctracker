@@ -1164,9 +1164,14 @@ LIST_COLUMNS = {
                              ("default", "Default", "text"), ("marks", "Marks", "choice"), ("comment", "Comment", "text")),
     "search": _list_columns(("name", "Name", "text"), ("kind", "Kind", "choice"), ("where", "Where", "text"),
                             ("rows", "Rows", "number"), ("comment", "Comment", "text")),
+    "lint": _list_columns(("level", "Level", "choice"), ("rule", "Rule", "choice"), ("object", "Object", "text"),
+                          ("detail", "Detail", "text"), ("found_in", "Found in", "choice"), ("state", "State", "choice")),
+    "lint object": _list_columns(("level", "Level", ""), ("rule", "Rule", ""), ("object", "Object", ""), ("detail", "Detail", ""),
+                                 ("found_in", "Found in", ""), ("state", "State", "")),
 }
-"""The columns of each level of DATABASE › Navigate Database (and of its Search): key, title, and whether
-it has a filter (any value: the filter lists its values to choose from; empty: none)."""
+"""The columns of each level of DATABASE › Navigate Database (and of its Search), of the Lint tab and of an
+object's Lint: key, title, and whether it has a filter (any value: the filter lists its values to choose
+from; empty: none)."""
 
 
 EMPTY = "__empty__"

@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.origins.evolution import moments, renames_between, schema_at, schema_diff as diff_schemas
+from doctracker.databases.lint import LEVELS, RULES, Lint
 from doctracker.databases.slices import SliceStore, resolve as resolve_slice
 from doctracker.graph import MAX_CALL_DEPTH, er_diagram, trim_view
 from doctracker.server.state import DocState
@@ -166,6 +167,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         return trim_view(graph, kinds, hide_unconnected)
 
     slices = SliceStore(project_root)  # the same files the wiki keeps, doc/slices/
+    lint = Lint(project_root, catalog, slices)  # the same rules and accepted findings (doc/lint/) as the wiki
 
     @mcp.tool()
     @refusals_reported
@@ -259,7 +261,44 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         if found is None:
             raise ToolError(f"No object {path} in the databases read nor in the SQL files. List them with "
                             "database_objects or database_origin.")
-        return found
+        return {**found, "lint": lint.for_object(path, state.origins, connections.connections())}
+
+    @mcp.tool()
+    @refusals_reported
+    def database_lint(level: str = "", rule: str = "", path: str = "", accepted: bool = False) -> dict:
+        """List what in the databases' schema and in the project's migrations deserves a look, as the wiki's
+        DATABASE › Lint shows it.
+
+        The schema rules run over the live databases read and over what the project's files declare (SQL
+        files, migrations, ORM models, dumps) alike; the migration rules over each migration step. The same
+        finding in several databases or files is one, `found_in` telling where. Accepting a finding is the
+        user's decision, made in the wiki with a reason; an accepted one is left out unless `accepted`.
+
+        Args:
+            level: Only this level: `error`, `warning` or `info`; empty for all.
+            rule: Only this rule's id (see `rules` in the answer); empty for all.
+            path: Only the findings of this object and of what it holds (a table: its columns), from
+                `database_objects`; empty for all.
+            accepted: Also the findings the user accepted (with their `reason`).
+
+        Returns:
+            `rules` (each id's `level`, `title` and `help`: why it matters and how to fix it), `counts` (open
+            findings by level) and `findings`: `rule`, `level`, `title`, `object` (`schema.table.column`, or a
+            migration step's `file:line`), `detail`, `found_in` (the databases read and origins holding it),
+            `paths` (the object in each), `origin` (a migration step's), `state` (`open`, `accepted`) and an
+            accepted one's `reason`.
+        """
+        if level and level not in LEVELS:
+            raise ToolError(f"Unknown level {level}: one of {', '.join(LEVELS)}.")
+        if rule and rule not in RULES:
+            raise ToolError(f"Unknown rule {rule}: one of {', '.join(RULES)}.")
+        found = (lint.for_object(path, state.origins, connections.connections()) if path
+                 else lint.findings(state.origins, connections.connections()))
+        opened = [f for f in found if f["state"] == "open"]
+        kept = [{k: v for k, v in f.items() if k not in ("help", "key", "path", "accepted")} for f in found
+                if (accepted or f["state"] == "open") and (not level or f["level"] == level) and (not rule or f["rule"] == rule)]
+        return {"rules": {key: {"level": lvl, "title": title, "help": text} for key, (lvl, title, text) in RULES.items()},
+                "counts": {lvl: sum(1 for f in opened if f["level"] == lvl) for lvl in LEVELS}, "findings": kept}
 
     @mcp.tool()
     @refusals_reported
