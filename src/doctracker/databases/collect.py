@@ -104,10 +104,23 @@ _QUERIES = {
     "mysql": {
         "view reads": """SELECT view_schema, view_name, table_schema, table_name FROM information_schema.view_table_usage
             WHERE view_schema = database()""",
-        "routines": """SELECT routine_schema, routine_name, '', lower(routine_type), 'sql', dtd_identifier, routine_comment
-            FROM information_schema.routines WHERE routine_schema = database()""",
-        "triggers": """SELECT trigger_schema, event_object_table, trigger_name, NULL, NULL, NULL,
-            concat(action_timing, ' ', event_manipulation, ' ', action_statement), NULL
+        "routines": """SELECT r.routine_schema, r.routine_name, (SELECT group_concat(concat(
+                CASE WHEN r.routine_type = 'PROCEDURE' THEN concat(p.parameter_mode, ' ') ELSE '' END, p.parameter_name, ' ', p.dtd_identifier)
+                ORDER BY p.ordinal_position SEPARATOR ', ') FROM information_schema.parameters p
+                WHERE p.specific_schema = r.routine_schema AND p.specific_name = r.specific_name AND p.ordinal_position > 0),
+            lower(r.routine_type), 'sql', r.dtd_identifier, r.routine_comment
+            FROM information_schema.routines r WHERE r.routine_schema = database()""",
+        "triggers": """SELECT trigger_schema, event_object_table, trigger_name, NULL, NULL, NULL, action_statement, NULL
+            FROM information_schema.triggers WHERE trigger_schema = database()""",
+        # what SQLAlchemy's reflection of MySQL loses: the types as MySQL writes them (enum labels, tinyint(1),
+        # spatial types), defaults, generated expressions, expression indexes, a trigger's timing and events
+        "column details": """SELECT table_schema, table_name, column_name, column_type, column_default, generation_expression
+            FROM information_schema.columns WHERE table_schema = database()""",
+        "index expressions": """SELECT table_schema, table_name, index_name, expression FROM information_schema.statistics
+            WHERE table_schema = database() AND expression IS NOT NULL ORDER BY table_name, index_name, seq_in_index""",
+        "routine bodies": """SELECT routine_schema, routine_name, routine_definition FROM information_schema.routines
+            WHERE routine_schema = database()""",
+        "trigger timing": """SELECT trigger_schema, event_object_table, trigger_name, action_timing, event_manipulation, action_orientation
             FROM information_schema.triggers WHERE trigger_schema = database()""",
         "partitions": """SELECT table_schema, table_name, partition_name, partition_method, partition_expression, partition_description
             FROM information_schema.partitions WHERE table_schema = database() AND partition_name IS NOT NULL""",
@@ -334,13 +347,21 @@ def _read_structure(found: _Collection, connection: Connection, kind: str, datab
             found.attempt(f"{part} of {schema}", connection, read)
         if kind == "sqlite":
             found.attempt(f"unique constraints and autoincrement of {schema}", connection, lambda: _sqlite_parts(connection, parts))
+        if kind == "mysql":  # MySQL names every primary key PRIMARY; the reflection gives none
+            for key in (parts.get("pk") or {}).values():
+                if key and key.get("constrained_columns"):
+                    key["name"] = "PRIMARY"
         for name in kinds:
             _add_table(found, schema, name, {part: values.get(name) for part, values in parts.items()})
         for name, object_kind in kinds.items():
             if object_kind in ("view", "materialized view"):
                 def definition(name=name) -> None:
-                    found.add(found.path(schema, name), kinds[name], schema_path, name,
-                              definition=inspector.get_view_definition(name, schema=query_schema))
+                    text_ = inspector.get_view_definition(name, schema=query_schema)
+                    if kind == "mysql" and text_:  # its body, as MySQL keeps it: no ALGORITHM, DEFINER, SQL SECURITY, CHECK OPTION
+                        text_ = re.sub(r"\s+WITH\s+(CASCADED\s+|LOCAL\s+)?CHECK\s+OPTION\s*$", "",
+                                       re.sub(r"^CREATE\s.*?\bVIEW\s+`(?:[^`]|``)+`\s+AS\s+", "", text_, count=1, flags=re.DOTALL | re.IGNORECASE),
+                                       flags=re.IGNORECASE)
+                    found.add(found.path(schema, name), kinds[name], schema_path, name, definition=text_)
                 found.attempt(f"definition of {schema}.{name}", connection, definition)
         for object_kind, call in (("sequence", "get_sequence_names"), ("enum", "get_enums"), ("domain", "get_domains")):
             if not hasattr(inspector, call):
@@ -444,6 +465,10 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
         for schema, name, arguments, routine_kind, language, returns, comment in rows("routines"):
             if found.path(schema) not in found.objects:
                 continue
+            if kind == "mysql":  # one routine per name: its name alone, its arguments in its data
+                found.add(found.path(schema, name), routine_kind, found.path(schema), name,
+                          arguments=arguments, language=language, returns=returns, comment=comment)
+                continue
             found.add(found.path(schema, f"{name}({arguments})"), routine_kind, found.path(schema), f"{name}({arguments})",
                       language=language, returns=returns, comment=comment)
 
@@ -526,6 +551,38 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
             if path and f"{path}.{column}" in found.objects:
                 found.objects[f"{path}.{column}"]["data"]["type"] = type_
 
+    def column_details() -> None:  # MySQL: each column's type, default and generated expression as MySQL writes them
+        for schema, table, column, type_, default, expression in rows("column details"):
+            path = known(schema, table)
+            data = found.objects[f"{path}.{column}"]["data"] if path and f"{path}.{column}" in found.objects else None
+            if data is None:
+                continue
+            data["type"] = type_
+            if default is None:
+                data.pop("default", None)
+            else:
+                data["default"] = default
+            if expression:
+                data["computed"] = expression
+
+    def index_expressions() -> None:  # MySQL: the expressions an index is on, which the reflection leaves out
+        for schema, table, index, expression in rows("index expressions"):
+            path = known(schema, table)
+            for held in (found.objects[path]["data"].get("indexes") or []) if path else []:
+                if held["name"] == index and expression not in held["expressions"]:
+                    held["expressions"].append(expression)
+
+    def routine_bodies() -> None:  # MySQL: a routine's body, as it keeps it
+        for schema, name, body in rows("routine bodies"):
+            if body and found.path(schema, name) in found.objects:
+                found.objects[found.path(schema, name)]["data"]["definition"] = body
+
+    def trigger_timing() -> None:  # MySQL: when a trigger runs, on what, and for each row
+        for schema, table, name, timing, events, orientation in rows("trigger timing"):
+            path = known(schema, table)
+            if path and f"{path}:{name}" in found.objects:
+                found.objects[f"{path}:{name}"]["data"].update(timing=timing, events=events, for_each=orientation.lower())
+
     def statistics() -> None:
         for schema, table, estimate, size in rows("statistics"):
             path = known(schema, table)
@@ -539,7 +596,8 @@ def _read_catalog(found: _Collection, connection: Connection, kind: str) -> None
     readers = {"view reads": view_reads, "view sql": view_reads_sqlite, "routines": routines, "triggers": triggers,
                "parents": parents, "partitions": partitions, "foreign targets": foreign_targets,
                "synonyms": synonyms, "column types": column_types, "statistics": statistics, "index sql": index_sql,
-               "key actions": key_actions}
+               "key actions": key_actions, "column details": column_details, "index expressions": index_expressions,
+               "trigger timing": trigger_timing, "routine bodies": routine_bodies}
     for name in queries:
         found.attempt(name, connection, readers[name])
     tables = [o for o in found.objects.values() if o["kind"] in ("table", "materialized view") and o["path"].startswith(found.base + "/")]

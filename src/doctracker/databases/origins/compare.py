@@ -7,13 +7,15 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from doctracker.databases.origins.collection import ORIGIN_PREFIX
+from doctracker.databases.origins.collection import ORIGIN_PREFIX, _mysql_default, _mysql_type
 from doctracker.databases.origins.links import HISTORY_TOOLS, describe_origins
 
 
 def _type(text: str, dialect: str) -> str:
     """A column type as it is compared: what sqlglot makes of it in the origin's dialect, in lower case,
-    a type of the project's own without its schema."""
+    a type of the project's own without its schema; MySQL's as it keeps it (`BOOLEAN` is `tinyint(1)`)."""
+    if dialect == "mysql":
+        return _mysql_type(text)
     try:
         text = exp.DataType.build(text, dialect=dialect).sql(dialect)
     except Exception:  # a type of the database's own that sqlglot does not know
@@ -96,8 +98,11 @@ def compare_origin(origin: dict, catalog, database: str) -> dict:
             if obj["kind"] == "table" and bool(column["nullable"]) != bool(data.get("nullable", True)):
                 differences.append(f"{column['name']}: {'null allowed' if column['nullable'] else 'not null'} in the files, "
                                    f"{'null allowed' if data.get('nullable', True) else 'not null'} in the database")
-            if column["default"] and not column["identity"] \
-                    and _default(column["default"], origin["dialect"]) != _default(data.get("default", ""), origin["dialect"]):
+            if origin["dialect"] == "mysql":  # as MySQL keeps it: `0` of a decimal(12,2) is 0.00, a string without quotes
+                same_default = _mysql_default(column["default"], _type(column["type"], "mysql")) == _mysql_default(data.get("default") or "", str(data.get("type", "")))
+            else:
+                same_default = _default(column["default"], origin["dialect"]) == _default(data.get("default", ""), origin["dialect"])
+            if column["default"] and not column["identity"] and not same_default:
                 differences.append(f"{column['name']}: default {column['default']} in the files, {data.get('default') or 'none'} in the database")
         for name, other in held.items():
             if name not in mine and mine:
