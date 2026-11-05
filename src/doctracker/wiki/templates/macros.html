@@ -21,9 +21,9 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 <datalist id="{{ id }}">{% for row in targets %}<option value="{{ row.path }}" data-name="{{ row.name }}" data-role="{{ row.role | replace(' ', '-') }}" data-symbol="{{ row.symbol }}">{% endfor %}</datalist>
 {%- endmacro %}
 
-{# Header of a graph view page. #}
+{# Header of a section's page: its title, then, under a dividing line, what the page is for. #}
 {% macro view_header(view, title, text) -%}
-<header class="page-header">
+<header class="page-header view-header">
   <h1>{{ icon(view) }}<span class="name">{{ title }}</span></h1>
   {% if text %}<p class="meta">{{ text }}</p>{% endif %}
 </header>
@@ -337,7 +337,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 </span>
 {%- endmacro %}
 
-{# Tabs of a page (AGENT NOTES, DIAGRAMS): `(name, label, url)` for each; the current one is marked. #}
+{# Tabs of a page (DIAGRAMS): `(name, label, url)` for each; the current one is marked. #}
 {# The ? before a field or a name: on hover (or focus), a box explaining it in detail. #}
 {% macro help_hover(name, text) -%}
 <span class="help-hover" tabindex="0" aria-label="About {{ name }}"><i class="help-icon"></i><span class="help-box" role="tooltip">{{ text }}</span></span>

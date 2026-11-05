@@ -440,6 +440,7 @@ h2 .count {
 .page-header h1 .icon::before { width: 1.45rem; height: 1.45rem; }
 .page-header .name.role-package { text-transform: uppercase; letter-spacing: 0.04em; }
 .page-header .meta { display: flex; flex-direction: column; gap: 0.15rem; margin: 0.3rem 0 0; color: var(--muted); font-size: 0.9rem; }
+.view-header .meta { padding-top: 0.5rem; margin-top: 0.5rem; border-top: 1px solid var(--border); }
 .page-header .path { color: var(--fg); }
 
 /* Blocks: a bordered box with its title in a badge sitting on the top border. */
@@ -1049,7 +1050,7 @@ body.drawing-expanded::after { content: ""; position: fixed; inset: 0; z-index: 
   box-shadow: 0 4px 14px rgb(0 0 0 / 15%);
   font-size: 0.88rem;
 }
-.graph-close, .graph-info .graph-close {  /* the second wins over the buttons of a page, e.g. AGENT NOTES' */
+.graph-close, .graph-info .graph-close {  /* the second wins over the buttons of a page, e.g. the Planner's */
   position: absolute;
   top: 0.35rem;
   right: 0.35rem;
@@ -1276,7 +1277,7 @@ rect.git-hash { fill: var(--lane); }
 text.git-ref { font: 700 9px system-ui, sans-serif; fill: var(--lane); text-anchor: middle; }
 rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: var(--lane); }
 
-/* AGENT NOTES: three tabs, the planner (a graph of plans, features and tasks) and the notes (guidelines, memory). */
+/* AGENT's pages: the planner (a graph of plans, features and tasks) and the notes (guidelines, memory). */
 .tabs { display: flex; gap: 0.3rem; margin: 0.8rem 0 0.8rem; border-bottom: 1px solid var(--border); }
 .tab { padding: 0.4rem 1rem; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0;
   color: var(--muted); font-weight: 600; margin-bottom: -1px; }

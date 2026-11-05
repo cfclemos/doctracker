@@ -88,8 +88,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     """Build the frontend routes served next to the MCP endpoint.
 
     `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
-    `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the plans,
-    tasks and notes `/notes` (changed through `/notes/<action>`), the databases `/database` (changed
+    `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the sections'
+    explanation pages `/agent`, `/code` and `/databases`, AGENT's pages `/agent/<page>` (changed through
+    `/agent/<action>`), the databases `/database` (changed
     through `/database/<action>`), `/source/<path>`,
     `/search` (modes `all`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
@@ -239,7 +240,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
-        """One of the views: architecture, classes, calls, git, notes or dead code."""
+        """One of the views: architecture, classes, calls, git or dead code."""
         view = request.url.path.strip("/")
         params = dict(request.query_params)
         query = request.url.query
@@ -271,8 +272,6 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             commits = await read_history(project_root, GIT_COMMITS, params.get("file", ""))
             context["commits"] = commits
             context["selected"] = params.get("commit") or (commits[0].hash if commits else "")
-        if view == "notes":
-            context.update(notes_context(params))
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
         if view == "database":
@@ -286,6 +285,15 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "calls" and request.query_params:
             response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
         return response
+
+    async def agent_page(request: Request) -> Response:
+        """A page of AGENT: the planner, the guidelines or the memory, each at `/agent/<page>`."""
+        page = request.path_params["page"]
+        if page not in ("planner", *NOTE_GROUPS):
+            return render_page(request, "not_found.html", request.url.path, {"path": ""}, 404)
+        params = {**request.query_params, "tab": page}
+        context = {"path": "", "view": "notes", "params": params, **notes_context(params)}
+        return render_page(request, "notes.html" if state.ready else "loading.html", agent_url(params), context)
 
     async def section_page(request: Request) -> Response:
         """A section's explanation page (AGENT, CODE, DATABASES): what it is for and its pages."""
@@ -765,9 +773,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         """A textarea with one item per line, as a list (`None` when the field was not sent)."""
         return None if value is None else [line.strip() for line in value.splitlines() if line.strip()]
 
-    def page_query(params: dict) -> str:
-        """The query string that brings the notes page back to the same tab, plans, item and filters."""
-        return "&".join(f"{key}={value}" for key, value in params.items() if value)
+    def agent_url(params: dict) -> str:
+        """The address of an AGENT page with the same plans, item and filters: `/agent/<page>?...`."""
+        query = "&".join(f"{key}={value}" for key, value in params.items() if value and key != "tab")
+        return f"/agent/{params.get('tab') or 'planner'}" + (f"?{query}" if query else "")
 
     def dependency_choices(item: str) -> list[dict]:
         """What an item can be made to wait for, as a tree, for the autocomplete of the planner panel.
@@ -964,7 +973,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                     params["plans"] = ",".join(p for p in [*params["plans"].split(","), str(result["id"])] if p.isdigit())
         context = {"path": "", "view": "notes", "params": params, "error": error,
                    **notes_context(params)}
-        return render_page(request, "notes.html", f"/notes?{page_query(params)}", context)
+        return render_page(request, "notes.html", agent_url({**params, "tab": context["tab"]}), context)
 
     async def git_branches(request: Request) -> Response:
         """Commits of every branch placed on lanes, for the branch graph at the top of the git page.
@@ -1058,7 +1067,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     def recall_groups(found: dict, query: str) -> list[dict]:
         """Rows of the search box for the `all` mode: each `recall` group with results, in its order.
 
-        Planner items and notes link to the AGENT NOTES page with the item shown; code rows are
+        Planner items and notes link to their AGENT page with the item shown; code rows are
         the same as in the other modes.
         """
         groups = []
@@ -1073,8 +1082,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 rows = [{**row, "url": f"/git?commit={row['commits'][0]}" if row.get("commits") else "/git"}
                         for row in found[group]]
             else:
-                rows = [{**row, "url": (f"/notes?tab=planner&plans={row['plan']}&selected={row['ref']}"
-                                        if group == "planning" else f"/notes?tab={group}&selected={row['ref']}")}
+                rows = [{**row, "url": (f"/agent/planner?plans={row['plan']}&selected={row['ref']}"
+                                        if group == "planning" else f"/agent/{group}?selected={row['ref']}")}
                         for row in found[group]]
             groups.append({"name": group, "rows": rows})
         return groups
@@ -1162,6 +1171,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/", index),
         Route("/wiki/{path:path}", wiki),
         Route("/agent", section_page),
+        Route("/agent/form", note_form),
+        Route("/agent/{action}", note_action, methods=["POST"]),
+        Route("/agent/{page}", agent_page),
         Route("/code", section_page),
         Route("/databases", section_page),
         Route("/architecture", view_page),
@@ -1169,15 +1181,12 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/calls", view_page),
         Route("/git", view_page),
         Route("/dead-code", view_page),
-        Route("/notes", view_page),
         Route("/database", view_page),
         Route("/database/form", database_form),
         Route("/database/evolution", evolution_part),
         Route("/database/slice-form", slice_form),
         Route("/database/lint-form", lint_form),
         Route("/database/{action}", database_action, methods=["POST"]),
-        Route("/notes/form", note_form),
-        Route("/notes/{action}", note_action, methods=["POST"]),
         Route("/graph/{view}", view_data),
         Route("/git/branches", git_branches),
         Route("/git/commit/{hash}", git_commit),

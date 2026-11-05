@@ -22,7 +22,7 @@ events.addEventListener("open", () => {
   reloadContent();
 });
 document.addEventListener("htmx:beforeRequest", (event) => {
-  if (event.detail.requestConfig?.verb === "post" && event.detail.requestConfig.path?.startsWith("/notes/")) {
+  if (event.detail.requestConfig?.verb === "post" && event.detail.requestConfig.path?.startsWith("/agent/")) {
     ownChangeUntil = Date.now() + 3000;
   }
 });

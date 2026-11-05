@@ -535,11 +535,11 @@ function plannerParams() {
 function plannerAdd(query, label, title) {
   const params = plannerParams();
   return `<button type="button" class="planner-button" title="${escapeHtml(title)}" hx-target="#notes-dialog-body"
-    hx-get="/notes/form?${query}&tab=planner&plans=${escapeHtml(params.get("plans") || "")}">${escapeHtml(label)}</button>`;
+    hx-get="/agent/form?${query}&tab=planner&plans=${escapeHtml(params.get("plans") || "")}">${escapeHtml(label)}</button>`;
 }
 
 function plannerDetail(item) {
-  return `/notes/form?item=${encodeURIComponent(item)}&panel=1&tab=planner&plans=${encodeURIComponent(plannerParams().get("plans") || "")}`;
+  return `/agent/form?item=${encodeURIComponent(item)}&panel=1&tab=planner&plans=${encodeURIComponent(plannerParams().get("plans") || "")}`;
 }
 
 // The reference agents use for an item (plan:3, task:12): a box standing for several levels shows each.
@@ -551,7 +551,7 @@ function plannerBox(node) {
   if (node.kind === "external") {
     const plans = new Set((plannerParams().get("plans") || "").split(",").filter((part) => /^\d+$/.test(part)));
     plans.add(String(node.plan_id));
-    const url = `/notes?tab=planner&plans=${[...plans].join(",")}&selected=${encodeURIComponent(node.id)}`;
+    const url = `/agent/planner?plans=${[...plans].join(",")}&selected=${encodeURIComponent(node.id)}`;
     return `<a class="uml-box planner-external state-${node.state}" data-box="${escapeHtml(node.id)}" href="${url}"
         hx-get="${url}" hx-target="#content" hx-push-url="true" title="Not shown: click to show the plan “${escapeHtml(node.plan)}”">
       <span class="planner-external-plan">↗ in plan: <strong>${escapeHtml(node.plan)}</strong></span>
@@ -577,7 +577,7 @@ function plannerBox(node) {
   }
   return `<div class="uml-box planner-task state-${node.state}" data-box="${escapeHtml(node.id)}" data-open="${plannerDetail(node.open)}">
     <div class="uml-head">
-      <form class="planner-check" hx-post="/notes/toggle_task" hx-target="#content" hx-trigger="change"
+      <form class="planner-check" hx-post="/agent/toggle_task" hx-target="#content" hx-trigger="change"
             hx-confirm="${node.status === "done" ? `Withdraw the approval of “${escapeHtml(node.label)}”? It goes back to in progress and the approval evidence is deleted.`
               : `Mark “${escapeHtml(node.label)}” as done? It is recorded as your approval.`}"
             data-confirm-title="${node.status === "done" ? "Withdraw approval" : "Mark task as done"}">

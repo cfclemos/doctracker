@@ -1,14 +1,14 @@
 {# Content of a modal of the notes page, or of the planner's right panel (panel: one plan, feature or
-   task). Every form posts to /notes/<action> (the same methods as the MCP tools, source "wiki") and the
+   task). Every form posts to /agent/<action> (the same methods as the MCP tools, source "wiki") and the
    page comes back redrawn, with the same plans and item, which also closes a modal. #}
 {# A form sent from the panel answers into the panel; deleting the item shown (`whole`) answers with the page. #}
 {% macro post(action, confirm="", title="", whole=False) -%}
-hx-post="/notes/{{ action }}" hx-target="{% if panel and not whole %}#planner-detail{% else %}#content{% endif %}"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
+hx-post="/agent/{{ action }}" hx-target="{% if panel and not whole %}#planner-detail{% else %}#content{% endif %}"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}
 {# A form that saves by itself: when a field changes (a text field when it is left), only the head and
    the plan cards come back, so nothing moves under the user. #}
 {% macro autosave(action) -%}
-hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
+hx-post="/agent/{{ action }}" hx-trigger="change" hx-swap="none"
 {%- endmacro %}
 {% macro keep() -%}
 <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="filter_type" value="{{ note_type }}">
@@ -17,7 +17,7 @@ hx-post="/notes/{{ action }}" hx-trigger="change" hx-swap="none"
 {%- endmacro %}
 {# A link that shows a note on its tab, closing the modal (the page comes back). #}
 {% macro ui_nav_note(ref) -%}
-href="/notes?tab={{ tab }}&selected={{ ref }}" hx-get="/notes?tab={{ tab }}&selected={{ ref }}" hx-target="#content" hx-push-url="true"
+href="/agent/{{ tab }}?selected={{ ref }}" hx-get="/agent/{{ tab }}?selected={{ ref }}" hx-target="#content" hx-push-url="true"
 {%- endmacro %}
 {# When a guideline is given to the agents; a hidden marker tells the server the boxes were shown. #}
 {% macro moment_boxes(chosen) -%}
@@ -45,14 +45,14 @@ href="/notes?tab={{ tab }}&selected={{ ref }}" hx-get="/notes?tab={{ tab }}&sele
 {# A button that opens the creation modal of the page. #}
 {% macro create_button(query, label) -%}
 <button type="button" class="notes-button add-button" hx-target="#notes-dialog-body"
-        hx-get="/notes/form?{{ query }}&tab=planner&plans={{ plans }}&selected={{ selected }}">{{ label }}</button>
+        hx-get="/agent/form?{{ query }}&tab=planner&plans={{ plans }}&selected={{ selected }}">{{ label }}</button>
 {%- endmacro %}
 {# One feature or task of the list: its state and title, a pencil to open it here, a bin to delete it. #}
 {% macro child_row(child, kind) -%}
 <li class="child-row">
   {{ state(child.state) }} <span class="child-title" data-show="{{ child.item }}" title="Show it in the drawing">{{ child.title }}</span>
   <button type="button" class="icon-button" title="Edit this {{ kind }}" aria-label="Edit"
-          hx-get="/notes/form?item={{ child.item }}&panel=1&tab=planner&plans={{ plans }}" hx-target="#planner-detail"><i class="tool-icon tool-edit"></i></button>
+          hx-get="/agent/form?item={{ child.item }}&panel=1&tab=planner&plans={{ plans }}" hx-target="#planner-detail"><i class="tool-icon tool-edit"></i></button>
   <form {{ post("delete_item", "Delete the " ~ kind ~ " “" ~ child.title ~ "”" ~ (" with all its tasks" if kind == "feature" else " with its annotations and evidence") ~ "? This cannot be undone.", "Delete " ~ kind) }} class="inline-form">{{ keep() }}
     <input type="hidden" name="item" value="{{ child.item }}">
     <button type="submit" class="icon-button" title="Delete this {{ kind }}" aria-label="Delete"><i class="tool-icon tool-delete"></i></button>
