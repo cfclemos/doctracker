@@ -27,10 +27,11 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
         {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
         hx-get="/database?page={{ number }}" hx-include="#objects-filter, .objects-table thead" hx-target="#content" hx-push-url="true">{{ label }}</button>
 {%- endmacro %}
-<div class="{% if tab in ('universe', 'diagram') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
+<div class="{% if tab in ('universe', 'diagram', 'evolution') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
   {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
-             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("objects", "Navigate Database", "/database?tab=objects"),
+             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("evolution", "Evolution", "/database?tab=evolution"),
+             ("objects", "Navigate Database", "/database?tab=objects"),
              ("drift", "Drift", "/database?tab=drift")), tab) }}
   {% if tab == "universe" %}
   <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
@@ -69,6 +70,51 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     {{ ui.relation_kinds(("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")) }}
     <span class="er-ends" title="Crow's foot: what each end of a key's line allows"><b>||</b> one · <b>o|</b> zero or one · <b>o&lt;</b> zero or many</span>
   {% endcall %}
+  {% elif tab == "evolution" %}
+  <p class="tab-description">How the project's schema evolved, from its migrations and its commits: one lane per origin (SQL files, migration sets, ORM models, dumps), each migration step at the commit that brought it, each commit that changed the origin's files; a filled dot is a migration step, a hollow one a commit, a red ring a step changed after it was created. Click a moment to see what it did; Diff compares the schema at two moments.</p>
+  {% macro moment_options(chosen) -%}
+  <option value="">Choose a moment…</option>
+  {% for lane in evolution.lanes %}<optgroup label="{{ lane.origin }}">
+    {% for m in evolution.moments if m.origin == lane.origin %}<option value="{{ m.id }}"{% if m.id == chosen %} selected{% endif %}>{{ evolution_labels[m.id] }}</option>{% endfor %}
+  </optgroup>{% endfor %}
+  {%- endmacro %}
+  {% set bar_filters %}
+  <div class="graph-toolbar filters-line">
+    {% call ui.form_field("Origins", "The lanes shown: tick the origins to see (migration sets, schema files, ORM models, dumps), then Apply. None ticked: every lane.", choice=True) %}
+    <details class="objects-column-filter evo-origins">
+      <summary class="evo-origins-label" title="Choose the origins shown"><span class="evo-origins-text">{% if params.origin %}{{ params.origin }}{% else %}All origins{% endif %}</span> <span class="objects-crumb-arrow">▾</span></summary>
+      <div class="objects-filter-box">
+        <input type="search" class="objects-values-find" placeholder="Search the origins…" aria-label="Search the origins" autocomplete="off">
+        <div class="objects-values-head"><span>{{ evolution.lanes | length }} origins</span>
+          <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
+          <button type="button" class="objects-values-apply">Apply</button></span></div>
+        <ul class="objects-values">{% for lane in evolution.lanes %}
+          <li><label><input type="checkbox" value="{{ lane.origin }}"{% if params.origin == lane.origin %} checked{% endif %}>
+            <span class="objects-value">{{ lane.origin }}</span><span class="count">{{ lane.kind }}</span></label></li>
+        {% endfor %}</ul>
+      </div>
+    </details>{% endcall %}
+  </div>
+  {% endset %}
+  {% set diff_row %}
+  <form class="graph-toolbar filters-line evo-diff-form" hx-get="/database/evolution" hx-target="#evolution-diff" hx-trigger="change">
+    {% call ui.form_field("A", "The first moment: the schema as it was then (a migration step: the steps up to it applied; a commit: the origin's files as they were). Also chosen by clicking a moment in the drawing while this row is open: the first click is A, the second B.") %}
+    <select name="a" class="evo-a">{{ moment_options(params.a) }}</select>{% endcall %}
+    {% call ui.form_field("B", "The second moment, compared with A: what B has that A had not is added, what it lost removed.") %}
+    <select name="b" class="evo-b">{{ moment_options(params.b) }}</select>{% endcall %}
+    {% call ui.form_field("Show", "Side by side: both schemas, table by table and column by column, what differs marked. Only the differences: what was added, removed or changed.", choice=True) %}
+    <span class="toggle-group">{% for value, label in (("only", "Only the differences"), ("side", "Side by side")) %}<label><input type="radio" name="view" value="{{ value }}"{% if (params.view or "only") == value %} checked{% endif %}>{{ label }}</label>{% endfor %}</span>{% endcall %}
+  </form>
+  {% endset %}
+  {% call ui.view_canvas("evolution", "/graph/evolution" if evolution.moments else "", "", filters=bar_filters, details=true, diff=diff_row,
+                         empty="" if evolution.moments else "No migrations nor schema files in the project yet.") %}
+    <span title="A migration step (Flyway, golang-migrate, dbmate, Prisma, Alembic, Django), at the commit that brought it"><i class="evo-dot evo-migration"></i>migration step</span>
+    <span title="A commit that changed the origin's files (an origin without migrations evolves by its commits)"><i class="evo-dot evo-commit"></i>commit</span>
+    <span title="A commit that changed a migration step already there: the databases that applied it before did not get the change"><i class="evo-dot evo-changed"></i>step changed after it was created</span>
+    <span title="Changes not committed yet"><i class="evo-dot evo-now"></i>not committed</span>
+    <span title="A step follows the step it revises; two steps revising the same one are a branch, a step revising two is a merge"><i class="line evo-line"></i>follows (branches and merges)</span>
+  {% endcall %}
+  <div id="evolution-diff" class="evo-diff">{% if params.a and params.b %}<p class="empty" hx-get="/database/evolution?a={{ params.a | urlencode }}&b={{ params.b | urlencode }}&view={{ params.view or 'only' }}" hx-trigger="load" hx-target="#evolution-diff">Loading…</p>{% endif %}</div>
   {% elif tab == "drift" %}
   <p class="tab-description">Where the project's SQL files, migrations and ORM models and the live databases they describe differ. An origin is linked to a database by hand, by the migration tool's history table in that database (the proof it was migrated, how far, and steps changed since), by its configuration, or — an ORM's models — through its migrations; the names of its tables only suggest a database, to link by hand. An ORM's models are also compared with its migrations: a model changed without its migration shows there.</p>
   {% set HOW = {"chosen": ("chosen by you", "You linked it by hand."),

@@ -2068,3 +2068,49 @@ html.loading::before {
 .er-filters .graph-filter { display: contents; }
 /* Nothing of a drawing is selected or dragged by the browser itself: the mouse moves the drawing. */
 .uml-canvas, .graph-canvas[data-view="universe"] { user-select: none; -webkit-user-select: none; }
+
+/* DATABASE › Evolution: a lane per origin (its name on the left, a light band of its colour), the moments
+   as dots (a step filled, a commit hollow, a changed step ringed red, what is not committed dashed), the
+   lines a step follows; A and B written over the moments chosen for the diff. */
+.bar-icon-diff { --icon: url("icons/arrows-exchange.svg"); }
+/* As tall as its lanes (the page scrolls down to them); as wide as the room, the moments scrolling across. */
+.graph-canvas[data-view="evolution"] { height: auto; min-height: 6rem; overflow-x: auto; overflow-y: hidden; cursor: default; }
+.graph-area.expanded .graph-canvas[data-view="evolution"] { overflow: auto; }
+/* The Diff row: A and B share the room, Show keeps its size, and the row wraps rather than run out. */
+.graph-toolbar.filters-line.evo-diff-form { flex-wrap: wrap; }
+.evo-diff-form .form-field:has(select) { flex: 1 1 16rem; min-width: 0; }
+.evo-diff-form .form-field select { width: 100%; min-width: 0; }
+.evo-svg { display: block; font-family: system-ui, sans-serif; }
+.evo-lane-band { fill: color-mix(in srgb, var(--lane) 6%, transparent); }
+.evo-lane-name { fill: var(--fg); font-size: 12px; font-weight: 600; }
+.evo-lane-kind { fill: var(--muted); font-size: 10.5px; }
+.evo-link { fill: none; stroke: var(--lane); stroke-width: 2; }
+.evo-moment { cursor: pointer; }
+.evo-moment circle { fill: var(--lane); stroke: var(--lane); stroke-width: 2; }
+.evo-moment.evo-commit circle { fill: var(--bg); }
+.evo-moment.evo-changed circle { fill: var(--bg); stroke: var(--raises); stroke-width: 3; }
+.evo-moment.evo-now circle { fill: var(--bg); stroke-dasharray: 3 2; }
+.evo-moment:hover circle { r: 8; }
+.evo-moment.evo-picked circle { stroke: var(--fg); stroke-width: 3; }
+.evo-pick { fill: var(--fg); font-size: 11px; font-weight: 700; text-anchor: middle; }
+.graph-legend .evo-dot { display: inline-block; width: 0.7rem; height: 0.7rem; border: 2px solid var(--accent); border-radius: 50%; }
+.graph-legend .evo-dot.evo-migration { background: var(--accent); }
+.graph-legend .evo-dot.evo-changed { border-color: var(--raises); }
+.graph-legend .evo-dot.evo-now { border-style: dashed; }
+.graph-legend .line.evo-line { border-color: var(--accent); }
+.evo-flag { color: var(--raises); }
+.evo-diff { margin-top: 1rem; }
+.evo-side { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.evo-side th, .evo-side td { padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
+.evo-side .evo-table td { background: var(--panel); font-weight: 600; }
+.evo-added td { color: var(--attribute); }
+.evo-removed td { color: var(--raises); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--raises) 50%, transparent); }
+.evo-changed td, .evo-renamed td { color: var(--note); }
+.evo-badge { display: inline-block; padding: 0 0.4rem; border-radius: 8px; font-size: 0.72rem; color: #ffffff; background: var(--muted); }
+.evo-badge.evo-added { background: var(--attribute); }
+.evo-badge.evo-removed { background: var(--raises); }
+.evo-badge.evo-changed { background: var(--note); }
+/* Evolution's Origins: the column filter's box of ticks, opened from a field-like label. */
+.evo-origins summary.evo-origins-label { opacity: 1; display: inline-flex; align-items: center; gap: 0.3rem; min-height: 2.1rem; padding: 0 0.6rem;
+  border: 1px solid var(--border); border-radius: 4px; color: var(--fg); background: var(--bg); max-width: 22rem; }
+.evo-origins-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -12,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
+from doctracker.databases.origins.evolution import moments, renames_between, schema_at, schema_diff as diff_schemas
 from doctracker.graph import MAX_CALL_DEPTH, er_diagram, trim_view
 from doctracker.server.state import DocState
 from doctracker.databases.readonly import run_test
@@ -162,6 +163,44 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         """
         graph = er_diagram(state, catalog, connections.connections(), "", project, focus, max(1, min(depth, MAX_CALL_DEPTH)))
         return trim_view(graph, kinds, hide_unconnected)
+
+    @mcp.tool()
+    @refusals_reported
+    def schema_moments() -> dict:
+        """List how the project's schema evolved, as the wiki's DATABASE › Evolution draws it.
+
+        Each origin (SQL files, migration sets, ORM models, dumps) is a lane; its moments are its
+        migration steps, placed at the commit that brought each, and the commits that changed its files
+        (a step edited after it came is flagged); an origin without migrations evolves by its commits.
+        Git is only read.
+
+        Returns:
+            `lanes` (`origin`, `kind`, `folder`, `migrations`) and `moments`: `id` (give two to
+            `schema_diff`), `origin`, `source` (`migration` or `commit`), `version`, `title`, `revises`
+            (the steps it follows: branches and merges), `commit` (`hash`, `short`, `at`, `subject`; none
+            when not committed), `files`, `changed` (steps a commit edited) and `order` (in time).
+        """
+        return moments(project_root, state.origins)
+
+    @mcp.tool()
+    @refusals_reported
+    def schema_diff(a: str, b: str) -> dict:
+        """Tell where the schema differs between two moments, of the same origin or of two (see `schema_moments`).
+
+        Args:
+            a: The first moment's id (e.g. `examples/database/origins/flyway@step:2`).
+            b: The second moment's id.
+
+        Returns:
+            `tables`: every table and view of either moment, each with `key`, `kind`, `status` (added,
+            removed, changed, same), its path on each side, `columns` (`name`, `status` — added, removed,
+            renamed, changed, same —, type / null / default on each side, `changes`) and `changes` (keys,
+            indexes, checks, comment); `counts` by status.
+        """
+        first, second = schema_at(project_root, state.origins, a), schema_at(project_root, state.origins, b)
+        if first is None or second is None:
+            raise ToolError(f"Unknown moment: {a if first is None else b}")
+        return diff_schemas(first, second, renames_between(state.origins, a, b))
 
     @mcp.tool()
     @refusals_reported

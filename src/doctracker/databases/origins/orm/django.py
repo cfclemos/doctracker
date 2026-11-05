@@ -232,6 +232,8 @@ class _Reader:
         self.models: dict[str, dict] = {}  # lower name → name, fields [(name, field)], options, line, file
         self.unresolved: list[dict] = []
         self.raw: list[dict] = []  # RunSQL, in order
+        self.emitted: list[dict] | None = None  # from migrations: each operation's statements, in order
+        self.expects: list[dict] = []
         settings = _settings(root, project, origin["folder"])
         self.settings = settings
         self.auto, self.user = "AutoField", "auth.User"
@@ -414,7 +416,10 @@ class _Reader:
             into[node.name.lower()] = {"name": node.name, "fields": fields, "options": options, "line": node.lineno, "file": file}
 
     def read_migrations(self) -> "_Reader":
-        """The state from the app's migrations, operation after operation."""
+        """The state from the app's migrations, operation after operation, each writing its own statements
+        in its own step (CreateModel its table, AddField an added column, RenameField a renamed one…), so
+        that every step does what it does and the schema after any step is known."""
+        self.emitted = []
         for step in self.origin["steps"]:
             module = self.project.module_of(step["file"])
             tree = self.project.tree(module)
@@ -426,8 +431,47 @@ class _Reader:
                         self.note(step["file"], node.lineno, f"migrations.{node.func.attr}: {getattr(problem, 'what', problem)}")
         return self
 
+    def _emit(self, file: str, line: int, text: str) -> None:
+        self.emitted.append({"file": file, "line": line, "text": text})
+
+    def _emits(self, model: dict) -> bool:
+        """Whether a model's changes reach the database (not abstract, proxy or unmanaged)."""
+        options = model["options"]
+        return self.emitted is not None and not options.get("abstract") and not options.get("proxy") and options.get("managed") is not False
+
+    def _emit_model(self, model: dict) -> None:
+        """CreateModel: its table and what follows it, in the step that creates it."""
+        created, later, expected = self._model_ddl(model)
+        self.emitted += created + later
+        self.expects += expected
+
+    def _emit_field(self, model: dict, name: str, field: dict, before: dict | None) -> None:
+        """AddField: the column added (and its key, indexes); AlterField: its type and null changed."""
+        q, table = self._quote, self._table(model)
+        where = {"file": field["file"], "line": field["line"]}
+        try:
+            part, later = self._field_ddl(model, table, name, field, {})
+        except Unresolved as problem:
+            self.note(where["file"], where["line"], f"{model['name']}.{name}: {problem.what}")
+            return
+        if before is None:
+            if part:
+                self.emitted.append({**where, "text": f"ALTER TABLE {q(table)} ADD COLUMN {part}"})
+            self.emitted += later
+            return
+        column = self._columns(model).get(name)
+        if not column or not part:
+            return
+        kind = field["kind"]
+        typ = self._column_type({"kind": _RELATED.get(self.target(field["to"])[2], "IntegerField")}) if kind in ("ForeignKey", "OneToOneField") \
+            else self._column_type(field)
+        self.emitted.append({**where, "text": f"ALTER TABLE {q(table)} ALTER COLUMN {q(column)} TYPE {typ}"})
+        if bool(field.get("null")) != bool(before.get("null")):
+            self.emitted.append({**where, "text": f"ALTER TABLE {q(table)} ALTER COLUMN {q(column)} {'DROP' if field.get('null') else 'SET'} NOT NULL"})
+
     def _operation(self, node: ast.Call, module: str, file: str) -> None:
         kind, given = node.func.attr, {k.arg: k.value for k in node.keywords if k.arg}
+        q = self._quote
         def value(node: ast.expr):
             return self.project.value(node, module)
 
@@ -443,49 +487,96 @@ class _Reader:
                 field = self.field(item.elts[1], module)
                 if field is not None:
                     fields.append((value(item.elts[0]), {**field, "line": item.lineno}))
-            self.models[value(given["name"]).lower()] = {"name": value(given["name"]), "fields": fields, "options": options, "line": node.lineno, "file": file}
+            created = self.models[value(given["name"]).lower()] = {"name": value(given["name"]), "fields": fields, "options": options,
+                                                                  "line": node.lineno, "file": file}
+            self._emit_model(created)
         elif kind == "DeleteModel":
-            self.models.pop(value(given["name"]).lower(), None)
+            gone = self.models.pop(value(given["name"]).lower(), None)
+            if gone is not None and self._emits(gone):
+                self._emit(file, node.lineno, f"DROP TABLE {q(self._table(gone))}")
         elif kind == "RenameModel":
             found = self.models.pop(value(given["old_name"]).lower())
+            old = self._table(found)
             found["name"] = value(given["new_name"])
             self.models[found["name"].lower()] = found
+            if self._emits(found) and self._table(found) != old:
+                self._emit(file, node.lineno, f"ALTER TABLE {q(old)} RENAME TO {q(self._table(found))}")
         elif kind == "AlterModelTable":
-            model("name")["options"]["db_table"] = value(given["table"])
+            found = model("name")
+            old = self._table(found)
+            found["options"]["db_table"] = value(given["table"])
+            if self._emits(found) and self._table(found) != old:
+                self._emit(file, node.lineno, f"ALTER TABLE {q(old)} RENAME TO {q(self._table(found))}")
         elif kind in ("AddField", "AlterField"):
             field = self.field(given["field"], module)
             found = model("model_name")
             name = value(given["name"])
-            found["fields"] = [f for f in found["fields"] if f[0] != name] if kind == "AlterField" else found["fields"]
-            if field is not None:
-                found["fields"].append((name, {**field, "line": node.lineno}))
+            before = dict(found["fields"]).get(name)
+            if kind == "AlterField":
+                found["fields"] = [(n, field and {**field, "line": node.lineno, "file": file} if n == name else f) for n, f in found["fields"]]
+            elif field is not None:
+                found["fields"].append((name, {**field, "line": node.lineno, "file": file}))
+            if field is not None and self._emits(found):
+                self._emit_field(found, name, {**field, "line": node.lineno, "file": file}, before if kind == "AlterField" else None)
         elif kind == "RemoveField":
             found = model("model_name")
-            found["fields"] = [f for f in found["fields"] if f[0] != value(given["name"])]
+            name = value(given["name"])
+            column = self._columns(found).get(name)
+            found["fields"] = [f for f in found["fields"] if f[0] != name]
+            if column and self._emits(found):
+                self._emit(file, node.lineno, f"ALTER TABLE {q(self._table(found))} DROP COLUMN {q(column)}")
         elif kind == "RenameField":
             found = model("model_name")
+            old_column = self._columns(found).get(value(given["old_name"]))
             found["fields"] = [(value(given["new_name"]) if n == value(given["old_name"]) else n, f) for n, f in found["fields"]]
+            new_column = self._columns(found).get(value(given["new_name"]))
+            if old_column and new_column and old_column != new_column and self._emits(found):
+                self._emit(file, node.lineno, f"ALTER TABLE {q(self._table(found))} RENAME COLUMN {q(old_column)} TO {q(new_column)}")
         elif kind == "AddIndex":
             index = given["index"]
-            model("model_name")["options"].setdefault("indexes", []).append(
-                {"name": value(keyword(index, "name")), "fields": value(keyword(index, "fields")),
-                 "condition": self.condition(keyword(index, "condition"), module) if keyword(index, "condition") else None})
+            found = model("model_name")
+            added = {"name": value(keyword(index, "name")), "fields": value(keyword(index, "fields")),
+                     "condition": self.condition(keyword(index, "condition"), module) if keyword(index, "condition") else None}
+            found["options"].setdefault("indexes", []).append(added)
+            if self._emits(found):
+                self.emitted.append(self._index_ddl(found, self._table(found), added, {"file": file, "line": node.lineno}))
         elif kind == "RemoveIndex":
             found = model("model_name")
             found["options"]["indexes"] = [i for i in found["options"].get("indexes", []) if i["name"] != value(given["name"])]
+            if self._emits(found):
+                self._emit(file, node.lineno, f"DROP INDEX {q(value(given['name']))}")
         elif kind == "AddConstraint":
-            model("model_name")["options"].setdefault("constraints", []).append(self.constraint(given["constraint"], module))
+            found = model("model_name")
+            added = {**self.constraint(given["constraint"], module), "file": file, "line": node.lineno}
+            found["options"].setdefault("constraints", []).append(added)
+            if self._emits(found):
+                self.emitted += self._constraint_ddl(found, self._table(found), added, inline=False)[1]
         elif kind == "RemoveConstraint":
             found = model("model_name")
+            gone = next((c for c in found["options"].get("constraints", []) if c["name"] == value(given["name"])), None)
             found["options"]["constraints"] = [c for c in found["options"].get("constraints", []) if c["name"] != value(given["name"])]
+            if gone is not None and self._emits(found):
+                self._emit(file, node.lineno, f"DROP INDEX {q(gone['name'])}" if gone.get("condition")
+                           else f"ALTER TABLE {q(self._table(found))} DROP CONSTRAINT {q(gone['name'])}")
         elif kind == "AlterUniqueTogether":
             together = given["unique_together"]
-            model("name")["options"]["unique_together"] = [value(e) for e in together.elts] if isinstance(together, (ast.Set, ast.List, ast.Tuple)) else []
+            found = model("name")
+            before = [tuple(t) for t in found["options"].get("unique_together", [])]
+            found["options"]["unique_together"] = [value(e) for e in together.elts] if isinstance(together, (ast.Set, ast.List, ast.Tuple)) else []
+            if self._emits(found):
+                table, columns = self._table(found), self._columns(found)
+                for gone in [t for t in before if t not in [tuple(n) for n in found["options"]["unique_together"]]]:
+                    cols = [columns.get(f, f) for f in gone]
+                    name = index_name(table, cols, "_uniq", 64 if self.backend == "mysql" else 63)
+                    self._emit(file, node.lineno, f"DROP INDEX {q(name)}" if self.backend == "sqlite"
+                               else f"ALTER TABLE {q(table)} DROP CONSTRAINT {q(name)}")
+                for added in [t for t in found["options"]["unique_together"] if tuple(t) not in before]:
+                    self.emitted.append(self._together_ddl(found, table, added, {"file": file, "line": node.lineno}))
         elif kind == "RunSQL":
             sql = node.args[0] if node.args else given["sql"]
             text = value(sql)
             for item in text if isinstance(text, list) else [text]:
-                self.raw.append({"file": file, "line": node.lineno, "text": item if isinstance(item, str) else item[0]})
+                self.emitted.append({"file": file, "line": node.lineno, "text": item if isinstance(item, str) else item[0]})
         elif kind == "RunPython":
             self.note(file, node.lineno, "RunPython (Python code: what it does is only known when it runs)")
         elif kind not in ("swappable_dependency", "Migration", "AlterModelOptions", "AlterModelManagers", "SeparateDatabaseAndState"):
@@ -546,124 +637,165 @@ class _Reader:
 
     def ddl(self) -> tuple[list[dict], list[dict]]:
         """The statements creating the app's tables as its backend writes them, and the tables it expects
-        but does not create (`managed = False`)."""
+        but does not create (`managed = False`). Read from migrations: each operation's own statements, in
+        its own step (see `read_migrations`)."""
+        if self.emitted is not None:
+            return self.emitted + self.raw, self.expects
         statements, deferred, expects = [], [], []
-        q = self._quote
         for model in self.models.values():
-            options = model["options"]
-            if options.get("abstract") or options.get("proxy"):
-                continue
-            table = self._table(model)
-            place = {"file": model["file"], "line": model["line"]}
-            if options.get("managed") is False:
-                expects.append({"table": table, **place})
-                continue
-            parts, columns = [], {}
-            composite = next((f["fields"] for _, f in model["fields"] if f["kind"] == "CompositePrimaryKey"), None)
-            for name, field in model["fields"]:
-                kind = field["kind"]
-                where = {"file": model["file"], "line": field.get("line", model["line"])}
-                try:
-                    if kind == "CompositePrimaryKey":
-                        continue
-                    if kind == "ManyToManyField":
-                        deferred += self._many_to_many(model, table, name, field, where)
-                        continue
-                    if kind in ("ForeignKey", "OneToOneField"):
-                        to_table, to_column, to_kind = self.target(field["to"])
-                        column = field.get("db_column") or f"{name}_id"
-                        columns[name] = column
-                        typ = self._column_type({"kind": _RELATED.get(to_kind, to_kind)})
-                        part = f"{q(column)} {typ} {'NULL' if field.get('null') else 'NOT NULL'}"
-                        if field.get("primary_key"):
-                            part += " PRIMARY KEY"
-                        elif kind == "OneToOneField" or field.get("unique"):
-                            part += " UNIQUE"
-                        if self.backend == "sqlite":
-                            part += f" REFERENCES {q(to_table)} ({q(to_column)}) DEFERRABLE INITIALLY DEFERRED"
-                        else:
-                            fk = index_name(table, [column], f"_fk_{to_table}_{to_column}", 64 if self.backend == "mysql" else 63)
-                            deferred.append({**where, "text": f"ALTER TABLE {q(table)} ADD CONSTRAINT {q(fk)} FOREIGN KEY ({q(column)}) "
-                                                              f"REFERENCES {q(to_table)} ({q(to_column)})"
-                                                              + (" DEFERRABLE INITIALLY DEFERRED" if self.backend == "postgres" else "")})
-                        indexed = field.get("db_index", True) and not field.get("primary_key") and not (kind == "OneToOneField" or field.get("unique"))
-                        if indexed and self.backend != "mysql":  # MySQL indexes a foreign key by itself
-                            deferred.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], ''))} ON {q(table)} ({q(column)})"})
-                        parts.append(part)
-                        continue
-                    column = field.get("db_column") or name
-                    columns[name] = column
-                    if kind == "GeneratedField":
-                        output = self._column_type(field["output"])
-                        expression = field["expression"]
-                        if self.backend == "sqlite" and field["output"]["kind"] == "DecimalField":  # SQLite's cast of a decimal
-                            expression = f"(CAST({expression} AS NUMERIC))"
-                        parts.append(f"{q(column)} {output} GENERATED ALWAYS AS ({expression})" + (" STORED" if field.get("db_persist") else " VIRTUAL"))
-                        continue
-                    typ = self._column_type(field)
-                    if kind in _AUTO:
-                        if self.backend == "sqlite":
-                            parts.append(f"{q(column)} integer NOT NULL PRIMARY KEY AUTOINCREMENT")
-                        else:
-                            parts.append(f"{q(column)} {typ} NOT NULL PRIMARY KEY {_AUTO_SUFFIX[self.backend]}")
-                        continue
-                    part = f"{q(column)} {typ}"
-                    if field.get("db_default") is not None:
-                        part += f" DEFAULT ({self._db_default(field)})"
-                    part += " NULL" if field.get("null") else " NOT NULL"
-                    if field.get("primary_key"):
-                        part += " PRIMARY KEY"
-                    elif field.get("unique"):
-                        part += " UNIQUE"
-                    if kind in _POSITIVE and self.backend != "mysql":
-                        part += f' CHECK ("{column}" >= 0)'
-                    if field.get("db_comment") and self.backend == "mysql":
-                        part += " COMMENT '" + str(field["db_comment"]).replace("'", "''") + "'"
-                    parts.append(part)
-                    if self.backend == "postgres" and (field.get("unique") or field.get("db_index") or field.get("primary_key")) \
-                            and (typ == "text" or typ.startswith("varchar")):
-                        ops = "varchar_pattern_ops" if typ.startswith("varchar") else "text_pattern_ops"
-                        deferred.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], '_like'))} ON {q(table)} ({q(column)} {ops})"})
-                    if field.get("db_index") and not field.get("unique") and not field.get("primary_key"):
-                        deferred.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], ''))} ON {q(table)} ({q(column)})"})
-                    if field.get("db_comment") and self.backend == "postgres":
-                        deferred.append({**where, "text": f"COMMENT ON COLUMN {q(table)}.{q(column)} IS '" + str(field["db_comment"]).replace("'", "''") + "'"})
-                except Unresolved as problem:
-                    self.note(where["file"], where["line"], f"{model['name']}.{name}: {problem.what}")
-            if composite:
-                parts.append(f"PRIMARY KEY ({', '.join(q(columns.get(c, c)) for c in composite)})")
-            for constraint in options.get("constraints", []):
-                if constraint["kind"] == "check":
-                    check = constraint["check"]
-                    if self.backend == "sqlite":  # SQLite gets a decimal's value as a string
-                        for name, field in model["fields"]:
-                            if field["kind"] == "DecimalField":
-                                column = columns.get(name, name)
-                                check = re.sub(rf'("{re.escape(column)}" (?:>=|<=|>|<|=) )(-?\d+(?:\.\d+)?)\b', r"\1'\2'", check)
-                    parts.append(f"CONSTRAINT {q(constraint['name'])} CHECK ({check})")
-                elif not constraint.get("condition"):
-                    cols = [columns.get(f, f) for f in constraint["fields"]]
-                    parts.append(f"CONSTRAINT {q(constraint['name'])} UNIQUE ({', '.join(q(c) for c in cols)})")
-                else:
-                    cols = [columns.get(f, f) for f in constraint["fields"]]
-                    deferred.append({**place, "text": f"CREATE UNIQUE INDEX {q(constraint['name'])} ON {q(table)} ({', '.join(q(c) for c in cols)}) WHERE {constraint['condition']}"})
-            create = f"CREATE TABLE {q(table)} ({', '.join(parts)})"
-            if options.get("db_table_comment") and self.backend == "mysql":
-                create += " COMMENT = '" + str(options["db_table_comment"]).replace("'", "''") + "'"
-            statements.append({**place, "text": create})
-            if options.get("db_table_comment") and self.backend == "postgres":
-                statements.append({**place, "text": f"COMMENT ON TABLE {q(table)} IS '" + str(options["db_table_comment"]).replace("'", "''") + "'"})
-            for together in options.get("unique_together", []):
-                cols = [columns.get(f, f) for f in together]
-                name = index_name(table, cols, "_uniq", 64 if self.backend == "mysql" else 63)
-                text = f"CREATE UNIQUE INDEX {q(name)} ON {q(table)} ({', '.join(q(c) for c in cols)})" if self.backend == "sqlite" \
-                    else f"ALTER TABLE {q(table)} ADD CONSTRAINT {q(name)} UNIQUE ({', '.join(q(c) for c in cols)})"
-                deferred.append({**place, "text": text})
-            for index in options.get("indexes", []):
-                cols = [columns.get(f.lstrip("-"), f.lstrip("-")) for f in index["fields"]]
-                deferred.append({**place, "text": f"CREATE INDEX {q(index['name'])} ON {q(table)} ({', '.join(q(c) for c in cols)})"
-                                                  + (f" WHERE {index['condition']}" if index["condition"] else "")})
+            created, later, expected = self._model_ddl(model)
+            statements += created
+            deferred += later
+            expects += expected
         return statements + deferred + self.raw, expects
+
+    def _field_ddl(self, model: dict, table: str, name: str, field: dict, columns: dict[str, str]) -> tuple[str | None, list[dict]]:
+        """A field's column as its table's definition writes it (None for a field with no column of its
+        own: a many-to-many, a composite key), and the statements that follow it (its key, its indexes,
+        its comment; a many-to-many's table). `columns` gets its column's name."""
+        q = self._quote
+        kind = field["kind"]
+        where = {"file": field.get("file") or model["file"], "line": field.get("line", model["line"])}
+        later: list[dict] = []
+        if kind == "CompositePrimaryKey":
+            return None, later
+        if kind == "ManyToManyField":
+            return None, self._many_to_many(model, table, name, field, where)
+        if kind in ("ForeignKey", "OneToOneField"):
+            to_table, to_column, to_kind = self.target(field["to"])
+            column = field.get("db_column") or f"{name}_id"
+            columns[name] = column
+            typ = self._column_type({"kind": _RELATED.get(to_kind, to_kind)})
+            part = f"{q(column)} {typ} {'NULL' if field.get('null') else 'NOT NULL'}"
+            if field.get("primary_key"):
+                part += " PRIMARY KEY"
+            elif kind == "OneToOneField" or field.get("unique"):
+                part += " UNIQUE"
+            if self.backend == "sqlite":
+                part += f" REFERENCES {q(to_table)} ({q(to_column)}) DEFERRABLE INITIALLY DEFERRED"
+            else:
+                fk = index_name(table, [column], f"_fk_{to_table}_{to_column}", 64 if self.backend == "mysql" else 63)
+                later.append({**where, "text": f"ALTER TABLE {q(table)} ADD CONSTRAINT {q(fk)} FOREIGN KEY ({q(column)}) "
+                                               f"REFERENCES {q(to_table)} ({q(to_column)})"
+                                               + (" DEFERRABLE INITIALLY DEFERRED" if self.backend == "postgres" else "")})
+            indexed = field.get("db_index", True) and not field.get("primary_key") and not (kind == "OneToOneField" or field.get("unique"))
+            if indexed and self.backend != "mysql":  # MySQL indexes a foreign key by itself
+                later.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], ''))} ON {q(table)} ({q(column)})"})
+            return part, later
+        column = field.get("db_column") or name
+        columns[name] = column
+        if kind == "GeneratedField":
+            output = self._column_type(field["output"])
+            expression = field["expression"]
+            if self.backend == "sqlite" and field["output"]["kind"] == "DecimalField":  # SQLite's cast of a decimal
+                expression = f"(CAST({expression} AS NUMERIC))"
+            return f"{q(column)} {output} GENERATED ALWAYS AS ({expression})" + (" STORED" if field.get("db_persist") else " VIRTUAL"), later
+        typ = self._column_type(field)
+        if kind in _AUTO:
+            if self.backend == "sqlite":
+                return f"{q(column)} integer NOT NULL PRIMARY KEY AUTOINCREMENT", later
+            return f"{q(column)} {typ} NOT NULL PRIMARY KEY {_AUTO_SUFFIX[self.backend]}", later
+        part = f"{q(column)} {typ}"
+        if field.get("db_default") is not None:
+            part += f" DEFAULT ({self._db_default(field)})"
+        part += " NULL" if field.get("null") else " NOT NULL"
+        if field.get("primary_key"):
+            part += " PRIMARY KEY"
+        elif field.get("unique"):
+            part += " UNIQUE"
+        if kind in _POSITIVE and self.backend != "mysql":
+            part += f' CHECK ("{column}" >= 0)'
+        if field.get("db_comment") and self.backend == "mysql":
+            part += " COMMENT '" + str(field["db_comment"]).replace("'", "''") + "'"
+        if self.backend == "postgres" and (field.get("unique") or field.get("db_index") or field.get("primary_key")) \
+                and (typ == "text" or typ.startswith("varchar")):
+            ops = "varchar_pattern_ops" if typ.startswith("varchar") else "text_pattern_ops"
+            later.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], '_like'))} ON {q(table)} ({q(column)} {ops})"})
+        if field.get("db_index") and not field.get("unique") and not field.get("primary_key"):
+            later.append({**where, "text": f"CREATE INDEX {q(index_name(table, [column], ''))} ON {q(table)} ({q(column)})"})
+        if field.get("db_comment") and self.backend == "postgres":
+            later.append({**where, "text": f"COMMENT ON COLUMN {q(table)}.{q(column)} IS '" + str(field["db_comment"]).replace("'", "''") + "'"})
+        return part, later
+
+    def _columns(self, model: dict) -> dict[str, str]:
+        """Each field of a model with a column of its own, and that column's name."""
+        return {n: f.get("db_column") or (f"{n}_id" if f["kind"] in ("ForeignKey", "OneToOneField") else n)
+                for n, f in model["fields"] if f["kind"] not in ("ManyToManyField", "CompositePrimaryKey")}
+
+    def _constraint_ddl(self, model: dict, table: str, constraint: dict, inline: bool) -> tuple[str | None, list[dict]]:
+        """A constraint of a model: inside its CREATE TABLE (`inline`) or added to the table later."""
+        q, columns = self._quote, self._columns(model)
+        place = {"file": constraint.get("file") or model["file"], "line": constraint.get("line") or model["line"]}
+        if constraint["kind"] == "check":
+            check = constraint["check"]
+            if self.backend == "sqlite":  # SQLite gets a decimal's value as a string
+                for name, field in model["fields"]:
+                    if field["kind"] == "DecimalField":
+                        column = columns.get(name, name)
+                        check = re.sub(rf'("{re.escape(column)}" (?:>=|<=|>|<|=) )(-?\d+(?:\.\d+)?)\b', r"\1'\2'", check)
+            text = f"CONSTRAINT {q(constraint['name'])} CHECK ({check})"
+        elif not constraint.get("condition"):
+            cols = [columns.get(f, f) for f in constraint["fields"]]
+            text = f"CONSTRAINT {q(constraint['name'])} UNIQUE ({', '.join(q(c) for c in cols)})"
+        else:
+            cols = [columns.get(f, f) for f in constraint["fields"]]
+            return None, [{**place, "text": f"CREATE UNIQUE INDEX {q(constraint['name'])} ON {q(table)} ({', '.join(q(c) for c in cols)}) "
+                                            f"WHERE {constraint['condition']}"}]
+        return (text, []) if inline else (None, [{**place, "text": f"ALTER TABLE {q(table)} ADD {text}"}])
+
+    def _together_ddl(self, model: dict, table: str, together: list[str], place: dict) -> dict:
+        q, columns = self._quote, self._columns(model)
+        cols = [columns.get(f, f) for f in together]
+        name = index_name(table, cols, "_uniq", 64 if self.backend == "mysql" else 63)
+        text = f"CREATE UNIQUE INDEX {q(name)} ON {q(table)} ({', '.join(q(c) for c in cols)})" if self.backend == "sqlite" \
+            else f"ALTER TABLE {q(table)} ADD CONSTRAINT {q(name)} UNIQUE ({', '.join(q(c) for c in cols)})"
+        return {**place, "text": text}
+
+    def _index_ddl(self, model: dict, table: str, index: dict, place: dict) -> dict:
+        q, columns = self._quote, self._columns(model)
+        cols = [columns.get(f.lstrip("-"), f.lstrip("-")) for f in index["fields"]]
+        return {**place, "text": f"CREATE INDEX {q(index['name'])} ON {q(table)} ({', '.join(q(c) for c in cols)})"
+                                 + (f" WHERE {index['condition']}" if index["condition"] else "")}
+
+    def _model_ddl(self, model: dict) -> tuple[list[dict], list[dict], list[dict]]:
+        """A model's table: its CREATE TABLE (and table comment), the statements that follow it (keys,
+        indexes, unique groups, many-to-many tables), and itself when it is expected but not created."""
+        q, options = self._quote, model["options"]
+        if options.get("abstract") or options.get("proxy"):
+            return [], [], []
+        table = self._table(model)
+        place = {"file": model["file"], "line": model["line"]}
+        if options.get("managed") is False:
+            return [], [], [{"table": table, **place}]
+        parts, columns, deferred = [], {}, []
+        composite = next((f["fields"] for _, f in model["fields"] if f["kind"] == "CompositePrimaryKey"), None)
+        for name, field in model["fields"]:
+            try:
+                part, later = self._field_ddl(model, table, name, field, columns)
+            except Unresolved as problem:
+                self.note(field.get("file") or model["file"], field.get("line", model["line"]), f"{model['name']}.{name}: {problem.what}")
+                continue
+            if part:
+                parts.append(part)
+            deferred += later
+        if composite:
+            parts.append(f"PRIMARY KEY ({', '.join(q(columns.get(c, c)) for c in composite)})")
+        for constraint in options.get("constraints", []):
+            part, later = self._constraint_ddl(model, table, constraint, inline=True)
+            if part:
+                parts.append(part)
+            deferred += later
+        create = f"CREATE TABLE {q(table)} ({', '.join(parts)})"
+        if options.get("db_table_comment") and self.backend == "mysql":
+            create += " COMMENT = '" + str(options["db_table_comment"]).replace("'", "''") + "'"
+        statements = [{**place, "text": create}]
+        if options.get("db_table_comment") and self.backend == "postgres":
+            statements.append({**place, "text": f"COMMENT ON TABLE {q(table)} IS '" + str(options["db_table_comment"]).replace("'", "''") + "'"})
+        for together in options.get("unique_together", []):
+            deferred.append(self._together_ddl(model, table, together, place))
+        for index in options.get("indexes", []):
+            deferred.append(self._index_ddl(model, table, index, place))
+        return statements, deferred, []
 
     def _db_default(self, field: dict) -> str:
         node = field["db_default"]

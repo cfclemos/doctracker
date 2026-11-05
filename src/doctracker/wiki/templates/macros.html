@@ -77,7 +77,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false) -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false, diff="") -%}
 {# The side panel: the page's own (the planner's), or, with `details`, the one static/graph.js fills with
    the box clicked and what it relates to. #}
 {% set panel = panel or (('<div class="graph-details"><p class="empty">Click a box to see what it is and what it relates to.</p></div>') | safe if details else "") %}
@@ -89,10 +89,12 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     <input class="graph-find" type="search" placeholder="Highlight…" autocomplete="off">
     {# What opens around the drawing, closed at first: the rows under the bar (the page's filters, then the
        evolution) and the details panel beside it. #}
-    {% if filters or evolution or panel %}
+    {% if filters or evolution or panel or diff %}
     <span class="graph-buttons">
       {% if filters %}<button type="button" class="graph-icon graph-row-toggle" data-row="filters" aria-pressed="false" aria-label="Filters"
               data-tip="Filters"><i class="bar-icon bar-icon-filters"></i></button>{% endif %}
+      {% if diff %}<button type="button" class="graph-icon graph-row-toggle" data-row="diff" aria-pressed="false" aria-label="Diff"
+              data-tip="Diff: compare the schema at two moments"><i class="bar-icon bar-icon-diff"></i></button>{% endif %}
       {% if evolution %}<button type="button" class="graph-icon graph-row-toggle" data-row="evolution" aria-pressed="false"
               aria-label="Architecture evolution" data-tip="Architecture evolution"><i class="bar-icon bar-icon-timeline"></i></button>{% endif %}
       {% if panel %}<button type="button" class="graph-icon graph-panel-toggle" aria-expanded="false" aria-label="Details"
@@ -147,6 +149,9 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   </div>
   {% if filters %}
   <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}>{{ filters }}</div>
+  {% endif %}
+  {% if diff %}
+  <div class="graph-filters-row closed" data-row-of="diff">{{ diff }}</div>
   {% endif %}
   {% if evolution %}
   {# Architecture evolution: a slider through the commits; each file appears at the commit that added it
@@ -388,4 +393,58 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     {% endfor %}
     <p class="hint">Click: go into it · double click, or Details › on hover: its details · the path above or ←: back · drag: the others follow</p>
   {% endcall %}
+{%- endmacro %}
+
+{# DATABASE › Evolution: a moment clicked, in the drawing's Details panel — a step and what each of its
+   statements did, or a commit and the files it changed. #}
+{% macro evolution_moment(moment, detail) -%}
+{% if not moment %}<p class="empty">This moment is no longer there.</p>{% else %}
+<p class="graph-info-role">{{ "migration step" if moment.source == "migration" else "commit" }}{% if moment.changed %} · <span class="evo-flag">step changed after it was created</span>{% endif %}</p>
+<h3 class="graph-details-name">{{ (moment.version ~ " " ~ moment.title) if moment.source == "migration" else moment.title }}</h3>
+<p><a {{ nav("origin:" ~ moment.origin) }}><code>{{ moment.origin }}</code></a></p>
+{% if moment.commit %}<p>Commit <code>{{ moment.commit.short }}</code> · {{ moment.commit.at | local_time }}<br>{{ moment.commit.subject }}</p>
+{% else %}<p>Not committed yet.</p>{% endif %}
+{% if moment.changed %}<h4>Steps it changed</h4><ul>{% for v in moment.changed %}<li><code>{{ v }}</code></li>{% endfor %}</ul>{% endif %}
+{% if detail and detail.statements is defined %}
+<h4>What it does <span class="count">{{ detail.statements | length }}</span></h4>
+<ul>{% for s in detail.statements %}<li>{% if s.read %}{{ s.effects | join("; ") or "nothing to record" }}{% else %}<em>not read</em>{% endif %} <span class="muted">line {{ s.line }}</span></li>{% else %}<li class="muted">no statement</li>{% endfor %}</ul>
+{% elif moment.files %}<h4>Files <span class="count">{{ moment.files | length }}</span></h4>
+<ul>{% for path, status in moment.files.items() %}<li><code>{{ path }}</code> <span class="muted">{{ {"A": "added", "M": "changed", "D": "deleted"}.get(status, status) }}</span></li>{% endfor %}</ul>{% endif %}
+{% endif %}
+{%- endmacro %}
+
+{# DATABASE › Evolution: the diff of two moments, side by side (both schemas, aligned by name) or only what
+   differs (as the Drift's differences). #}
+{% macro evolution_diff(diff, a, b, view, labels) -%}
+{% if not a or not b %}<p class="empty">Choose the moments A and B (in the fields, or by clicking two moments in the drawing).</p>
+{% elif not diff %}<p class="empty">One of the moments cannot be read (its commit or step is no longer there).</p>
+{% else %}
+{% set c = diff.counts %}
+<p class="summary"><strong>A</strong> {{ labels.get(a, a) }} <code>{{ a.rpartition("@")[0] }}</code> → <strong>B</strong> {{ labels.get(b, b) }} <code>{{ b.rpartition("@")[0] }}</code> ·
+  {{ c.added }} added · {{ c.removed }} removed · {{ c.changed }} changed · {{ c.same }} the same</p>
+{% if view == "side" %}
+<table class="evo-side">
+  <thead><tr><th>Object</th><th>Column</th><th>A</th><th>B</th><th>What changed</th></tr></thead>
+  <tbody>{% for t in diff.tables %}
+    <tr class="evo-table evo-{{ t.status }}"><td colspan="2"><code>{{ t.key }}</code> <span class="muted">{{ t.kind }}</span></td>
+      <td>{% if t.a %}<a {{ nav(t.a) }}>page</a>{% else %}-{% endif %}</td><td>{% if t.b %}<a {{ nav(t.b) }}>page</a>{% else %}-{% endif %}</td>
+      <td>{{ t.changes | join("; ") if t.changes else ("-" if t.status in ("same", "changed") else t.status) }}</td></tr>
+    {% for col in t.columns %}<tr class="evo-column evo-{{ col.status }}"><td></td><td><code>{{ col.name }}</code></td>
+      <td>{% if col.a %}<code>{{ col.a.type or "-" }}</code>{% if not col.a.nullable %} not null{% endif %}{% if col.a.default %} = <code>{{ col.a.default }}</code>{% endif %}{% else %}-{% endif %}</td>
+      <td>{% if col.b %}<code>{{ col.b.type or "-" }}</code>{% if not col.b.nullable %} not null{% endif %}{% if col.b.default %} = <code>{{ col.b.default }}</code>{% endif %}{% else %}-{% endif %}</td>
+      <td>{{ col.changes | join("; ") if col.changes else (col.status if col.status != "same" else "-") }}</td></tr>{% endfor %}
+  {% endfor %}</tbody>
+</table>
+{% else %}
+{% set differing = diff.tables | rejectattr("status", "equalto", "same") | list %}
+{% if not differing %}<p class="summary">No differences: the two moments have the same schema.</p>{% endif %}
+{% for t in differing %}
+<h3 class="block-subtitle"><span class="evo-badge evo-{{ t.status }}">{{ t.status }}</span> {% if t.b or t.a %}<a {{ nav(t.b or t.a) }}><code>{{ t.key }}</code></a>{% else %}<code>{{ t.key }}</code>{% endif %}</h3>
+{% if t.status == "changed" %}<ul class="db-list">
+  {% for col in t.columns if col.status != "same" %}<li>column <code>{{ col.name }}</code> {{ col.status }}{% if col.changes %}: {{ col.changes | join("; ") }}{% endif %}</li>{% endfor %}
+  {% for change in t.changes %}<li>{{ change }}</li>{% endfor %}
+</ul>{% endif %}
+{% endfor %}
+{% endif %}
+{% endif %}
 {%- endmacro %}

@@ -965,7 +965,10 @@ const filterTicks = new WeakMap();  // the values ticked in each box as it opene
 function applyFilterBox(box) {
   if (!box) return;
   filterTicks.delete(box);  // what it holds now is what applies
-  if (box.matches(".objects-crumb")) {  // a part of the path: the parts below it were chosen under it
+  if (box.matches(".evo-origins")) {  // DATABASE › Evolution: the lanes shown, drawn again (graph.js)
+    box.open = false;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+  } else if (box.matches(".objects-crumb")) {  // a part of the path: the parts below it were chosen under it
     const parts = [...box.closest(".objects-path").querySelectorAll(".objects-crumb")];
     for (const below of parts.slice(parts.indexOf(box) + 1)) below.querySelectorAll("input[type=checkbox]").forEach((input) => { input.checked = false; });
     box.open = false;
