@@ -27,6 +27,18 @@ function infoHead(role, title, path = "") {
 
 // The legend of a drawing (its items in a template of the page) goes into its box once, with the info
 // panel's head.
+// Pressing the mouse in a drawing starts a drag of the drawing, never one of the browser's own: no text
+// selection, no dragging of a link, of the text already selected or of a line (any of them takes the mouse
+// away from the drawing until a click elsewhere, Shift + click, gives it back).
+function holdMouse(element, signal) {
+  element.addEventListener("mousedown", (event) => {
+    if (event.button !== 0 || event.target.closest("button, input, select, textarea, label")) return;
+    window.getSelection()?.removeAllRanges();
+    event.preventDefault();
+  }, { signal });
+  element.addEventListener("dragstart", (event) => event.preventDefault(), { signal });
+}
+
 function fillLegend(canvas) {
   const legendBox = canvas.closest(".graph-area").querySelector(".graph-legend-box");
   const legendItems = canvas.closest(".graph-area").querySelector("template.graph-legend-items");
@@ -61,6 +73,17 @@ const DIAGRAM_MARKERS = `<defs>
     <path d="M1 1 L11 6 L1 11 Z" class="dep-marker"/></marker>
   <marker id="arch-arrow-cycle" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" orient="auto" markerUnits="userSpaceOnUse">
     <path d="M1 1 L11 6 L1 11 Z" class="arch-marker-cycle"/></marker>
+  <marker id="er-one" viewBox="0 0 24 16" refX="24" refY="8" markerWidth="24" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+    <path d="M13 2 V14 M18 2 V14" class="er-marker"/></marker>
+  <marker id="er-zero-one" viewBox="0 0 24 16" refX="24" refY="8" markerWidth="24" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+    <circle cx="9" cy="8" r="4" class="er-marker er-marker-circle"/><path d="M18 2 V14" class="er-marker"/></marker>
+  <marker id="er-zero-many" viewBox="0 0 24 16" refX="24" refY="8" markerWidth="24" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+    <circle cx="6" cy="8" r="4" class="er-marker er-marker-circle"/><path d="M13 8 L24 1 M13 8 L24 15 M13 8 H24" class="er-marker"/></marker>
+  ${[["one", "1"], ["zero-one", "0..1"], ["zero-many", "*"]].map(([end, text]) => `
+  <marker id="er-uml-${end}-l" viewBox="-40 -16 40 20" refX="0" refY="0" markerWidth="40" markerHeight="20" orient="0" markerUnits="userSpaceOnUse">
+    <text x="-5" y="-4" text-anchor="end" class="er-multiplicity">${text}</text></marker>
+  <marker id="er-uml-${end}-r" viewBox="0 -16 40 20" refX="0" refY="0" markerWidth="40" markerHeight="20" orient="0" markerUnits="userSpaceOnUse">
+    <text x="5" y="-4" class="er-multiplicity">${text}</text></marker>`).join("")}
 </defs>`;
 
 // --- CLASSES: a dark header with the class name, one row per attribute with an icon for its type,
@@ -648,6 +671,134 @@ function plannerFrame(node) {
       ${add}</div></div>`;
 }
 
+// --- ER (DATABASE › Diagram): each table and view a box with one row per column (its name, its type as
+// the database keeps it, its marks with the Universe's symbols), inside the levels of the DATABASES tree.
+// A key's line goes from the column's row to the row of the column it refers to, its ends telling how
+// many rows each side may have: crow's foot symbols or UML multiplicities, as chosen on the bar. Which
+// columns show is chosen by kind in the filters; both choices are kept for the browser.
+const ER_COLUMNS_KEY = "doctracker-er-columns";
+const ER_NOTATION_KEY = "doctracker-er-notation";
+const ER_KINDS = ["pk", "fk", "unique", "index", "generated", "other"];
+
+function erColumnKinds() {
+  try { return new Set(JSON.parse(localStorage.getItem(ER_COLUMNS_KEY)) || ER_KINDS); } catch { return new Set(ER_KINDS); }
+}
+
+function erNotation() {
+  try { return localStorage.getItem(ER_NOTATION_KEY) === "uml" ? "uml" : "crow"; } catch { return "crow"; }
+}
+
+// A column shows when it is of any kind chosen; "other" stands for the columns of none.
+function erShown(column, kinds) {
+  const own = ER_KINDS.filter((kind) => kind !== "other" && (column.marks || []).includes(kind));
+  return (own.length ? own : ["other"]).some((kind) => kinds.has(kind));
+}
+
+function erMarks(column) {
+  return universeMarks(column.marks).map((mark) => `<svg class="er-mark er-mark-${mark}" viewBox="0 0 24 24" aria-label="${UNIVERSE_SYMBOLS[mark][1]}">
+    <title>${UNIVERSE_SYMBOLS[mark][1]}</title>${UNIVERSE_SYMBOLS[mark][0].replace(/#000/g, "currentColor")}</svg>`).join("");
+}
+
+function erBox(node) {
+  const kinds = erColumnKinds();
+  const shown = node.columns.filter((column) => erShown(column, kinds));
+  const rows = shown.map((column) => `
+    <div class="uml-row er-row" data-row="${escapeHtml(column.name)}" data-column="${escapeHtml(column.name)}" data-page="${escapeHtml(column.path)}"
+         title="${escapeHtml(`${column.name}: ${column.type || "?"}${column.comment ? ` — ${column.comment}` : ""}`)}">
+      <span class="er-marks">${erMarks(column)}</span><span class="uml-name">${escapeHtml(column.name)}</span>
+      <span class="uml-kind">${escapeHtml(column.type)}</span></div>`).join("");
+  const left = node.columns.length - shown.length;
+  const kind = node.role === "table" ? "" : `<span class="uml-stereotype">${escapeHtml(node.role.replace("-", " "))}</span>`;
+  return `<div class="uml-box er-box er-${escapeHtml(node.role)}" data-box="${escapeHtml(node.id)}" data-page="${escapeHtml(node.page)}">
+    <div class="uml-head" title="${escapeHtml(node.summary || node.id)}"><i class="arch-icon arch-icon-${escapeHtml(node.role)}"></i>
+      <strong>${escapeHtml(node.label)}</strong>${kind}</div>
+    ${rows || left ? `<div class="uml-section">${rows}${left ? `<div class="uml-row er-more">${left} more column${left > 1 ? "s" : ""}</div>` : ""}</div>` : ""}
+  </div>`;
+}
+
+// Laid out as the architecture is, level by level, the table referred to above the one referring to it.
+function erLayout(boxes, data, aspect, heads) {
+  archLayout(boxes, { ...data, edges: data.edges.map((edge) => ({ ...edge, source: edge.target, target: edge.source })) }, aspect, heads);
+}
+
+// From the side of the referring column's row to the side of the referred column's row (a box's title
+// when the row is not shown); a table referring to itself, a loop on its right. Remembers on the edge
+// which side each end meets its box, for the UML multiplicities.
+function erPath(edge, boxes) {
+  const from = boxes[edge.source], to = boxes[edge.target];
+  if (!from || !to) return "";
+  const y1 = from.y + (from.rows?.[edge.via] ?? from.headCenter), y2 = to.y + (to.rows?.[edge.to] ?? to.headCenter);
+  if (edge.source === edge.target) {
+    const x = from.x + from.width, reach = 50;
+    edge.sides = ["right", "right"];
+    return `M ${x} ${y1} C ${x + reach} ${y1}, ${x + reach} ${y2}, ${x} ${y2}`;
+  }
+  const apart = from.x + from.width < to.x || to.x + to.width < from.x;
+  const right = !apart || to.x + to.width / 2 > from.x + from.width / 2;
+  const x1 = right ? from.x + from.width : from.x;
+  const x2 = apart ? (right ? to.x : to.x + to.width) : to.x + to.width;
+  edge.sides = [right ? "right" : "left", apart ? (right ? "left" : "right") : "right"];
+  const reach = Math.max(40, Math.abs(x2 - x1) / 2);
+  const c1 = x1 + (right ? reach : -reach);
+  const c2 = apart ? x2 + (right ? -reach : reach) : x2 + reach;
+  return `M ${x1} ${y1} C ${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`;
+}
+
+// The ends of a key's line, once it is drawn: crow's foot symbols (turned with the line), or the UML
+// multiplicities beside the end, on the side away from the box. Other relations end in an arrow.
+function erLineEnds(element, edge) {
+  if (!edge.source_end || edge.lifted) {
+    element.setAttribute("marker-end", "url(#uml-arrow)");
+    element.removeAttribute("marker-start");
+    return;
+  }
+  if (erNotation() === "crow") {
+    element.setAttribute("marker-start", `url(#er-${edge.source_end})`);
+    element.setAttribute("marker-end", `url(#er-${edge.target_end})`);
+    return;
+  }
+  const [start, end] = edge.sides || ["right", "left"];
+  element.setAttribute("marker-start", `url(#er-uml-${edge.source_end}-${start === "right" ? "r" : "l"})`);
+  element.setAttribute("marker-end", `url(#er-uml-${edge.target_end}-${end === "right" ? "r" : "l"})`);
+}
+
+// The bar's Notation and the filters' Columns: kept for the browser, the drawing made again in place.
+function erBar(page, redraw, signal) {
+  for (const button of page.querySelectorAll(".graph-notation")) {
+    button.setAttribute("aria-checked", String(button.dataset.notation === erNotation()));
+    button.addEventListener("click", () => {
+      try { localStorage.setItem(ER_NOTATION_KEY, button.dataset.notation); } catch {}
+      redraw();
+    }, { signal });
+  }
+  const kinds = erColumnKinds();
+  for (const box of page.querySelectorAll(".er-columns input")) {
+    box.checked = kinds.has(box.value);
+    box.addEventListener("change", () => {
+      const chosen = [...page.querySelectorAll(".er-columns input")].filter((input) => input.checked).map((input) => input.value);
+      try { localStorage.setItem(ER_COLUMNS_KEY, JSON.stringify(chosen)); } catch {}
+      redraw();
+    }, { signal });
+  }
+}
+
+// A column clicked, in the Details panel: what it is and the keys it is an end of.
+function erColumnInfo(node, name, edges, nodes) {
+  const column = node.columns?.find((item) => item.name === name);
+  if (!column) return "";
+  const label = (id) => nodes.find((item) => item.id === id)?.label || id;
+  const keys = edges.filter((edge) => edge.via && ((edge.source === node.id && edge.columns?.includes(name))
+    || (edge.target === node.id && edge.target_columns?.includes(name))));
+  const marks = universeMarks(column.marks).map((mark) => UNIVERSE_SYMBOLS[mark][1]);
+  return `<p class="graph-info-role">column of ${escapeHtml(node.label)}</p>
+    <h3 class="graph-details-name">${escapeHtml(column.name)}</h3>
+    <code class="path">${escapeHtml(column.path)}</code>
+    <p><code>${escapeHtml(column.type || "?")}</code> · ${escapeHtml(marks.join(", "))}</p>
+    ${column.comment ? `<p>${escapeHtml(column.comment)}</p>` : ""}
+    ${keys.length ? `<h4>Keys <span class="count">${keys.length}</span></h4><ul>${keys.map((edge) => `<li>${escapeHtml(edge.kind.replace("-", " "))}
+      ${edge.source === node.id ? "→" : "←"} <button type="button" class="graph-details-show" data-show="${escapeHtml(edge.source === node.id ? edge.target : edge.source)}">${escapeHtml(label(edge.source === node.id ? edge.target : edge.source))}</button></li>`).join("")}</ul>` : ""}`;
+}
+
 const DIAGRAMS = {
   calls: { box: callBox, layout: callLayout, path: linkPath, markers: () => 'marker-end="url(#arch-arrow)"', layouts: true, fromFocus: true,
     info: true, empty: "Nothing calls it and it calls nothing." },
@@ -659,6 +810,8 @@ const DIAGRAMS = {
   planner: { box: plannerBox, frame: plannerFrame, layout: plannerLayout, prepare: plannerLanes, path: plannerPath,
     dragOuterFrames: true, openTarget: "#planner-detail", edgeReasons: true, fitWidth: true,
     markers: () => 'marker-end="url(#dep-arrow)"', empty: "No plans yet: create one with New plan." },
+  er: { box: erBox, frame: archFrame, layout: erLayout, path: erPath, markers: () => "", lineEnds: erLineEnds, bar: erBar,
+    columnInfo: erColumnInfo, layouts: true, info: true, levels: "er", empty: "No table here." },
 };
 DIAGRAMS.local = { ...DIAGRAMS.calls, empty: "It has no relations with the rest of the project." };  // an entity's page
 
@@ -904,6 +1057,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     for (const line of lines) {
       line.element.setAttribute("d", path(line.edge, ends));
       line.hit?.setAttribute("d", line.element.getAttribute("d"));
+      view.lineEnds?.(line.element, line.edge);  // ends that depend on where the line went (the ER diagram's)
     }
   };
   drawLines();
@@ -995,6 +1149,8 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     }
   };
   let drag = null;  // what is being dragged: some boxes, or the background (moving is empty)
+  holdMouse(canvas, signal);
+  canvas.addEventListener("pointercancel", () => { drag = null; }, { signal });  // the browser took the mouse: nothing held
   canvas.addEventListener("pointerdown", (event) => {
     if (event.target.closest("button, input, select, textarea, label, a")) return;  // a control, not a drag
     const boxElement = event.target.closest("[data-box]");
@@ -1155,7 +1311,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   // name there shows that item in the panel too (and lights it in the drawing).
   const info = view.info && canvas.closest(".graph-area").querySelector(".graph-details");
   const pageButton = canvas.closest(".graph-area").querySelector(".graph-panel-page");  // in the panel's head
-  const showInfo = (id) => {
+  const showInfo = (id, column = "") => {
     if (!info) return;
     const node = data.nodes.find((item) => item.id === id);
     if (pageButton) {
@@ -1164,6 +1320,14 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     }
     if (!node) {
       info.innerHTML = '<p class="empty">Click a box to see what it is and what it relates to.</p>';
+      return;
+    }
+    const columnText = column && view.columnInfo?.(node, column, data.edges, data.nodes);  // a row of the box (an ER column)
+    if (columnText) {
+      if (pageButton) pageButton.dataset.pageModal = node.columns.find((item) => item.name === column).path;
+      info.innerHTML = columnText;
+      htmx.process(info);
+      openSidePanel(canvas.closest(".graph-area"));
       return;
     }
     const relations = {};
@@ -1208,7 +1372,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     const box = event.target.closest("[data-box]");
     chosen = box ? box.dataset.box : "";
     highlight(chosen);
-    showInfo(chosen);
+    showInfo(chosen, event.target.closest("[data-column]")?.dataset.column || "");
     const open = event.target.closest("[data-open]")?.dataset.open;  // e.g. the planner's details panel
     if (open && view.openTarget) {
       htmx.ajax("GET", open, { target: view.openTarget });
@@ -1343,6 +1507,8 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     range.addEventListener("input", follow, { signal });
     for (const name of ["pointerup", "pointercancel", "change", "blur"]) range.addEventListener(name, release, { signal });
   }
+  // The view's own controls on the bar and in its filters (the ER diagram's Notation and Columns).
+  view.bar?.(page, () => drawDiagram(canvas, view, canvas.viewState?.(), whole), signal);
   // Rearrange: arrange again what is on screen (the same open levels and layout), undoing what was moved.
   page.querySelector(".graph-rearrange")?.addEventListener("click", () => drawDiagram(canvas, view, null, whole), { signal });
   // The Layout switch (Layers / Forces) draws the diagram again in place.
@@ -1429,6 +1595,7 @@ class UniverseCanvas {
       return prevented;
     };
     let panning = null, downAt = null;
+    holdMouse(this.element, signal);
     this.element.addEventListener("mousedown", (e) => {
       downAt = at(e);
       if (!captured("mousedown", e)) panning = { ...downAt, camera: { ...this.camera } };

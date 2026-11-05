@@ -238,6 +238,21 @@ class CatalogStore:
         with self._connect() as connection:
             return [_object(row) for row in connection.execute(query + " ORDER BY o.path", values)]
 
+    def relations(self, kinds: tuple[str, ...] = ()) -> list[dict]:
+        """The relations of the databases as last read and of what the files declare.
+
+        Args:
+            kinds: Only these kinds (`foreign key`, `implied`, `view reads`…); empty for all.
+
+        Returns:
+            Each relation's `source`, `target` and `kind`, once.
+        """
+        query = f"SELECT DISTINCT source, target, kind FROM relations WHERE collection IN ({_CURRENT})"
+        if kinds:
+            query += f" AND kind IN ({', '.join('?' * len(kinds))})"
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(query, list(kinds))]
+
     def outline(self) -> dict[str, list[tuple[str, str, str, str]]]:
         """What the tree shows of the databases read and of what the files declare, by connection (a
         file's: `origin:<name>`): every object but the columns, as `(path, kind, parent, name)`, in path order."""

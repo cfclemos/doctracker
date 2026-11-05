@@ -40,9 +40,14 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   "route": ("routes", "The route a URL reaches: its handler"),
   "calls": ("calls", "Functions, methods, macros called"),
   "refers": ("refers", "Named without being called: callbacks, routes, types, tables"),
-  "inherits": ("inherits", "A class built on another"),
+  "inherits": ("inherits", "A class built on another; a table taking its parent's columns (PostgreSQL's INHERITS)"),
   "implements": ("implements", "A class that implements an interface, a trait or a protocol"),
   "has": ("has", "An attribute holding another class"),
+  "foreign-key": ("foreign key", "A column declared to hold a value of another table's key: from the column's row to the column it refers to"),
+  "implied": ("implied", "A <name>_id column with no foreign key declared, linked by its name to the key of a table <name>(s): a guess, nothing enforced"),
+  "view-reads": ("view reads", "A view reading from a table or view"),
+  "partition-of": ("partition of", "A partition of a partitioned table"),
+  "foreign-table": ("foreign table", "A table standing for a table of another database (postgres_fdw)"),
 } %}
 {% macro relation_kinds(kinds) -%}
 {% for kind in kinds %}
@@ -72,7 +77,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false) -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false) -%}
 {# The side panel: the page's own (the planner's), or, with `details`, the one static/graph.js fills with
    the box clicked and what it relates to. #}
 {% set panel = panel or (('<div class="graph-details"><p class="empty">Click a box to see what it is and what it relates to.</p></div>') | safe if details else "") %}
@@ -107,6 +112,14 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
       <button type="button" role="radio" class="graph-icon graph-colour-by" data-colour="{{ name }}" aria-label="{{ tip }}"
               data-tip="{{ tip }}"><i class="bar-icon bar-icon-colour-{{ name }}"></i></button>
       {% endfor %}
+    </span>
+    {% endif %}
+    {% if notation %}{# The ER diagram's notation: crow's foot symbols or UML multiplicities at the ends of a key's line #}
+    <span class="graph-buttons graph-notations" role="radiogroup" aria-label="Notation">
+      <button type="button" role="radio" class="graph-icon graph-text graph-notation" data-notation="crow" aria-label="Crow's foot"
+              data-tip="Crow's foot: the symbols at the ends of a key's line (one, zero or one, zero or many)">Crow's foot</button>
+      <button type="button" role="radio" class="graph-icon graph-text graph-notation" data-notation="uml" aria-label="UML"
+              data-tip="UML: the multiplicities at the ends of a key's line (1, 0..1, *)">UML</button>
     </span>
     {% endif %}
     {% if layouts %}

@@ -36,8 +36,8 @@
     <a class="see-in-link" {{ ui.nav(item.path) }}><i class="bar-icon bar-icon-link"></i>Open the page</a>
     <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
   </footer>
-  {% elif drawn %}
-  <p class="see-in">See in {{ universe_button }}{% if item.path.startswith("db:") and (kind in ("server", "database", "schema") or tabular) %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Navigate Database</a>{% endif %}</p>
+  {% elif drawn or item.kind in ("database", "schema", "table", "view", "materialized view", "foreign table") %}
+  <p class="see-in">See in {{ universe_button }}{% if item.kind in ("database", "schema", "table", "view", "materialized view", "foreign table") %}<a class="see-in-link" {{ ui.nav_url("/database?tab=diagram&focus=" ~ (item.path | urlencode)) }}>{{ ui.icon("database") }}Diagram</a>{% endif %}{% if item.path.startswith("db:") and (kind in ("server", "database", "schema") or tabular) %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Navigate Database</a>{% endif %}</p>
   {% endif %}
 </header>
 
