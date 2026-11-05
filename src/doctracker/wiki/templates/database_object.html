@@ -1,5 +1,5 @@
 {% import "macros.html" as ui %}
-{% from "database.html" import lint_cell %}
+{% from "database.html" import code_cell, lint_cell %}
 {# The page of a database object (`item`, from CatalogStore.object): a server, database, schema, table,
    view, column, function, trigger..., read from a live database or declared by a file (origin:...):
    the same page, from the same store, the header telling which (read from the live database / declared
@@ -251,7 +251,12 @@
 {% endif %}
 
 {% if tabular or kind == "column" %}
-{% call ui.section("warns", "Use in the code", name="code-use", divider=true) %}{{ unavailable("the links to the code that uses it come in a later step.") }}{% endcall %}
+{# The code using it, found by reading the code: an ORM's model declaring it, SQL in the code's strings
+   and in query files, and code naming the model; a table's also its columns'. #}
+{% call ui.section("warns", "Use in the code", count=item.code_use | length, name="code-use", divider=true) %}
+  {% if item.code_use %}{% call(row, key, value) ui.list_table("code-use", "", item.code_listing, "", interactive=False) %}{{ code_cell(row, key) }}{% endcall %}
+  {% else %}<p class="empty">No code of the project is found using it.</p>{% endif %}
+{% endcall %}
 {% if tabular %}{% call ui.section("warns", "Lint", count=item.lint | length, name="lint", divider=true) %}
   {% if item.lint %}{% call(row, key, value) ui.list_table("lint-object", "", item.lint_listing, "", interactive=False) %}{{ lint_cell(row, key, value, actions=false) }}{% endcall %}
   <p class="see-in"><a class="see-in-link" {{ ui.nav_url("/databases/lint") }}>{{ ui.icon("database") }}Lint</a> lists every finding, to accept one saying why.</p>

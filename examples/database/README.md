@@ -61,6 +61,20 @@ renames another and adds an index: what a migration lint must flag):
 compares them by name. They agree on tables, columns, nullability, primary and foreign keys; Prisma
 has no check constraints, and Django indexes every foreign key by itself.
 
+## Code using the databases
+
+What doctracker's links to the code must find (an object's "Use in the code", a code entity's
+"Database use"). `pyproject.toml` makes this folder a Python project of its own, so its code is read
+from here (`app.sales`, `origins.sqlalchemy.models`, `origins.django.shop.views`).
+
+| Where | How it reaches the tables |
+| --- | --- |
+| `origins/sqlalchemy/models.py`, `origins/django/shop/models.py` | the models declare them: each class its table, each attribute its column |
+| `app/sales.py` | through the SQLAlchemy models (`select(Customer).where(Customer.email == ...)`) |
+| `origins/django/shop/views.py` | through the Django models (`Customer.objects.get(...)`) |
+| `app/reports.py` | SQL in strings: a constant, inline queries, an `UPDATE`, and two f-strings (a table given by the caller, found nowhere; a schema given by the caller, found as partial) |
+| `app/queries/*.sql` | query files: `SELECT`, `UPDATE` and `DELETE`, each statement by its line |
+
 ## Analyses run on these databases
 
 `analysis/` keeps the scripts behind the DATABASE section's design decisions and their results. Each

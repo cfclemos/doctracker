@@ -20,6 +20,13 @@
 
 {% set role = page_role(state, entity) %}
 {{ ui.relations(relations, role) }}
+{% if database_use and database_use.total %}
+{# The tables and columns it uses (its members' too), found by reading the code: the mirror of an object's Use in the code. #}
+{% from "database.html" import code_cell %}
+{% call ui.section("source", "Database use", count=database_use.total, name="database-use", divider=true) %}
+  {% call(row, key, value) ui.list_table("database-use", "", database_use, "", interactive=False) %}{{ code_cell(row, key) }}{% endcall %}
+{% endcall %}
+{% endif %}
 
 {% if not modal %}{{ ui.local_graph(entity.path, role) }}{% endif %}
 

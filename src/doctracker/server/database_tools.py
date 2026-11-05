@@ -11,6 +11,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
+from doctracker.databases.code_links import code_use
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.origins.evolution import moments, renames_between, schema_at, schema_diff as diff_schemas
 from doctracker.databases.lint import LEVELS, RULES, Lint
@@ -264,13 +265,16 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             `max`, `min_length`, `max_length`, `frequent`, `formats`, `values`): a sensitive column's values
             masked, each letter and digit as `*`; `unavailable` and why when there is none (a view, a
             file other than a dump with rows). A relation found through the samples (`contained in`)
-            carries its `ratio`.
+            carries its `ratio`. A table's, view's or column's `code_use`: the code using it (a table's
+            also its columns'), each with `entity`, `file`, `line`, `use` (maps, reads, writes, through
+            model), `column`, `evidence`, `confidence` and `how` (see `databases.code_links.code_use`).
         """
         found = object_with_origins(path, state.origins, catalog, connections.connections(), project_root)
         if found is None:
             raise ToolError(f"No object {path} in the databases read nor in the SQL files. List them with "
                             "database_objects or database_origin.")
-        return {**found, "lint": lint.for_object(path, state.origins, connections.connections())}
+        return {**found, "lint": lint.for_object(path, state.origins, connections.connections()),
+                "code_use": code_use(path, found, state.code_links, state.origins, catalog, connections.connections(), project_root)}
 
     @mcp.tool()
     @refusals_reported

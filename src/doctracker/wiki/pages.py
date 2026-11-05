@@ -1251,10 +1251,15 @@ LIST_COLUMNS = {
                           ("detail", "Detail", "text"), ("found_in", "Found in", "choice"), ("state", "State", "choice")),
     "lint object": _list_columns(("level", "Level", ""), ("rule", "Rule", ""), ("object", "Object", ""), ("detail", "Detail", ""),
                                  ("found_in", "Found in", ""), ("state", "State", "")),
+    "code use": _list_columns(("code", "Code", ""), ("column", "Column", ""), ("use", "Use", ""), ("where", "Where", ""),
+                              ("evidence", "Evidence", ""), ("confidence", "Confidence", ""), ("how", "How", "")),
+    "database use": [{"key": key, "title": title, "filter": ""} for key, title in (  # no page icon: the page is the entity's own
+        ("table", "Table"), ("column", "Column"), ("use", "Use"), ("where", "Where"), ("evidence", "Evidence"),
+        ("confidence", "Confidence"), ("how", "How"), ("objects", "Reaches"))],
 }
-"""The columns of each level of DATABASES › Navigate › By Level (and of its Search), of the Lint tab and of an
-object's Lint: key, title, and whether it has a filter (any value: the filter lists its values to choose
-from; empty: none)."""
+"""The columns of each level of DATABASES › Navigate › By Level (and of its Search), of the Lint tab, of an
+object's Lint, of an object's Use in the code and of a code entity's Database use: key, title, and whether
+it has a filter (any value: the filter lists its values to choose from; empty: none)."""
 
 
 EMPTY = "__empty__"

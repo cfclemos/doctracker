@@ -76,9 +76,9 @@ def create_app(project_root: Path, config: Config) -> Starlette:
             "doctracker://guide resource) and follow it."
         ),
     )
-    register_tools(mcp, state, config, search)
-    register_note_tools(mcp, notes, search)
     connections = ConnectionStore(project_root)
+    register_tools(mcp, state, config, search, connections)
+    register_note_tools(mcp, notes, search)
     register_database_tools(mcp, connections, catalog, state, project_root)
 
     app = mcp.streamable_http_app(host=config.host, transport_security=_transport_security(config))
