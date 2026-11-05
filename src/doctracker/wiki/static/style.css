@@ -297,25 +297,20 @@ main { grid-area: main; }
 #tree details[open] > summary > .icon-folder::before { -webkit-mask-image: url("icons/folder-open.svg"); mask-image: url("icons/folder-open.svg"); }
 #tree a, #tree summary > span[class^="role-"] { flex: 1; min-width: 0; display: block; padding: 0.1rem 0.3rem; border-radius: 4px; color: var(--fg); overflow-wrap: anywhere; }
 #tree summary > span[class^="role-"] { cursor: pointer; }
-#tree .role-folder, #tree .role-schema { font-weight: 600; }
-#tree .role-language { font-weight: 700; font-size: 0.9rem; }
+#tree .role-language { font-size: 0.9rem; }
 #tree li:has(> details > summary > .role-project) + li { margin-top: 0.5rem; }
-/* CODE, with the switch of the tree's format beside it. */
-#tree .tree-examples, #tree .tree-section { margin-top: 0.8rem; }
-/* DEAD CODE: a heading like CODE and EXAMPLES, that opens its page. */
-#tree .tree-section .tree-group { display: flex; color: var(--fg); border-radius: 0; background: none; }
-#tree .tree-section .tree-group:hover, #tree .tree-section .tree-group.current { text-decoration: none; color: var(--accent); }
+/* The sections (AGENT, CODE, DATABASES, GIT), apart from each other; CODE with the switch of the tree's format beside it. */
+#tree .tree-sections > li + li { margin-top: 0.8rem; }
 #tree .tree-code { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 #tree .tree-layouts { display: inline-flex; gap: 0.1rem; }
 #tree .tree-layout { border: 1px solid transparent; background: none; color: var(--muted); border-radius: 4px; padding: 0.05rem 0.1rem; cursor: pointer; }
 #tree .tree-layout:hover { color: var(--fg); }
 #tree .tree-layout[aria-checked="true"] { color: var(--fg); border-color: var(--border); background: var(--panel); }
 #tree a.current { background: var(--accent); color: var(--bg); }
-/* Each level of the tree gets its own weight and size. */
-#tree a.role-package, #tree .role-project { text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
+/* Every name in the tree is bold, a link or not; each level gets its own size. */
+#tree a, #tree [class^="role-"] { font-weight: 700; }
+#tree a.role-package, #tree .role-project { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.95rem; }
 #tree li:has(a.role-module, a.role-subpackage) { margin-top: 0.35rem; }
-#tree a.role-module, #tree a.role-subpackage { font-weight: 600; }
-#tree a.role-class { font-weight: 500; }
 #tree a.role-function { font-size: 0.93rem; }
 #tree a.role-method { font-size: 0.88rem; color: var(--muted); }
 #tree a.role-method.current { color: var(--bg); }
@@ -336,6 +331,8 @@ main { grid-area: main; }
 .icon-connection-blocked::before, .icon-connection-unread::before,
 .icon-dead-code::before, .icon-folder::before, .icon-schema::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
+.icon-planner::before, .icon-guidelines::before, .icon-memory::before, .icon-navigate::before, .icon-drift::before,
+.icon-evolution::before, .icon-lint::before,
 .icon-layout-folders::before, .icon-layout-languages::before {
   content: "";
   display: inline-block;
@@ -367,6 +364,13 @@ main { grid-area: main; }
   -webkit-mask-image: url("icons/database.svg"); mask-image: url("icons/database.svg"); }
 .icon-connection-failed::before { -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
 .icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
+.icon-planner::before { -webkit-mask-image: url("icons/checkbox.svg"); mask-image: url("icons/checkbox.svg"); }
+.icon-guidelines::before { -webkit-mask-image: url("icons/flag.svg"); mask-image: url("icons/flag.svg"); }
+.icon-memory::before { -webkit-mask-image: url("icons/info-circle.svg"); mask-image: url("icons/info-circle.svg"); }
+.icon-navigate::before { -webkit-mask-image: url("icons/list-details.svg"); mask-image: url("icons/list-details.svg"); }
+.icon-drift::before { -webkit-mask-image: url("icons/stack-2.svg"); mask-image: url("icons/stack-2.svg"); }
+.icon-evolution::before { -webkit-mask-image: url("icons/timeline.svg"); mask-image: url("icons/timeline.svg"); }
+.icon-lint::before { -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
 .icon-architecture, .icon-diagrams { --tint: var(--method); }
@@ -375,7 +379,7 @@ main { grid-area: main; }
 .icon-git { --tint: var(--raises); }
 .icon-notes { --tint: var(--exports); }
 .icon-database { --tint: var(--class); }
-.icon-connections { --tint: var(--class); }
+.icon-connections { --tint: var(--returns); }
 /* A connection in the tree: green it answers, red its last reading or test failed (another icon), grey
    blocked, uncoloured not read yet. */
 .icon-connection-ok { --tint: #2da44e; }
@@ -383,6 +387,14 @@ main { grid-area: main; }
 .icon-connection-blocked { --tint: #8c959f; }
 .icon-connection-unread { --tint: var(--muted); }
 .icon-dead-code { --tint: var(--accent); }
+/* Each page of a section has a color of its own, apart from its section's and its siblings'. */
+.icon-planner { --tint: var(--attribute); }
+.icon-guidelines { --tint: var(--note); }
+.icon-memory { --tint: var(--returns); }
+.icon-navigate { --tint: var(--function); }
+.icon-drift { --tint: var(--exports); }
+.icon-evolution { --tint: var(--note); }
+.icon-lint { --tint: var(--raises); }
 .icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
 .icon.icon-examples { --tint: var(--exports); }
 .icon.icon-subpackage, .icon.icon-folder { --tint: var(--folder); }
@@ -636,22 +648,13 @@ td p { margin: 0; }
 #tree summary > .tree-group { flex: 1; cursor: pointer; }
 #tree .tree-group { display: flex; align-items: center; gap: 0.55rem; margin: 0; padding: 0.1rem 0.3rem 0.1rem 0; font-weight: 700; letter-spacing: 0.04em; font-size: 0.95rem; }
 
-/* Links to the graph views at the top of the tree. */
-#tree .view-links { margin: 0 0 0.7rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
-#tree .view-link {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.2rem 0.3rem;
-  border-radius: 4px;
-  color: var(--fg);
-  font-weight: 600;
-  font-size: 0.9rem;
-  letter-spacing: 0.03em;
-}
-#tree .view-link:hover { background: var(--bg); text-decoration: none; }
-#tree .view-link.current { background: var(--accent); color: var(--bg); }
-#tree .view-link.current .icon { color: inherit; }
+/* A section's name opens its explanation page; the one shown is marked like any page. */
+#tree a.tree-group { padding-left: 0.3rem; }
+
+/* A section's explanation page: its pages, each with what it shows. */
+.section-pages { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 0.8rem; max-width: 52rem; }
+.section-pages a { display: inline-flex; align-items: center; gap: 0.45rem; font-weight: 600; }
+.section-pages p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }
 
 /* Graph page: the drawing fills the rest of the screen. */
 .graph-page .page-header { padding-bottom: 0.6rem; }
@@ -2028,7 +2031,6 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .origin-object > summary { cursor: pointer; }
 .notes-error-text { color: var(--raises); }
 /* The line between the code's sections and DATABASES in the tree. */
-.tree-divider { margin: 0.6rem 0; border: 0; border-top: 1px solid var(--border); }
 /* A subsection's title inside a page's section (a file's tables, functions, triggers...): bold, larger,
    a rule under it. */
 .block-subtitle, .origin-subtitle { margin: 1rem 0 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--border);

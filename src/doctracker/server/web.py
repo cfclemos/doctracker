@@ -137,6 +137,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         db_groups=[(title, [kind for kind, same in pages.DB_GROUPS if same == title])
                    for title in dict.fromkeys(title for _, title in pages.DB_GROUPS)],
         browse_counts=pages.BROWSE_COUNTS,
+        sections=pages.SECTIONS,
     )
     templates.filters["size"] = pages.size_text
 
@@ -285,6 +286,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "calls" and request.query_params:
             response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
         return response
+
+    async def section_page(request: Request) -> Response:
+        """A section's explanation page (AGENT, CODE, DATABASES): what it is for and its pages."""
+        name = request.url.path.strip("/")
+        return render_page(request, "section.html", f"/{name}", {"path": "", "view": name, "section": pages.SECTIONS[name]})
 
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
     slices = SliceStore(project_root, state.notify)  # the slices of the schema, doc/slices/ (the MCP tools read the same files)
@@ -1155,6 +1161,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     return [
         Route("/", index),
         Route("/wiki/{path:path}", wiki),
+        Route("/agent", section_page),
+        Route("/code", section_page),
+        Route("/databases", section_page),
         Route("/architecture", view_page),
         Route("/classes", view_page),
         Route("/calls", view_page),

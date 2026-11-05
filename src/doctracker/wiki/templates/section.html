@@ -1,0 +1,14 @@
+{% import "macros.html" as ui %}
+{# A section's explanation page (pages.SECTIONS): what the section is for, then each of its pages with
+   what it shows, the same pages the tree lists under the section. #}
+<div class="section-page">
+  {{ ui.view_header(section.icon, section.title, section.text) }}
+  <ul class="section-pages">
+    {% for page in section.pages %}
+    <li>
+      <a {{ ui.nav_url(page.url) }}>{{ ui.icon(page.icon) }}{{ page.title }}</a>
+      <p>{{ page.text }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+</div>

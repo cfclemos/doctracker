@@ -71,6 +71,75 @@ TREE_KINDS = ("module", "class", "function")
 TREE_LAYOUTS = {"languages": "By language", "folders": "By folder"}
 """The formats of the navigation tree (see `tree`), with the name the switch shows."""
 
+SECTIONS = {
+    "agent": {
+        "title": "AGENT", "icon": "notes", "url": "/agent",
+        "text": "What the project knows and plans, kept for the agents that work on it and for you. Agents read and "
+                "write it through the MCP tools, and are told the relevant part at each moment (session start, "
+                "planning, a file read or edited, a commit); here you see and change the same records.",
+        "pages": [
+            {"name": "planner", "title": "Planner", "icon": "planner", "url": "/notes?tab=planner", "views": ("notes",),
+             "tabs": ("planner",),
+             "text": "The plans, their features and tasks, with their criteria, dependencies, annotations and evidence: "
+                     "the record of the work until it is committed."},
+            {"name": "guidelines", "title": "Guidelines", "icon": "guidelines", "url": "/notes?tab=guidelines",
+             "views": ("notes",), "tabs": ("guidelines",),
+             "text": "How to work on the project: the rules and preferences agents must follow, each with why."},
+            {"name": "memory", "title": "Memory", "icon": "memory", "url": "/notes?tab=memory", "views": ("notes",),
+             "tabs": ("memory",),
+             "text": "What is known about the project: decisions, context, pitfalls and references."},
+        ],
+    },
+    "code": {
+        "title": "CODE", "icon": "code", "url": "/code",
+        "text": "The project's code, read statically (never imported or run): every package, module, class and "
+                "function with its page, drawn in diagrams and checked for code nothing uses. Below the pages, the "
+                "code itself, by language or by folder (the switch beside CODE).",
+        "pages": [
+            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/architecture",
+             "views": ("architecture", "classes", "calls"), "tabs": (),
+             "text": "The code drawn: the architecture (files and what they import), the classes and their "
+                     "relations, the functions and their calls."},
+            {"name": "dead-code", "title": "Dead Code", "icon": "dead-code", "url": "/dead-code", "views": ("dead-code",),
+             "tabs": (),
+             "text": "What nothing in the project uses, from the code graph and vulture together."},
+        ],
+    },
+    "databases": {
+        "title": "DATABASES", "icon": "database", "url": "/databases",
+        "text": "The project's databases, read only: the live databases of the allowed connections and what the "
+                "project's files declare (SQL files, migrations, ORM models, dumps), in one catalog. Below the pages, "
+                "the connections and the files, each down to its objects. With no database yet, add a connection in "
+                "Connections, or keep the SQL files, migrations or models in the project: they are found by themselves.",
+        "pages": [
+            {"name": "connections", "title": "Connections", "icon": "connections", "url": "/database?tab=connections",
+             "views": ("database",), "tabs": ("connections",),
+             "text": "The databases the project declares and those you enter; doctracker reads only the allowed ones, "
+                     "and only ever reads."},
+            {"name": "navigate", "title": "Navigate", "icon": "navigate", "url": "/database?tab=objects",
+             "views": ("database",), "tabs": ("objects", "universe"),
+             "text": "Every object read, by level (servers, databases, schemas, tables and views, columns) or as a "
+                     "graph of their relations."},
+            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/database?tab=diagram",
+             "views": ("database",), "tabs": ("diagram", "slices"),
+             "text": "The entity-relationship diagrams, of the whole schema or of sub-diagrams: a few tables kept "
+                     "together with a name and a purpose."},
+            {"name": "drift", "title": "Drift", "icon": "drift", "url": "/database?tab=drift", "views": ("database",),
+             "tabs": ("drift",),
+             "text": "Where the project's files and the live databases they describe differ."},
+            {"name": "evolution", "title": "Evolution", "icon": "evolution", "url": "/database?tab=evolution",
+             "views": ("database",), "tabs": ("evolution",),
+             "text": "How the schema evolved, from the migrations and the commits, and the schema at any two moments compared."},
+            {"name": "lint", "title": "Lint", "icon": "lint", "url": "/database?tab=lint", "views": ("database",),
+             "tabs": ("lint",),
+             "text": "What in the schema and the migrations deserves a look, each rule saying why it matters and how to fix it."},
+        ],
+    },
+}
+"""The sections of the wiki, in the tree's order before GIT: each with its explanation page (`url`, `text`)
+and its pages, listed in the tree under it. A page is the current one when the view shown is among its
+`views` and, if it has `tabs`, the tab shown is among them."""
+
 MEMBER_FOLDERS = ("packages", "package")
 """Folders whose subfolders are the members of a monorepo, each a project of its own in the tree."""
 
