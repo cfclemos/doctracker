@@ -23,7 +23,7 @@ services:
       timeout: 5s
       retries: 20
     networks: [testbed]
-    restart: unless-stopped
+    restart: "no"
 
   mysql:
     image: mysql:8.4.6
@@ -42,7 +42,7 @@ services:
       timeout: 5s
       retries: 30
     networks: [testbed]
-    restart: unless-stopped
+    restart: "no"
 
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-CU20-ubuntu-22.04
@@ -61,7 +61,7 @@ services:
       retries: 30
       start_period: 20s
     networks: [testbed]
-    restart: unless-stopped
+    restart: "no"
 
   # SQL Server has no init folder: this one-shot container loads the schema once the server is up.
   mssql-init:
@@ -96,7 +96,7 @@ services:
     volumes:
       - ./ssh/keys/id_test.pub:/etc/ssh/authorized_keys/tunnel:ro
     networks: [testbed]
-    restart: unless-stopped
+    restart: "no"
 
   ssh-inner:
     image: doctracker-testbed-ssh:1
@@ -105,7 +105,7 @@ services:
     volumes:
       - ./ssh/keys/id_test.pub:/etc/ssh/authorized_keys/tunnel:ro
     networks: [testbed]
-    restart: unless-stopped
+    restart: "no"
 
 volumes:
   postgres-data:
