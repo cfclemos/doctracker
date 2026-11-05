@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict b72sJJqfno4aMtSZU8fxegtufuIKRkmvqFUWfeT4QyRmhaUlkCA9ee55Z6kjto6
+\restrict pDSJhS82th6qIbNm9xBwq3oJWPMkSc9c1fskDX1mGJyoBX9tZvwLEccyEhBTsMU
 
 -- Dumped from database version 17.6 (Debian 17.6-2.pgdg13+1)
 -- Dumped by pg_dump version 17.6 (Debian 17.6-2.pgdg13+1)
@@ -2365,5 +2365,5 @@ COMMENT ON EVENT TRIGGER ddl_audit IS 'Logs every change of structure.';
 -- PostgreSQL database dump complete
 --
 
-\unrestrict b72sJJqfno4aMtSZU8fxegtufuIKRkmvqFUWfeT4QyRmhaUlkCA9ee55Z6kjto6
+\unrestrict pDSJhS82th6qIbNm9xBwq3oJWPMkSc9c1fskDX1mGJyoBX9tZvwLEccyEhBTsMU
 

@@ -118,6 +118,24 @@ def local_time(stamp: str, seconds: bool = False) -> str:
     return (moment.astimezone() if moment.tzinfo else moment).strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
 
 
+
+def age(stamp: str) -> str:
+    """How long ago an ISO 8601 date-time was, in its largest unit (`5 days ago`, `3 minutes ago`); a
+    date-time without a time zone is taken as this machine's. Empty when it is not a date-time."""
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return ""
+    now = datetime.now(moment.tzinfo) if moment.tzinfo else datetime.now()
+    seconds = int((now - moment).total_seconds())
+    if seconds < 60:
+        return "just now"
+    for unit, size in (("year", 365 * 86400), ("month", 30 * 86400), ("day", 86400), ("hour", 3600), ("minute", 60)):
+        if seconds >= size:
+            count = seconds // size
+            return f"{count} {unit}{'s' if count != 1 else ''} ago"
+    return ""
+
 CODE_THEMES = sorted(get_all_styles())
 """Names of every Pygments theme, offered in the "Code theme" select of the Source block."""
 
@@ -1324,9 +1342,22 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
         connections_node["children"] = branches
         tree.append(connections_node)
     projects: dict[str, list[tuple[str, dict]]] = {}  # by project: (the folder it lies in, its node)
+    dumps: dict[str, dict] = {}  # a dump of several databases: its file's node, the databases under it
     for origin in state.origins:
         inside = [(path, kind, name) for path, kind, _, name in read.get(f"origin:{origin['name']}", [])  # as a connection's, from the store
                   if kind not in ("database", "schema")]
+        if origin.get("part_of"):  # one database of a dump holding several: under its file, named after the database
+            branch = node(f"origin:{origin['name']}", origin["name"].rsplit("@", 1)[-1], role="database")
+            branch["children"] = _db_groups(inside, current, f"origin:{origin['name']}")
+            if origin["part_of"] in dumps:
+                dumps[origin["part_of"]]["children"].append(branch)
+                continue
+            holder = dumps[origin["part_of"]] = node(f"databases-file:{origin['part_of']}", origin["part_of"].rsplit("/", 1)[-1],
+                                                     link=False, role="module")
+            holder["children"].append(branch)
+            place = str(PurePosixPath(origin["part_of"]).parent)
+            projects.setdefault(project_of(state, origin["part_of"], apart), []).append(("" if place == "." else place, holder))
+            continue
         branch = node(f"origin:{origin['name']}", origin["name"].rsplit("/", 1)[-1], role="module")
         branch["children"] = _db_groups(inside, current, f"origin:{origin['name']}")
         migrations = origin["kind"] in ("flyway", "golang-migrate", "dbmate")

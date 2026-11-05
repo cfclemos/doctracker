@@ -7,6 +7,7 @@ gives the changed lines of each file of one commit.
 import asyncio
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -439,6 +440,27 @@ async def read_history(project_root: Path, limit: int, path: str = "") -> list[C
     output = await _git(project_root, *args)
     return None if output is None else parse_log(output)
 
+
+def last_change(project_root: Path, path: str) -> tuple[str, str] | None:
+    """The last commit that changed a file, without the event loop (the extraction's worker reads it).
+
+    Args:
+        project_root: Root of the documented project.
+        path: The file, relative to the root.
+
+    Returns:
+        Its full hash and its author date (ISO 8601); `None` when git, the repository or a commit of the
+        file is missing (a file not committed yet).
+    """
+    if shutil.which("git") is None:
+        return None
+    try:
+        output = subprocess.run(["git", "-C", str(project_root), "log", "-1", f"--format=%H{FIELD}%aI", "--", path],
+                                capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    commit, _, date = output.partition(FIELD)
+    return (commit, date) if commit and date else None
 
 async def read_commit(project_root: Path, commit_hash: str) -> Commit | None:
     """Read one commit: its message, author, date and files.

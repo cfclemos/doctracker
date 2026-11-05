@@ -8,10 +8,14 @@ declares and what a database gives share one shape, one store and one page.
 import re
 
 import sqlglot
+from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 from sqlglot import exp
 
 from doctracker.databases.origins.sql import DEFAULT_SCHEMAS, _check_name, _named, _reads, _split_top
 
+
+_SQLITE = SQLiteDialect()
+"""SQLAlchemy's SQLite dialect: what it reads of a type written in SQLite, the collector's reading too."""
 
 _POSTGRES_TYPES = {exp.DataType.Type.INT: "integer", exp.DataType.Type.BIGINT: "bigint", exp.DataType.Type.SMALLINT: "smallint",
                    exp.DataType.Type.TEXT: "text", exp.DataType.Type.BOOLEAN: "boolean", exp.DataType.Type.DATE: "date",
@@ -25,8 +29,11 @@ _POSTGRES_TYPES = {exp.DataType.Type.INT: "integer", exp.DataType.Type.BIGINT: "
 
 def _database_type(text: str, dialect: str) -> str:
     """A column type as the database writes it in its catalog: PostgreSQL's `format_type` names
-    (`integer`, `timestamp with time zone`, `character(14)`…), the others as sqlglot writes them in
-    their dialect (the spelling SQLAlchemy reads back)."""
+    (`integer`, `timestamp with time zone`, `character(14)`…); SQLite's as SQLAlchemy reads them back from
+    the type written (its own affinity rules: `varchar(14)` → `NUMERIC(14)`, none → `NULL`); the others as
+    sqlglot writes them in their dialect (the spelling SQLAlchemy reads back)."""
+    if dialect == "sqlite":
+        return text if text == "NULL" else str(_SQLITE._resolve_type_affinity((text or "").upper()))  # as its get_columns
     if not text:
         return ""
     try:
@@ -70,7 +77,7 @@ def _view_body(text: str) -> str:
     return re.sub(r"\s*(WITH\s+(CASCADED\s+|LOCAL\s+)?CHECK\s+OPTION|WITH\s+(NO\s+)?DATA)?\s*;?\s*$", "", body, flags=re.IGNORECASE)
 
 
-def _view_columns(body: str, dialect: str, objects: dict) -> list[dict]:
+def _view_columns(body: str, dialect: str, objects: dict, home: str = "") -> list[dict]:
     """A view's columns from its query: each name it gives, with the type of the column it takes when
     it takes one as it is (`o.id`, `c.name AS customer`); a view it reads must have its own columns
     already (see `as_collection`)."""
@@ -83,7 +90,7 @@ def _view_columns(body: str, dialect: str, objects: dict) -> list[dict]:
     select = query if isinstance(query, exp.Select) else next(query.find_all(exp.Select), None)
     tables = {}
     for table in (select.find_all(exp.Table) if select else []):
-        key = f"{table.db or DEFAULT_SCHEMAS.get(dialect, '')}.{table.name}".lower()
+        key = f"{table.db or home}.{table.name}".lower()
         if key in objects:
             tables[(table.alias_or_name or table.name).lower()] = objects[key]
     columns = []
@@ -101,6 +108,8 @@ def _view_columns(body: str, dialect: str, objects: dict) -> list[dict]:
                 owners = [tables[node.table.lower()]] if node.table and node.table.lower() in tables else list(tables.values())
                 found = [c for t in owners for c in t.get("columns") or [] if c["name"].lower() == node.name.lower()]
                 return _database_type(found[0]["type"], dialect) if len(found) == 1 and found[0]["type"] else ""
+            if dialect == "sqlite":  # SQLite gives a view's column a type only when it takes a table's column as it is
+                return ""
             if isinstance(node, exp.Cast):
                 return _database_type(node.to.sql(dialect), dialect)
             if isinstance(node, exp.Count):
@@ -142,7 +151,7 @@ def _identity_arguments(arguments: str) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _parts(obj: dict, columns: list[dict], dialect: str, objects: dict) -> dict:
+def _parts(obj: dict, columns: list[dict], dialect: str, objects: dict, home: str = "") -> dict:
     """A table or view the file declares in the shape SQLAlchemy's Inspector gives one (what
     `collect._add_table` takes): its columns typed as the database writes them, its keys, uniques,
     indexes and checks, each named as the file names it or as the database names it by itself; a
@@ -169,6 +178,8 @@ def _parts(obj: dict, columns: list[dict], dialect: str, objects: dict) -> dict:
 
     def column(c: dict) -> dict:
         type_ = _database_type(c["type"], dialect)
+        if not type_ and dialect == "sqlite":  # a column without a type: what SQLAlchemy reads of it from the database
+            type_ = "NULL"
         default = c["default"]
         if dialect == "postgres" and c.get("serial"):
             sequence = c.get("sequence") or f"{name}_{c['name']}_seq"  # its name kept from before a rename
@@ -176,17 +187,19 @@ def _parts(obj: dict, columns: list[dict], dialect: str, objects: dict) -> dict:
             default = f"nextval('{sequence}')"
         if dialect == "postgres" and default:
             default = _postgres_default(default, type_)
+        if dialect in ("mysql", "sqlite") and str(default).upper() == "NULL":  # the database keeps no default for DEFAULT NULL
+            default = ""
         return {"name": c["name"], "type": type_, "nullable": c["nullable"], "default": default or None,
                 "comment": c["comment"] or None, "computed": {"sqltext": c["computed"]} if c["computed"] else None,
-                "identity": {"declared": True} if c["identity"] and not c.get("serial") else None,
-                "autoincrement": True if c.get("serial") or str(default).startswith("nextval(") else None}
+                "identity": {"declared": True} if c["identity"] and not c.get("serial") and dialect != "sqlite" else None,
+                "autoincrement": True if c.get("serial") or str(default).startswith("nextval(") or (dialect == "sqlite" and c["identity"]) else None}
 
     return {"columns": [column(c) for c in columns],
             "pk": {"constrained_columns": pk, "name": names.get("pk") or _named(dialect, name, "pk", pk)} if pk else None,
             "fks": [{"name": k.get("name") or _named(dialect, name, "fk", k["columns"], n), "constrained_columns": k["columns"],
-                     "referred_schema": (objects.get(f"{k['schema'] or DEFAULT_SCHEMAS.get(dialect, '')}.{k['table']}".lower()) or {}).get("schema", k["schema"]),
+                     "referred_schema": (objects.get(f"{k['schema'] or home}.{k['table']}".lower()) or {}).get("schema", k["schema"] or home),
                      "referred_table": k["table"],
-                     "referred_columns": k["target_columns"] or (objects.get(f"{k['schema'] or DEFAULT_SCHEMAS.get(dialect, '')}.{k['table']}".lower()) or {}).get("primary_key") or [],
+                     "referred_columns": k["target_columns"] or (objects.get(f"{k['schema'] or home}.{k['table']}".lower()) or {}).get("primary_key") or [],
                      "options": _options(k["options"])} for n, k in enumerate(keys, 1)],
             "unique": uniques, "indexes": indexes, "checks": checks,
             "comment": {"text": obj.get("comment")} if obj.get("comment") else None}
@@ -216,13 +229,14 @@ def as_collection(origin: dict) -> dict:
     from doctracker.databases.collect import _add_table, _Collection, _implied
 
     dialect, base = origin["dialect"], f"{ORIGIN_PREFIX}{origin['name']}"
+    home = origin.get("default_schema", DEFAULT_SCHEMAS.get(dialect, ""))  # a name without schema is in it (a MySQL dump's: its database)
     found = _Collection(base, "::")
     found.add(base, "database", "", origin["name"].rsplit("/", 1)[-1])
     objects = {key: dict(obj) for key, obj in origin["objects"].items()}
     for _ in range(3):  # a view's columns from its query, a view reading a view after it
         for obj in objects.values():
             if "view" in obj["kind"] and obj.get("definition"):
-                inferred = _view_columns(_view_body(obj["definition"]), dialect, objects)
+                inferred = _view_columns(_view_body(obj["definition"]), dialect, objects, home)
                 if inferred:
                     obj["columns"] = inferred
                 if not obj.get("reads"):  # a view our rules read: what it reads, from its query
@@ -239,7 +253,7 @@ def as_collection(origin: dict) -> dict:
     def path_of(schema: str, name: str) -> str | None:
         """The path of an object of the origin by its schema (the default one when not written) and name
         (a routine's carries its arguments, as a live reading's)."""
-        key = f"{schema or DEFAULT_SCHEMAS.get(dialect, '')}.{name}".lower()
+        key = f"{schema or home}.{name}".lower()
         if key not in objects and not schema:
             key = next((k for k, o in objects.items() if o["name"].lower() == name.lower()), key)
         if key in routines:
@@ -255,9 +269,11 @@ def as_collection(origin: dict) -> dict:
             path = found.path(schema, name)
             view = "view" in kind
             body = _view_body(obj.get("definition") or "") if view else ""
+            if view and dialect == "sqlite":  # SQLite keeps a view's whole statement, without its semicolon
+                body = re.sub(r"\s*;\s*$", "", obj.get("definition") or "")
             found.add(path, kind, schema_path, name, declared=place(obj), definition=body or None)
             columns = obj.get("columns") or []
-            _add_table(found, schema, name, _parts(obj, columns, dialect, objects))
+            _add_table(found, schema, name, _parts(obj, columns, dialect, objects, home))
             for column in columns:
                 if f"{path}.{column['name']}" in found.objects and column.get("created"):
                     found.objects[f"{path}.{column['name']}"]["data"]["declared"] = place(column)
@@ -280,7 +296,10 @@ def as_collection(origin: dict) -> dict:
             path = f"{table}:{name.split(':')[-1]}"
             function = obj.get("function") or ""
             target = path_of(*(function.split(".", 1) if "." in function else ("", function))) if function else None
-            found.add(path, "trigger", table, name.split(":")[-1], declared=place(obj), definition=obj.get("definition"),
+            definition = obj.get("definition")
+            if definition and dialect == "sqlite":  # as SQLite keeps it: without its semicolon
+                definition = re.sub(r"\s*;\s*$", "", definition)
+            found.add(path, "trigger", table, name.split(":")[-1], declared=place(obj), definition=definition,
                       comment=obj.get("comment"), function=target, timing=obj.get("timing"), events=obj.get("events"),
                       for_each=obj.get("for_each"))
             if target:
@@ -290,7 +309,7 @@ def as_collection(origin: dict) -> dict:
             path = routines.get(key) or found.path(schema, name)
             shown = f"{name}({_identity_arguments(obj.get('arguments', ''))})" if key in routines else name
             found.add(path, "enum" if kind == "type" and obj.get("labels") else kind, schema_path, shown, declared=place(obj), **data)
-    for schema in {DEFAULT_SCHEMAS.get(dialect)} - {None, ""}:  # the schema every database of the dialect has
+    for schema in {home} - {None, ""}:  # the schema every database of the dialect has
         found.add(found.path(schema), "schema", base, schema)
     if dialect == "postgres":  # a partition takes its parent's foreign keys and row triggers, as PostgreSQL clones them
         for key, obj in objects.items():

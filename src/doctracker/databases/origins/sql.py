@@ -13,7 +13,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from doctracker.databases.origins import orm
+from doctracker.databases.origins import dumps, orm
 
 logging.getLogger("sqlglot").setLevel(logging.ERROR)  # its notes on statements it keeps as raw commands
 
@@ -27,18 +27,20 @@ _DDL = re.compile(r"^\s*(CREATE|ALTER|DROP|COMMENT\s+ON|RENAME\s+TABLE)\b", re.I
 
 
 _FLYWAY = re.compile(r"^V(?P<version>\d+(?:[._]\d+)*)__(?P<name>.+)\.sql$", re.IGNORECASE)
-
+"""A Flyway migration: `V<version>__<name>.sql`."""
 
 _PRISMA = re.compile(r"^(?P<version>(?P<stamp>\d{8,})_(?P<name>.+))/migration\.sql$", re.IGNORECASE)
 """A Prisma migration: `migrations/<timestamp>_<name>/migration.sql`."""
-_GOLANG = re.compile(r"^(?P<version>\d+)_(?P<name>.+)\.(?P<way>up|down)\.sql$", re.IGNORECASE)
 
+_GOLANG = re.compile(r"^(?P<version>\d+)_(?P<name>.+)\.(?P<way>up|down)\.sql$", re.IGNORECASE)
+"""A golang-migrate step: `<version>_<name>.up.sql`, its undo `.down.sql`."""
 
 _DBMATE = re.compile(r"^--\s*migrate:(up|down)\b", re.IGNORECASE | re.MULTILINE)
+"""A dbmate migration's parts, in one file."""
 
-
-_DUMP = re.compile(r"^--\s*(PostgreSQL database dump|MySQL dump|MariaDB dump)|^PRAGMA foreign_keys=OFF;", re.IGNORECASE | re.MULTILINE)
-
+_TOOL_DIALECTS = {"pg_dump": "postgres", "pg_dumpall": "postgres", "mysqldump": "mysql", "mariadb-dump": "mysql", "sqlite3": "sqlite",
+                  "iterdump": "sqlite", "ssms": "tsql"}
+"""The dialect a dump is written in, by the tool that wrote it."""
 
 _GO = re.compile(r"^\s*GO\s*$", re.IGNORECASE | re.MULTILINE)
 """T-SQL's batch separator, on a line of its own."""
@@ -68,9 +70,12 @@ def find_origins(root: Path, files: list[str]) -> list[dict]:
         files: The project's files, relative to the root (`config.project_files`).
 
     Returns:
-        Each origin's `name` (its folder for a migration set, its file otherwise), `kind` (`flyway`,
-        `golang-migrate`, `dbmate`, `dump`, `sql file`), `folder`, and `steps` in order: `file`,
-        `version`, `title`, and `down` (the file undoing it, golang-migrate) when there is one.
+        Each origin's `name` (its folder for a migration set, its file otherwise; one database of a dump
+        holding several: `<file>@<database>`), `kind` (`flyway`, `golang-migrate`, `dbmate`, `prisma
+        migrations`, `dump`, `sql file`), `folder`, and `steps` in order: `file`, `version`, `title`, and
+        `down` (the file undoing it, golang-migrate) when there is one. A dump also has `tool`, `dump`
+        (what it writes of itself, see `dumps.header`), `generated` (`dumps.generated`), `dialect_hint`,
+        and, for one database of several, `part_of` (the file) and `lines` (its first and last).
     """
     texts: dict[str, str] = {}
     for file in files:
@@ -101,8 +106,19 @@ def find_origins(root: Path, files: list[str]) -> list[dict]:
             version, _, title = stem.partition("_")
             sets.setdefault(("dbmate", folder), []).append({"file": file, "version": version, "title": title.replace("_", " ")})
         elif _DDL.search(text):
-            alone.append({"name": file, "kind": "dump" if _DUMP.search(text) else "sql file", "folder": folder,
-                          "steps": [{"file": file, "version": "", "title": name}]})
+            tool = dumps.recognise(text)
+            if tool is None:
+                alone.append({"name": file, "kind": "sql file", "folder": folder, "steps": [{"file": file, "version": "", "title": name}]})
+                continue
+            written = dumps.header(text, tool)
+            dump = {"kind": "dump", "folder": folder, "steps": [{"file": file, "version": "", "title": name}], "tool": tool,
+                    "dump": written, "generated": dumps.generated(root, file, written), "dialect_hint": _TOOL_DIALECTS[tool]}
+            parts = dumps.sections(text, tool)
+            for part in parts:  # a dump of several databases: one origin each, its own lines
+                alone.append({**dump, "name": f"{file}@{part['database']}", "part_of": file, "lines": [part["first"], part["last"]],
+                              "dump": {**written, "database": {"value": part["database"], "line": part["first"]}}})
+            if not parts:
+                alone.append({**dump, "name": file})
     origins = []
     for (kind, folder), steps in sorted(sets.items(), key=lambda item: item[0][1]):
         steps.sort(key=lambda step: [int(part) if part.isdigit() else part for part in re.split(r"[._]", step["version"])])
@@ -221,19 +237,20 @@ class _Schema:
             constraints, indexes; a view's definition and what it reads...).
     """
 
-    def __init__(self, dialect: str) -> None:
+    def __init__(self, dialect: str, default: str | None = None) -> None:
         self.dialect = dialect
+        self.default = DEFAULT_SCHEMAS.get(dialect, "") if default is None else default  # a name written without schema is in it
         self.objects: dict[str, dict] = {}
         self.servers: dict[str, dict] = {}  # PostgreSQL's foreign servers, by name: their options (host, port, dbname)
 
     def key(self, schema: str, name: str) -> str:
         """An object's key: its schema (the dialect's default when not written) and name, in lower case."""
-        return f"{schema or DEFAULT_SCHEMAS.get(self.dialect, '')}.{name}".lower()
+        return f"{schema or self.default}.{name}".lower()
 
     def put(self, kind: str, schema: str, name: str, place: dict, **data) -> dict:
         """Create an object, or take its place (CREATE OR REPLACE); a function, procedure, domain, type or
         sequence also gets what its definition says of it (see `_details`)."""
-        schema = schema or DEFAULT_SCHEMAS.get(self.dialect, "")
+        schema = schema or self.default
         if kind in _DETAILED and data.get("definition"):
             data = {**_details(kind, data["definition"], self.dialect), **data}
         before = self.objects.get(self.key(schema, name))
@@ -322,16 +339,42 @@ def _as_written(node: exp.Expression, source: str, dialect: str, clause: bool = 
     return source[at:end].strip() or node.sql(dialect)
 
 
+_TYPE_END = re.compile(r"\s*(,|\)|$|\b(NOT|NULL|PRIMARY|UNIQUE|REFERENCES|CHECK|CONSTRAINT|GENERATED|COLLATE|DEFAULT|AS|ON)\b)", re.IGNORECASE)
+"""Where a type written after a column's name ends: a comma, the table's parenthesis, or a constraint."""
+
+
+def _written_type(definition: exp.ColumnDef, source: str) -> str:
+    """A column's type as the statement writes it (`numeric`, `varchar(14)`), from just after its name to
+    its first constraint; empty when its place in the statement is not known."""
+    end = definition.this.meta.get("end") if isinstance(definition.this, exp.Identifier) else None
+    if not source or end is None:
+        return ""
+    text, at, depth = source[end + 1:].lstrip(" \t\"`]"), 0, 0
+    while at < len(text):
+        if text[at] == "(":
+            depth += 1
+        elif text[at] == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and _TYPE_END.match(text, at) and (at == 0 or not text[at - 1].isalnum() or text[at] in ",)"):
+            break
+        at += 1
+    return " ".join(text[:at].split())
+
 def _column(definition: exp.ColumnDef, dialect: str, place: dict, source: str = "") -> dict:
     """A column as a ColumnDef declares it, with what its own constraints say (its default as the file
     writes it, `source` being the statement read)."""
-    column = {"name": definition.name, "type": definition.args["kind"].sql(dialect) if definition.args.get("kind") else "",
+    kind = definition.args.get("kind")
+    written = _written_type(definition, source) if kind is not None and dialect == "sqlite" else ""
+    column = {"name": definition.name, "type": (written or kind.sql(dialect)) if kind is not None else "",  # SQLite keeps it as written
               "nullable": True, "default": "", "computed": "", "identity": False, "pk": False, "unique": False,
               "references": None, "check": "", "comment": "", "created": place, "changed": place}
     for constraint in definition.args.get("constraints") or []:
         kind = constraint.args.get("kind")
         if isinstance(kind, exp.NotNullColumnConstraint):
             column["nullable"] = bool(kind.args.get("allow_null"))
+            column["not_null"] = not column["nullable"]  # written so (SQLite: a key alone does not forbid null)
         elif isinstance(kind, exp.PrimaryKeyColumnConstraint):
             column.update(pk=True, nullable=False)
         elif isinstance(kind, exp.UniqueColumnConstraint):
@@ -418,13 +461,15 @@ def _add_column(table: dict, column: dict) -> None:
             table.setdefault("names", {})[f"check:{column['check']}"] = column["check_name"]
 
 
-def _create_table(schema: _Schema, statement: exp.Create, place: dict, source: str = "") -> list[str]:
+def _create_table(schema: _Schema, statement: exp.Create, place: dict, source: str = "", without_rowid: bool = False) -> list[str]:
     """CREATE TABLE: its columns and constraints; a partition or a child table names its parent (and a
     partition its bounds), a partitioned table how it is partitioned."""
     owner, name = _name(statement.this)
     table = schema.put("table", owner, name, place, columns=[], primary_key=[], foreign_keys=[], unique=[], checks=[],
                        indexes=[], comment="")
     for item in statement.this.expressions if isinstance(statement.this, exp.Schema) else []:
+        if isinstance(item, exp.Identifier):  # a column written with its name alone (SQLite: no type)
+            item = exp.ColumnDef(this=item)
         if isinstance(item, exp.ColumnDef):
             _add_column(table, _column(item, schema.dialect, place, source))
         else:
@@ -441,6 +486,10 @@ def _create_table(schema: _Schema, statement: exp.Create, place: dict, source: s
             table["inherits"] = [list(_name(parent)) for parent in prop.expressions]
         elif isinstance(prop, exp.SchemaCommentProperty):
             table["comment"] = prop.this.name
+    if schema.dialect == "sqlite" and not without_rowid:  # SQLite: a key's column may hold null unless NOT NULL is written
+        for column in table["columns"]:
+            if column["pk"] and not column.get("not_null"):
+                column["nullable"] = True
     return [f"created table {table['schema']}.{name}" if table["schema"] else f"created table {name}"]
 
 
@@ -575,6 +624,12 @@ def _alter_table(schema: _Schema, statement: exp.Alter, place: dict, source: str
     return effects
 
 
+_SQLITE_SCHEMA_ROW = re.compile(r"^\s*INSERT\s+INTO\s+\"?sqlite_(?:master|schema)\"?\s*\(type,\s*name,\s*tbl_name,\s*rootpage,\s*sql\)\s*"
+                                r"VALUES\s*\('\w+',\s*'(?:[^']|'')*',\s*'(?:[^']|'')*',\s*\d+,\s*'(?P<sql>(?:[^']|'')*)'\)\s*;?\s*$",
+                                re.IGNORECASE | re.DOTALL)
+"""A row Python's `iterdump()` writes into SQLite's own schema table: how it dumps a virtual table."""
+
+
 def _apply(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
     """Apply one statement to the schema.
 
@@ -582,6 +637,8 @@ def _apply(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
         What it did (`created table sales.orders`...), and whether it was read (by sqlglot or by our
         rules); a statement neither reads is left out of the schema and kept as "not read".
     """
+    if (row := _SQLITE_SCHEMA_ROW.match(text)) is not None:  # the statement the row holds
+        return _apply(schema, row["sql"].replace("''", "'"), place)
     text = re.sub(r"(/\*!\d+\s+|\*/)", " ", text)  # MySQL's versioned comments hold real SQL: kept, unwrapped
     text = re.sub(r"^(\s*(--[^\n]*(\n|$)|/\*.*?\*/))+", "", text, flags=re.DOTALL).strip()  # the comments before it
     if not text:
@@ -597,7 +654,7 @@ def _apply(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
                 and not statement.expression:
             return _rules(schema, text, place)
         if kind == "TABLE":
-            return _create_table(schema, statement, place, parsed), True
+            return _create_table(schema, statement, place, parsed, bool(re.search(r"\)\s*(?:STRICT\s*,\s*)?WITHOUT\s+ROWID", text, re.IGNORECASE))), True
         if kind == "VIEW":
             owner, name = _name(statement.this)
             query = statement.expression
@@ -884,7 +941,13 @@ def _rules(schema: _Schema, text: str, place: dict) -> tuple[list[str], bool]:
     if re.match(r"^\s*CREATE\s+(?:TEMPORARY\s+|TEMP\s+|VIRTUAL\s+|FOREIGN\s+)?TABLE\b", text, re.IGNORECASE):
         if re.match(r"^\s*CREATE\s+VIRTUAL\s+TABLE", text, re.IGNORECASE):  # SQLite's full-text search and the like
             match = re.match(r"^\s*CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\"'`]+)", text, re.IGNORECASE)
-            schema.put("table", "", _plain(match[1].strip("'")) if match else "?", place, columns=[], primary_key=[], foreign_keys=[],
+            arguments = re.search(r"\bUSING\s+\w+\s*\((.*)\)\s*;?\s*$", text, re.IGNORECASE | re.DOTALL)
+            columns = []  # the module's arguments that are names (fts5's columns, rtree's); `option = value` are not
+            for argument in _split_top(arguments[1]) if arguments else []:
+                if (name := re.fullmatch(r"\s*([\w\"`]+)(?:\s+UNINDEXED)?\s*", argument, re.IGNORECASE)):
+                    columns.append({"name": _plain(name[1]), "type": "", "nullable": True, "default": "", "computed": "", "identity": False,
+                                    "pk": False, "unique": False, "references": None, "check": "", "comment": "", "created": place, "changed": place})
+            schema.put("table", "", _plain(match[1].strip("'")) if match else "?", place, columns=columns, primary_key=[], foreign_keys=[],
                        unique=[], checks=[], indexes=[], comment="", virtual=True)
             return [f"created virtual table {_plain(match[1]) if match else ''}"], True
         return _rule_table(schema, text, place)
@@ -963,9 +1026,13 @@ def read_origin(root: Path, origin: dict, dialect: str = "", project: orm.Projec
         extra = {key: reading[key] for key in ("dialect_from", "unresolved", "expects", "mapping")}
     else:
         texts = {step["file"]: (root / step["file"]).read_text(encoding="utf-8", errors="replace") for step in origin["steps"]}
-        dialect = dialect or guess_dialect("\n".join(texts.values()))
+        dialect = dialect or origin.get("dialect_hint") or guess_dialect("\n".join(texts.values()))
         given = {file: split_statements(text, dialect) for file, text in texts.items()}
-    schema = _Schema(dialect)
+        if origin.get("lines"):  # one database of a dump holding several: its own lines only
+            first, last = origin["lines"]
+            given = {file: [(line, text) for line, text in statements if first <= line <= last] for file, statements in given.items()}
+    named = ((origin.get("dump") or {}).get("database") or {}).get("value", "")
+    schema = _Schema(dialect, named if dialect == "mysql" and named else None)  # MySQL: a dump's database is its schema
     steps = []
     for step in origin["steps"]:
         statements = []
@@ -984,7 +1051,8 @@ def read_origin(root: Path, origin: dict, dialect: str = "", project: orm.Projec
             if parent:
                 own = {c["name"].lower() for c in table["columns"]}
                 table["columns"] = [c for c in parent["columns"] if c["name"].lower() not in own] + table["columns"]
-    return {**origin, "dialect": dialect, "steps": steps, "objects": schema.objects, "servers": schema.servers, **extra}
+    return {**origin, "dialect": dialect, "steps": steps, "objects": schema.objects, "servers": schema.servers,
+            "default_schema": schema.default, **extra}
 
 
 def extract_origins(root: Path, files: list[str]) -> list[dict]:

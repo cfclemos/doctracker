@@ -106,6 +106,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     templates.filters["markdown"] = pages.render_markdown
     templates.filters["commit_message"] = pages.render_commit_message
     templates.filters["local_time"] = pages.local_time
+    templates.filters["age"] = pages.age
     templates.filters["highlight"] = pages.highlight
     templates.globals.update(
         static_url=_static_url,
@@ -314,7 +315,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         """The Drift tab: each origin (SQL files, migrations) with the databases it describes (how each
         link was made), its suggestions and its differences from each database linked."""
         described = describe_origins(state.origins, catalog, connections.connections(), project_root)
-        return [{**origin, **described[origin["name"]],
+        read_at = {}  # when each database was read, beside a dump's age
+        for database in catalog.objects(kind="database"):
+            read_at[database["path"]] = (catalog.collection(database["connection"]) or {}).get("started", "")
+        return [{**origin, **described[origin["name"]], "read_at": read_at,
                  "comparisons": comparisons(origin, described[origin["name"]], catalog)}
                 for origin in state.origins]
 

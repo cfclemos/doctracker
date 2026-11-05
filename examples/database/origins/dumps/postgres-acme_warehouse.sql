@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict I2LGEix8F3H0oGcHqrzje8KB1s8ulocCT4RMdb4TvmmTaPS1EF2X5i0Pu47YW8G
+\restrict E6MexvfeBhOEafW5xgbcGKcPQgqIgEcedGVTipXskF7CRntfdIlLjX3I5beOcA4
 
 -- Dumped from database version 17.6 (Debian 17.6-2.pgdg13+1)
 -- Dumped by pg_dump version 17.6 (Debian 17.6-2.pgdg13+1)
@@ -146,5 +146,5 @@ ALTER TABLE ONLY logistics.shipments
 -- PostgreSQL database dump complete
 --
 
-\unrestrict I2LGEix8F3H0oGcHqrzje8KB1s8ulocCT4RMdb4TvmmTaPS1EF2X5i0Pu47YW8G
+\unrestrict E6MexvfeBhOEafW5xgbcGKcPQgqIgEcedGVTipXskF7CRntfdIlLjX3I5beOcA4
 

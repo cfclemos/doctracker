@@ -42,6 +42,7 @@ CREATE TABLE products (
     active INTEGER NOT NULL DEFAULT 1
 );
 PRAGMA writable_schema=ON;
+INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql)VALUES('table','products_search','products_search',0,'CREATE VIRTUAL TABLE products_search USING fts5 (name, content = ''products'', content_rowid = ''id'')');
 CREATE TABLE 'products_search_config'(k PRIMARY KEY, v) WITHOUT ROWID;
 CREATE TABLE 'products_search_data'(id INTEGER PRIMARY KEY, block BLOB);
 CREATE TABLE 'products_search_docsize'(id INTEGER PRIMARY KEY, sz BLOB);

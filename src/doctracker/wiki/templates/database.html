@@ -71,6 +71,7 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
         <a {{ ui.nav(link.database) }}><code>{{ db_place(link.database) }}</code></a>
         {% for how in link.how %}<span class="db-mark origin-how-{{ how }}" title="{{ HOW[how][1] }}">{{ HOW[how][0] }}</span>{% endfor %}
         {% if link.declared %}<span class="summary">in <code>{{ link.declared }}</code></span>{% endif %}
+        {% if origin.generated and origin.generated.at %}{% set g = origin.generated %}<span class="summary" title="When the dump was made, and when the database was last read">{% if g.source == "dump" and not g.zone %}dump made {{ g.written }} (no time zone){% else %}dump {{ g.at | age }}{% if g.source == "git" %} (in the repository){% endif %}{% endif %} · database read {{ origin.read_at.get(link.database, "") | age }}</span>{% endif %}
         <span class="origin-link-actions">
           {% if "chosen" in link.how %}{{ choose(origin.name, link.database, "", "Forget my choice", "cancel") }}{% endif %}
           {{ choose(origin.name, link.database, "0", "Unlink", "remove") }}
@@ -91,10 +92,10 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     <div class="origin-link">{{ differences(origin.comparisons["origin:" ~ origin.related], origin, "this origin", "the other", "both declare the same schema") }}</div>
     {% endif %}
     {% if origin.suggestions %}
-    <h3 class="block-subtitle">Suggested by the names of its tables</h3>
+    <h3 class="block-subtitle">Suggested by its tables (the closest first)</h3>
     {% for s in origin.suggestions %}
     <div class="origin-link origin-suggestion"><div class="origin-link-head"><a {{ ui.nav(s.database) }}><code>{{ db_place(s.database) }}</code></a>
-      <span class="summary">{{ s.matched }} of {{ s.total }} tables match</span>
+      <span class="summary">{{ s.same }} of {{ s.total }} tables the same in everything · {{ s.matched }} by name</span>
       <span class="origin-link-actions">{{ choose(origin.name, s.database, "1", "Link", "allow") }}</span></div></div>
     {% endfor %}
     {% endif %}

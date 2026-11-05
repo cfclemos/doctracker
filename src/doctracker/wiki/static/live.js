@@ -26,6 +26,38 @@ document.addEventListener("htmx:beforeRequest", (event) => {
     ownChangeUntil = Date.now() + 3000;
   }
 });
+
+// While what a click asked for is on its way (a link, a button, a form, a select), a thin bar runs along
+// the top of the page and the cursor waits; it shows only after 150 ms, so quick answers do not flicker.
+// The wiki's own reloads (live updates, polling) do not show it.
+// Followed on the request itself (its `loadend`): the element clicked is often replaced by the answer,
+// and htmx's own events fired on it then never reach the document. A bar left on goes off after 20 s.
+const loadingRequests = new Set();
+let loadingTimer = null;
+let loadingGuard = null;
+function loadingDone(request) {
+  loadingRequests.delete(request);
+  if (loadingRequests.size === 0) {
+    clearTimeout(loadingTimer);
+    clearTimeout(loadingGuard);
+    document.documentElement.classList.remove("loading");
+  }
+}
+const ASKED_BY = new Set(["click", "submit", "change", "input", "keyup", "search", "toggle"]);
+document.addEventListener("htmx:beforeRequest", (event) => {
+  const by = event.detail.requestConfig?.triggeringEvent;
+  const request = event.detail.xhr;
+  // only what a person did (a trusted click, submit, change...): not polling, live reloads nor "load"
+  if (!request || !by || !by.isTrusted || !ASKED_BY.has(by.type)) return;
+  loadingRequests.add(request);
+  request.addEventListener("loadend", () => loadingDone(request));
+  clearTimeout(loadingTimer);
+  loadingTimer = setTimeout(() => {
+    if (loadingRequests.size) document.documentElement.classList.add("loading");
+  }, 150);
+  clearTimeout(loadingGuard);
+  loadingGuard = setTimeout(() => { loadingRequests.clear(); loadingDone(null); }, 20000);
+});
 document.addEventListener("close", (event) => {
   if (event.target.matches("dialog") && reloadWaiting) {
     reloadWaiting = false;
