@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.datastructures import QueryParams
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -27,6 +27,7 @@ from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
                               class_paths, er_diagram, file_timeline, find_callable)
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
+from doctracker.history.working import changed_files, current_branch, top_level
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
 from doctracker.search import DEFAULT_LIMIT, DEFAULT_MODE, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
@@ -1047,10 +1048,49 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(pages.visible_graph(state, graph, shown))
         return JSONResponse({"error": f"Unknown view: {view}"}, status_code=404)
 
+    async def dashboard() -> dict:
+        """What the dashboard at `/` sums up of each section, from the same functions as their pages.
+
+        `agent`: the open plans (each with its tasks to do, doing and done) and the commits made outside the
+        flow waiting for review; `code`: how many modules, classes and functions, and the dead code found;
+        `databases`: the connections allowed, blocked and failing, the open lint findings by level and the
+        origins differing from a database they describe; `git`: the branch, the files changed and the last
+        commits.
+        """
+        plans, reviews = [], {"id": 0, "waiting": 0}
+        for plan in notes.planner(include_done=False)["plans"]:
+            tasks = [task for feature in plan["features"] for task in feature["tasks"]]
+            if plan["fixed"]:
+                reviews = {"id": plan["id"], "waiting": sum(task["state"] != "done" for task in tasks)}
+                continue
+            plans.append({"id": plan["id"], "title": plan["title"], "state": plan["state"],
+                          **{status: sum(task["status"] == status for task in tasks) for status in ("todo", "doing", "done")}})
+        kinds = [entity["kind"] for entity in state.entities.values()]
+        listed = connections.connections()
+        answers = availability()
+        opened = [f for f in lint.findings(state.origins, listed) if f["state"] == "open"]
+        differing = [origin["name"] for origin in drift()
+                     if any(c["missing"] or c["extra"] or any(t["differences"] for t in c["tables"].values())
+                            for c in origin["comparisons"].values())]
+        top = await top_level(project_root)
+        commits = await read_history(project_root, 5) or []
+        return {
+            "agent": {"plans": plans, "reviews": reviews},
+            "code": {"modules": kinds.count("module"), "classes": kinds.count("class"), "functions": kinds.count("function"),
+                     "dead": len(state.dead_code)},
+            "databases": {"allowed": sum(bool(c["allowed"]) for c in listed), "blocked": sum(not c["allowed"] for c in listed),
+                          "failing": sum(answer == "failed" for answer in answers.values()),
+                          "lint": [(level, sum(f["level"] == level for f in opened)) for level in LINT_LEVELS],
+                          "differing": len(differing), "origins": len(state.origins)},
+            "git": {"branch": await current_branch(top) if top else "", "changed": len(await changed_files(top)) if top else 0,
+                    "commits": commits},
+        }
+
     async def index(request: Request) -> Response:
-        if state.ready and state.roots:
-            return RedirectResponse(f"/wiki/{state.roots[0]}")
-        return await render(request, "")
+        """The dashboard: a block per section (AGENT, CODE, DATABASES, GIT) summing it up."""
+        if not state.ready:
+            return render_page(request, "loading.html", "/", {"path": ""})
+        return render_page(request, "dashboard.html", "/", {"path": "", "view": "dashboard", "board": await dashboard()})
 
     async def wiki(request: Request) -> Response:
         return await render(request, request.path_params["path"])

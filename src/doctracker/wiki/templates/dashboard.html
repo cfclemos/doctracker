@@ -1,0 +1,66 @@
+{% import "macros.html" as ui %}
+{# The dashboard at /: one block per section, in the tree's order (AGENT, CODE, DATABASES, GIT), each
+   number a link to the page it sums up (web.dashboard gives them, from the same functions as the pages). #}
+{% macro stat(number, label, url, level="") -%}
+<a class="dash-stat{% if level %} lint-{{ level }}{% endif %}" {{ ui.nav_url(url) }}><b>{{ "{:,}".format(number) }}</b><span>{{ label }}</span></a>
+{%- endmacro %}
+{% macro head(icon, title, url) -%}
+<h2 class="dash-head"><a {{ ui.nav_url(url) }}>{{ ui.icon(icon) }}{{ title }}</a></h2>
+{%- endmacro %}
+<div class="dashboard-page">
+  {{ ui.view_header("project", "DOCTRACKER", "What each section holds now: a number opens the page it comes from.") }}
+  <div class="dash-grid">
+    {% set agent = board.agent %}
+    <section class="dash-block">
+      {{ head("notes", "AGENT", "/agent") }}
+      <div class="dash-stats">
+        {{ stat(agent.plans | length, "open plan" ~ ("" if agent.plans | length == 1 else "s"), "/agent/planner") }}
+        {{ stat(agent.reviews.waiting, "commit" ~ ("" if agent.reviews.waiting == 1 else "s") ~ " waiting for review",
+                "/agent/planner?plans=" ~ agent.reviews.id) }}
+      </div>
+      <ul class="dash-list">
+        {% for plan in agent.plans %}
+        <li><a {{ ui.nav_url("/agent/planner?plans=" ~ plan.id) }}>{{ plan.title }}</a>
+          <span class="dash-counts"><span class="state-todo">{{ plan.todo }} to do</span> · <span class="state-doing">{{ plan.doing }} doing</span> · <span class="state-done">{{ plan.done }} done</span></span></li>
+        {% else %}<li class="empty">No open plan.</li>{% endfor %}
+      </ul>
+    </section>
+    {% set code = board.code %}
+    <section class="dash-block">
+      {{ head("code", "CODE", "/code") }}
+      <div class="dash-stats">
+        {{ stat(code.modules, "modules", "/code/diagrams/architecture") }}
+        {{ stat(code.classes, "classes", "/code/diagrams/classes") }}
+        {{ stat(code.functions, "functions", "/code/diagrams/calls") }}
+        {{ stat(code.dead, "found in Dead Code", "/code/dead-code") }}
+      </div>
+    </section>
+    {% set db = board.databases %}
+    <section class="dash-block">
+      {{ head("database", "DATABASES", "/databases") }}
+      <div class="dash-stats">
+        {{ stat(db.allowed, "connections allowed", db_urls.connections) }}
+        {{ stat(db.blocked, "blocked", db_urls.connections) }}
+        {{ stat(db.failing, "failing", db_urls.connections) }}
+        {{ stat(db.differing, "of " ~ db.origins ~ " origins differ (Drift)", db_urls.drift) }}
+      </div>
+      <div class="dash-stats">
+        {% for level, count in db.lint %}{{ stat(count, "lint " ~ level ~ ("" if count == 1 else "s"), db_urls.lint ~ "?f_level=" ~ level, level) }}{% endfor %}
+      </div>
+    </section>
+    {% set git = board.git %}
+    <section class="dash-block">
+      {{ head("git", "GIT", "/git") }}
+      <div class="dash-stats">
+        <span class="dash-stat"><b class="dash-branch">{{ git.branch or "-" }}</b><span>current branch</span></span>
+        {{ stat(git.changed, "file" ~ ("" if git.changed == 1 else "s") ~ " changed, not committed", "/git") }}
+      </div>
+      <ul class="dash-list">
+        {% for commit in git.commits %}
+        <li><a {{ ui.nav_url("/git?commit=" ~ commit.hash) }}><code>{{ commit.short }}</code> {{ commit.subject }}</a>
+          <span class="dash-counts">{{ commit.date | local_time }}</span></li>
+        {% else %}<li class="empty">No commit yet.</li>{% endfor %}
+      </ul>
+    </section>
+  </div>
+</div>
