@@ -1,4 +1,5 @@
 {% import "macros.html" as ui %}
+{% from "database.html" import lint_cell %}
 {# The page of a database object (`item`, from CatalogStore.object): a server, database, schema, table,
    view, column, function, trigger..., read from a live database or declared by a file (origin:...):
    the same page, from the same store, the header telling which (read from the live database / declared
@@ -202,6 +203,10 @@
 {% call ui.section("warns", "Samples and profile", name="samples", divider=true) %}{{ unavailable("samples and profiles of the values come in a later step.") }}{% endcall %}
 {% endif %}
 {% call ui.section("warns", "Use in the code", name="code-use", divider=true) %}{{ unavailable("the links to the code that uses it come in a later step.") }}{% endcall %}
-{% if tabular %}{% call ui.section("warns", "Lint", name="lint", divider=true) %}{{ unavailable("the lint comes in a later step.") }}{% endcall %}{% endif %}
+{% if tabular %}{% call ui.section("warns", "Lint", count=item.lint | length, name="lint", divider=true) %}
+  {% if item.lint %}{% call(row, key, value) ui.list_table("lint-object", "", item.lint_listing, "", interactive=False) %}{{ lint_cell(row, key, value, actions=false) }}{% endcall %}
+  <p class="see-in"><a class="see-in-link" {{ ui.nav_url("/database?tab=lint") }}>{{ ui.icon("database") }}Lint</a> lists every finding, to accept one saying why.</p>
+  {% else %}<p class="empty">The lint finds nothing in it.</p>{% endif %}
+{% endcall %}{% endif %}
 {% call ui.section("warns", "History", name="history", divider=true) %}{{ unavailable("the history from migrations and commits comes in a later step.") }}{% endcall %}
 {% endif %}

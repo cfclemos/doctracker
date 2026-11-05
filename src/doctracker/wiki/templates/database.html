@@ -18,20 +18,37 @@
   </dl>
 </article>
 {%- endmacro %}
+{# A cell of the lint's list (the Lint tab and an object's page), or a value of a column's filter (`row` none). #}
+{% macro lint_cell(row, key, value=none, actions=true) -%}
+{%- if row is none -%}
+  {%- if key == "level" %}<span class="lint-level lint-{{ value }}">{{ value }}</span>{% else %}{{ value }}{% endif -%}
+{%- else -%}
+{%- set value = row[key] -%}
+{%- if key == "level" %}<span class="lint-level lint-{{ value }}">{{ value }}</span>
+{%- elif key == "rule" %}<span class="lint-rule">{{ ui.help_hover(row.rule, row.help) }}{{ row.rule }}</span>
+{%- elif key == "object" %}{% if row.origin %}<a {{ ui.nav("origin:" ~ row.origin) }} title="The origin's page, with its steps"><code>{{ value }}</code></a>
+  {%- else %}<a href="/wiki/{{ row.path }}" data-page-modal="{{ row.path }}"><code>{{ value }}</code></a>{% endif %}
+{%- elif key == "found_in" %}{% for place in value %}<code>{{ place }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}
+{%- elif key == "state" %}{% if value == "accepted" %}<span class="lint-accepted" title="Accepted {{ row.accepted | local_time }}">accepted: {{ row.reason }}</span>
+  {%- if actions %}<form class="lint-action" hx-post="/database/lint-reopen" hx-target="#content"><input type="hidden" name="key" value="{{ row.key }}">
+    <button type="submit" class="see-in-link" title="Open it again: listed as a finding to look at"><i class="bar-icon bar-icon-cancel"></i>Undo</button></form>{% endif %}
+  {%- else %}open{% if actions %} <button type="button" class="see-in-link lint-action" hx-get="/database/lint-form?key={{ row.key | urlencode }}" hx-target="#database-dialog-body"
+    title="Accept it, saying why: it stays listed, as accepted"><i class="bar-icon bar-icon-allow"></i>Accept</button>{% endif %}{% endif %}
+{%- elif key == "page" %}<a class="objects-page-link" href="/wiki/{{ 'origin:' ~ row.origin if row.origin else row.path }}" data-page-modal="{{ 'origin:' ~ row.origin if row.origin else row.path }}" title="Open its page" aria-label="Open the page of {{ row.object }}"><i class="bar-icon bar-icon-link"></i></a>
+{%- elif value is none or value == "" or value == [] -%}-
+{%- else %}{{ value }}{% endif -%}
+{%- endif -%}
+{%- endmacro %}
 {% macro post(action, confirm="", title="") -%}
 hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}
 
-{% macro objects_page(number, label, current=false, aria="") -%}
-<button type="button" class="page{% if current %} current{% endif %}"{% if number is none %} disabled{% endif %}
-        {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
-        hx-get="/database?page={{ number }}" hx-include="#objects-filter, .objects-table thead" hx-target="#content" hx-push-url="true">{{ label }}</button>
-{%- endmacro %}
-<div class="{% if tab in ('universe', 'diagram', 'evolution') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
+<div class="{% if tab in ('universe', 'diagram', 'evolution') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab in ('objects', 'lint') %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
   {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
              ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("slices", "Slices", "/database?tab=slices"),
              ("evolution", "Evolution", "/database?tab=evolution"),
+             ("lint", "Lint", "/database?tab=lint"),
              ("objects", "Navigate Database", "/database?tab=objects"),
              ("drift", "Drift", "/database?tab=drift")), tab) }}
   {% if tab == "universe" %}
@@ -218,6 +235,20 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {% endcall %}
   {% else %}<p class="empty">The project has no SQL files, migrations nor ORM models declaring a schema.</p>
   {% endfor %}
+  {% elif tab == "lint" %}
+  <p class="tab-description">What in the databases' schema and in the project's migrations deserves a look: tables without a primary key, foreign keys without an index, relations only by name, destructive migration steps, and more — each rule's ? says why it matters and how to fix it. The databases read and the project's files are linted alike; the same finding in several of them is one row, Found in telling where. A finding you accept, with its reason, stays listed as accepted (the State filter shows it), kept in doc/lint/accepted.json with the project.</p>
+  {# The counters of the open findings, by level and by rule: a click lists only those. #}
+  <form id="lint-filter" class="lint-filter"><input type="hidden" name="tab" value="lint">
+    <input type="hidden" name="sort" value="{{ listing.sort }}"><input type="hidden" name="dir" value="{{ listing.direction }}"></form>
+  <div class="lint-summary">
+    <span class="lint-levels">{% for level, count in lint_levels %}<a class="lint-count lint-{{ level }}" {{ ui.nav_url("/database?tab=lint&f_level=" ~ level) }}
+      title="List only the open findings of level {{ level }}"><b>{{ "{:,}".format(count) }}</b> {{ level }}{% if count != 1 %}s{% endif %}</a>{% endfor %}
+      {% if lint_accepted %}<a class="lint-count" {{ ui.nav_url("/database?tab=lint&f_state=accepted") }} title="List the findings accepted"><b>{{ lint_accepted }}</b> accepted</a>{% endif %}</span>
+    <span class="lint-rules">{% for r in lint_rules %}<span class="lint-rule">{{ ui.help_hover(r.title, r.help) }}<a class="lint-count lint-{{ r.level }}"
+      {{ ui.nav_url("/database?tab=lint&f_rule=" ~ (r.title | urlencode)) }} title="List only these findings">{{ r.title }} <b>{{ "{:,}".format(r.count) }}</b></a></span>{% endfor %}</span>
+  </div>
+  {% set label %}{{ "{:,}".format(listing.total) }} finding{% if listing.total != 1 %}s{% endif %}{% endset %}
+  {% call(row, key, value) ui.list_table("lint", "#lint-filter", listing, label) %}{{ lint_cell(row, key, value) }}{% endcall %}
   {% elif tab == "objects" %}
   <p class="tab-description">Every object doctracker read from the allowed connections. Browse goes down the SQL tree one level at a time (servers, databases, schemas, tables and views, columns): a name goes into it, the path above goes back. Search lists every object at once. A column's title sorts by it, its filter icon filters it; the page icon opens the object's page.</p>
   {# The mode, and what goes with every request of the list: the level (Browse) or the filters above
@@ -275,9 +306,11 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   </form>
   {% if not has_collections %}<p class="empty">No database read yet: allow a connection in Connections.</p>
   {% else %}
-  {# The list fills the room left on the screen: its head stays while the rows scroll, the pages below.
-     Typing in a column's filter redraws only the rows, the count and the pages, so the field keeps the cursor. #}
-  {% macro cell(row, key) -%}
+  {% set label %}{{ listing.total }} {% if mode == "browse" %}{{ level if listing.total != 1 else level[:-1] }}{% else %}object{% if listing.total != 1 %}s{% endif %}{% endif %}{% endset %}
+  {% call(row, key, value) ui.list_table("objects", "#objects-filter", listing, label) %}
+  {%- if row is none -%}
+    {%- if key == "size" %}{{ value | int | size }}{% elif key == "read" %}{{ value | local_time(seconds=True) }}{% elif key == "marks" %}{{ db_marks.get(value, value) }}{% else %}{{ value }}{% endif -%}
+  {%- else -%}
   {%- set value = row[key] -%}
   {%- if key == "name" -%}
     {%- if row.down %}<a {{ ui.nav_url("/database?tab=objects&mode=browse&at=" ~ (row.path | urlencode)) }} title="Go into it"><code>{{ row.name }}</code></a>
@@ -291,74 +324,8 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
   {%- elif key == "where" -%}<span class="summary">{{ value }}</span>
   {%- elif value is number -%}{{ "{:,}".format(value) }}
   {%- else -%}{{ value }}{%- endif -%}
-  {%- endmacro %}
-  <div class="objects-list">
-  <p id="objects-count" class="objects-count">
-    <span class="objects-chips"><b>Selected filters:</b>
-    {% for field, label, shown in in_use %}<span class="objects-chip">{{ label }}: <b>{{ shown }}</b>
-      <button type="button" aria-label="Remove the filter {{ label }}" title="Remove this filter" hx-get="/database" hx-include="#objects-filter, .objects-table thead"
-              hx-vals='{"{{ field }}": ""{% if field == "database" %}, "schema": ""{% endif %}}' hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-push-url="true">×</button></span>
-    {% else %}<span class="empty">none</span>{% endfor %}</span>
-    <span class="objects-total">{{ objects_total }} {% if mode == "browse" %}{{ level if objects_total != 1 else level[:-1] }}{% else %}object{% if objects_total != 1 %}s{% endif %}{% endif %}</span></p>
-  <div class="objects-scroll">
-  <table class="db-table objects-table" data-level="{{ level if mode == 'browse' else 'search' }}">
-    <colgroup>{% for c in list_columns %}<col class="col-{{ c.key }}">{% endfor %}</colgroup>
-    <thead hx-get="/database" hx-include="#objects-filter, closest thead" hx-trigger="filters-changed"
-           hx-target="#objects-rows" hx-select="#objects-rows" hx-select-oob="#objects-count,#objects-pages" hx-swap="outerHTML" hx-push-url="true">
-      {# Each title sorts by its column, up then down; × beside the arrow takes the order away (the list's
-         own order again); its right edge, dragged, sets its width.
-         Each column with a filter has its icon: a box listing every value of the column with how many rows
-         hold it, "(empty)" first, to tick one or more and Apply (static/live.js opens it under the icon, one at a
-         time, and fetches its counts again each time it opens); a filter in use lights its icon. #}
-      <tr>{% for c in list_columns %}
-        {% set next = "desc" if sort == c.key and direction != "desc" else "asc" %}
-        <th aria-sort="{% if sort == c.key %}{{ 'descending' if direction == 'desc' else 'ascending' }}{% else %}none{% endif %}"><span class="objects-head">
-          {% if c.key == "page" %}<span class="objects-sort">{{ c.title }}</span>{% else %}
-          <button type="button" class="objects-sort" hx-get="/database" hx-include="#objects-filter, closest thead" hx-vals='{"sort": "{{ c.key }}", "dir": "{{ next }}"}'
-                  hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume" title="Sort by {{ c.title | lower }}">{{ c.title }}
-            <span class="objects-arrow">{% if sort == c.key %}{{ "↓" if direction == "desc" else "↑" }}{% endif %}</span></button>
-          {% if sort == c.key %}{# back to the list's own order #}
-          <button type="button" class="objects-unsort" hx-get="/database" hx-include="#objects-filter, closest thead" hx-vals='{"sort": "", "dir": ""}'
-                  hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume"
-                  aria-label="Remove the order by {{ c.title | lower }}" title="Back to the list's own order">×</button>{% endif %}{% endif %}
-          {% if c.filter %}{% set picked = column_filters[c.key] %}
-          <details class="objects-column-filter{% if picked %} active{% endif %}">
-            <summary aria-label="Filter {{ c.title | lower }}" title="Filter {{ c.title | lower }}"><i class="bar-icon bar-icon-filters"></i></summary>
-            <div class="objects-filter-box" id="objects-values-{{ c.key }}" hx-get="/database" hx-include="#objects-filter, closest thead"
-                 hx-trigger="refresh-values" hx-target="this" hx-select="#objects-values-{{ c.key }}" hx-select-oob="unset" hx-swap="outerHTML" hx-push-url="false">
-              <input type="search" class="objects-values-find" placeholder="Search the values…" aria-label="Search the values of {{ c.title | lower }}" autocomplete="off">
-              <div class="objects-values-head"><span>{{ values[c.key] | length }} value{% if values[c.key] | length != 1 %}s{% endif %}</span>
-                <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
-                <button type="button" class="objects-values-apply">Apply</button></span></div>
-              <ul class="objects-values">{% for value, count in values[c.key] %}
-                <li><label><input type="checkbox" name="f_{{ c.key }}" value="{{ value }}"{% if value in picked %} checked{% endif %}>
-                  <span class="objects-value">{% if value == empty %}<i>(empty)</i>{% elif c.key == "size" %}{{ value | int | size }}{% elif c.key == "read" %}{{ value | local_time(seconds=True) }}{% elif c.key == "marks" %}{{ db_marks.get(value, value) }}{% else %}{{ value }}{% endif %}</span>
-                  <span class="count">({{ "{:,}".format(count) }})</span></label></li>
-              {% endfor %}</ul>
-            </div>
-          </details>
-          {% endif %}</span><span class="objects-resize" aria-hidden="true" title="Drag to change the width"></span></th>
-      {% endfor %}</tr>
-    </thead>
-    <tbody id="objects-rows">{% for row in objects %}
-      <tr>{% for c in list_columns %}<td>{{ cell(row, c.key) }}</td>{% endfor %}</tr>
-    {% else %}<tr><td colspan="{{ list_columns | length }}" class="empty">{% if in_use %}Nothing matches these filters.{% else %}Nothing here.{% endif %}</td></tr>
-    {% endfor %}</tbody>
-  </table>
-  </div>
-  <div id="objects-pages">
-  {% if objects_pages %}
-  <nav class="search-pagination" aria-label="Pages of the list">
-    <span class="range">{{ objects_pages.first }}–{{ objects_pages.last }} of {{ objects_pages.total }}</span>
-    <span class="pages">
-      {{ objects_page(objects_pages.previous, "‹", aria="Previous page") }}
-      {% for number in objects_pages.pages %}{% if number is none %}<span class="ellipsis">…</span>{% else %}{{ objects_page(number, number, current=number == objects_pages.current) }}{% endif %}{% endfor %}
-      {{ objects_page(objects_pages.next, "›", aria="Next page") }}
-    </span>
-  </nav>
-  {% endif %}
-  </div>
-  </div>
+  {%- endif -%}
+  {% endcall %}
   {% endif %}
   {% else %}
   <p class="tab-description">The databases your project declares, and those you enter. Declared ones stay blocked until you allow them; doctracker only ever reads: the session is read only where the database allows it, every transaction is rolled back, and any statement that is not a read is aborted before it is sent.</p>

@@ -340,6 +340,102 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {%- else %}<label class="field"><span class="field-label">{{ label }}{% if required %} *{% endif %}</span>{{ caller() }}</label>{% endif %}</div>
 {%- endmacro %}
 
+{# A list of DATABASE (Navigate Database, Lint; an object's page): its filters in use and how many rows, then
+   the table, whose head stays while the rows scroll, then its pages. `name` names its parts (`<name>-rows`,
+   `-count`, `-pages`); `form` is the form holding what goes with every request (the tab, the filters
+   above); `listing` what `web.list_page` gives (rows, columns, values, sort, pages, filters in use);
+   `label` the rows counted (`3 findings`). The caller draws a cell, `caller(row, key)`, and a value of a
+   column's filter, `caller(none, key, value)`. Without `interactive`: the table alone, no sorting,
+   filters nor pages (an object's page). Typing in a column's filter redraws only the rows, the count and
+   the pages, so the field keeps the cursor. #}
+{% macro list_table(name, form, listing, label, url="/database", interactive=True) -%}
+{%- set cell = caller -%}
+{%- set include = form ~ ", ." ~ name ~ "-table thead" -%}
+<div class="objects-list">
+{% if interactive %}
+<p id="{{ name }}-count" class="objects-count">
+  <span class="objects-chips"><b>Selected filters:</b>
+  {% for field, title, shown in listing.in_use %}<span class="objects-chip">{{ title }}: <b>{{ shown }}</b>
+    <button type="button" aria-label="Remove the filter {{ title }}" title="Remove this filter" hx-get="{{ url }}" hx-include="{{ include }}"
+            hx-vals='{"{{ field }}": ""{% if field == "database" %}, "schema": ""{% endif %}}' hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-push-url="true">×</button></span>
+  {% else %}<span class="empty">none</span>{% endfor %}</span>
+  <span class="objects-total">{{ label }}</span></p>
+{% endif %}
+<div class="objects-scroll">
+<table class="db-table objects-table {{ name }}-table" data-level="{{ listing.level }}">
+  <colgroup>{% for c in listing.columns %}<col class="col-{{ c.key }}">{% endfor %}</colgroup>
+  {% if interactive %}
+  <thead hx-get="{{ url }}" hx-include="{{ form }}, closest thead" hx-trigger="filters-changed"
+         hx-target="#{{ name }}-rows" hx-select="#{{ name }}-rows" hx-select-oob="#{{ name }}-count,#{{ name }}-pages" hx-swap="outerHTML" hx-push-url="true">
+    {# Each title sorts by its column, up then down; × beside the arrow takes the order away (the list's
+       own order again); its right edge, dragged, sets its width.
+       Each column with a filter has its icon: a box listing every value of the column with how many rows
+       hold it, "(empty)" first, to tick one or more and Apply (static/live.js opens it under the icon, one at a
+       time, and fetches its counts again each time it opens); a filter in use lights its icon. #}
+    <tr>{% for c in listing.columns %}
+      {% set next = "desc" if listing.sort == c.key and listing.direction != "desc" else "asc" %}
+      <th aria-sort="{% if listing.sort == c.key %}{{ 'descending' if listing.direction == 'desc' else 'ascending' }}{% else %}none{% endif %}"><span class="objects-head">
+        {% if c.key == "page" %}<span class="objects-sort">{{ c.title }}</span>{% else %}
+        <button type="button" class="objects-sort" hx-get="{{ url }}" hx-include="{{ form }}, closest thead" hx-vals='{"sort": "{{ c.key }}", "dir": "{{ next }}"}'
+                hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume" title="Sort by {{ c.title | lower }}">{{ c.title }}
+          <span class="objects-arrow">{% if listing.sort == c.key %}{{ "↓" if listing.direction == "desc" else "↑" }}{% endif %}</span>
+          {%- if listing.sort == c.key %}{# inside the title, beside the arrow: back to the list's own order (its click goes no further) #}
+          <span class="objects-unsort" role="button" tabindex="0" hx-get="{{ url }}" hx-include="{{ form }}, closest thead" hx-vals='{"sort": "", "dir": ""}'
+                hx-target="#content" hx-select="unset" hx-select-oob="unset" hx-swap="innerHTML" hx-trigger="click consume, keydown[key=='Enter'] consume"
+                aria-label="Remove the order by {{ c.title | lower }}" title="Back to the list's own order">×</span>{% endif %}</button>{% endif %}
+        {% if c.filter %}{% set picked = listing.column_filters[c.key] %}
+        {% if listing.kept and c.key in listing.kept %}<input type="hidden" name="f_{{ c.key }}" value="">{% endif %}
+        <details class="objects-column-filter{% if picked %} active{% endif %}">
+          <summary aria-label="Filter {{ c.title | lower }}" title="Filter {{ c.title | lower }}"><i class="bar-icon bar-icon-filters"></i></summary>
+          <div class="objects-filter-box" id="{{ name }}-values-{{ c.key }}" hx-get="{{ url }}" hx-include="{{ form }}, closest thead"
+               hx-trigger="refresh-values" hx-target="this" hx-select="#{{ name }}-values-{{ c.key }}" hx-select-oob="unset" hx-swap="outerHTML" hx-push-url="false">
+            <input type="search" class="objects-values-find" placeholder="Search the values…" aria-label="Search the values of {{ c.title | lower }}" autocomplete="off">
+            <div class="objects-values-head"><span>{{ listing["values"][c.key] | length }} value{% if listing["values"][c.key] | length != 1 %}s{% endif %}</span>
+              <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
+              <button type="button" class="objects-values-apply">Apply</button></span></div>
+            <ul class="objects-values">{% for value, count in listing["values"][c.key] %}
+              <li><label><input type="checkbox" name="f_{{ c.key }}" value="{{ value }}"{% if value in picked %} checked{% endif %}>
+                <span class="objects-value">{% if value == listing.empty %}<i>(empty)</i>{% else %}{{ cell(none, c.key, value) }}{% endif %}</span>
+                <span class="count">({{ "{:,}".format(count) }})</span></label></li>
+            {% endfor %}</ul>
+          </div>
+        </details>
+        {% endif %}</span><span class="objects-resize" aria-hidden="true" title="Drag to change the width"></span></th>
+    {% endfor %}</tr>
+  </thead>
+  {% else %}
+  <thead><tr>{% for c in listing.columns %}<th><span class="objects-head"><span class="objects-sort">{{ c.title }}</span></span></th>{% endfor %}</tr></thead>
+  {% endif %}
+  <tbody id="{{ name }}-rows">{% for row in listing.rows %}
+    <tr>{% for c in listing.columns %}<td>{{ cell(row, c.key, none) }}</td>{% endfor %}</tr>
+  {% else %}<tr><td colspan="{{ listing.columns | length }}" class="empty">{% if listing.in_use %}Nothing matches these filters.{% else %}Nothing here.{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table>
+</div>
+{% if interactive %}
+<div id="{{ name }}-pages">
+{% if listing.pages %}{% set p = listing.pages %}
+<nav class="search-pagination" aria-label="Pages of the list">
+  <span class="range">{{ p.first }}–{{ p.last }} of {{ p.total }}</span>
+  <span class="pages">
+    {{ list_page_button(url, include, p.previous, "‹", aria="Previous page") }}
+    {% for number in p.pages %}{% if number is none %}<span class="ellipsis">…</span>{% else %}{{ list_page_button(url, include, number, number, current=number == p.current) }}{% endif %}{% endfor %}
+    {{ list_page_button(url, include, p.next, "›", aria="Next page") }}
+  </span>
+</nav>
+{% endif %}
+</div>
+{% endif %}
+</div>
+{%- endmacro %}
+
+{# A page button of a list (see list_table). #}
+{% macro list_page_button(url, include, number, label, current=false, aria="") -%}
+<button type="button" class="page{% if current %} current{% endif %}"{% if number is none %} disabled{% endif %}
+        {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
+        hx-get="{{ url }}?page={{ number }}" hx-include="{{ include }}" hx-target="#content" hx-push-url="true">{{ label }}</button>
+{%- endmacro %}
+
 {% macro tabs(items, current) -%}
 <nav class="tabs">
   {% for name, label, url in items %}

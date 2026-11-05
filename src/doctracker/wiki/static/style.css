@@ -1931,6 +1931,29 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .objects-page-link { display: inline-flex; color: var(--muted); }
 .objects-page-link:hover { color: var(--accent); }
 .objects-modes { margin-right: 0.5rem; }
+/* DATABASE › Lint: the counters of the open findings (by level, then by rule, a click lists only those),
+   each level in its colour, on its badges and in the list; an object's page shows its own findings. */
+.lint-summary { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.4rem 0 0.6rem; font-size: 0.85rem; }
+.lint-levels, .lint-rules { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.lint-count { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.55rem; border: 1px solid var(--border);
+  border-radius: 999px; color: var(--fg); cursor: pointer; text-decoration: none; }
+.lint-count:hover { border-color: var(--accent); }
+.lint-count.lint-error, .lint-level.lint-error { border-color: #cf222e; }
+.lint-count.lint-warning, .lint-level.lint-warning { border-color: #bf8700; }
+.lint-count.lint-info, .lint-level.lint-info { border-color: var(--accent); }
+.lint-levels .lint-count.lint-error b, .lint-level.lint-error { color: #cf222e; }
+.lint-levels .lint-count.lint-warning b, .lint-level.lint-warning { color: #bf8700; }
+.lint-levels .lint-count.lint-info b, .lint-level.lint-info { color: var(--accent); }
+.lint-rule { display: inline-flex; align-items: center; gap: 0.25rem; }
+.lint-level { display: inline-block; padding: 0 0.45rem; border: 1px solid; border-radius: 999px; font-size: 0.75rem; }
+.lint-accepted { color: var(--muted); }
+.lint-action { display: inline-flex; margin: 0.15rem auto 0; }
+.lint-filter { display: none; }
+.lint-table col.col-level { width: 6.5rem; }
+.lint-table col.col-rule { width: 15%; }
+.lint-table col.col-object { width: 20%; }
+.lint-table col.col-state { width: 12%; }
+.lint-form p { margin: 0.3rem 0; }
 .objects-path { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; flex: 1; min-width: 0; font-size: 0.9rem; }
 .objects-path a { cursor: pointer; }
 .objects-path .sep { color: var(--muted); }
@@ -1956,7 +1979,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
    raised above the other titles, the rows and the page's bars while its box is open. */
 .objects-table thead th:has(.objects-column-filter[open]) { z-index: 1000; }
 .objects-filter-box { z-index: 1000; }
-.objects-unsort { width: 1.2rem; height: 1.2rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; line-height: 1; }
+.objects-sort { display: inline-flex; align-items: center; gap: 0.2rem; }
+.objects-unsort { display: inline-flex; align-items: center; justify-content: center; width: 1.1rem; height: 1.1rem; padding: 0;
+  border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; line-height: 1; font-weight: 400; }
 .objects-unsort:hover { background: var(--border); color: var(--fg); }
 /* The Universe inside an object's page or its consultation modal: a block of the page, not the whole screen. */
 .universe-embed .graph-canvas { height: 30rem; min-height: 0; }
