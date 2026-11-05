@@ -40,6 +40,19 @@
 {%- else %}{{ value }}{% endif -%}
 {%- endif -%}
 {%- endmacro %}
+{# A cell of a list of links between the code and the databases: an object's Use in the code, a code
+   entity's Database use. #}
+{% macro code_cell(row, key) -%}
+{%- set value = row[key] -%}
+{%- if key == "code" %}{% if row.page %}<a {{ ui.nav(value) }}><code>{{ value }}</code></a>{% else %}<code>{{ value }}</code>{% endif %}
+{%- elif key == "objects" %}<button type="button" class="see-in-link" hx-get="/databases/code-reaches?entity={{ row.of | urlencode }}&row={{ row.row }}"
+    hx-target="#page-dialog-body" title="Where it is: the live databases and the files holding it">{{ value | length }} object{{ "s" if value | length != 1 }}</button>
+{%- elif key == "evidence" and value %}<code class="code-evidence" title="{{ value }}">{{ value }}</code>
+{%- elif key == "where" and value %}<code>{{ value }}</code>
+{%- elif key == "page" %}{% if row.page %}<a class="objects-page-link" href="/wiki/{{ row.entity }}" data-page-modal="{{ row.entity }}" title="Open the code's page" aria-label="Open the page of {{ row.entity }}"><i class="bar-icon bar-icon-link"></i></a>{% else %}-{% endif %}
+{%- elif value is none or value == "" or value == [] -%}-
+{%- else %}{{ value }}{% endif -%}
+{%- endmacro %}
 {% macro post(action, confirm="", title="") -%}
 hx-post="/databases/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm="{{ confirm }}"{% endif %}{% if title %} data-confirm-title="{{ title }}"{% endif %}
 {%- endmacro %}

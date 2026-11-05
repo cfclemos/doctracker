@@ -17,6 +17,7 @@ from starlette.staticfiles import StaticFiles
 
 from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
+from doctracker.databases.code_links import code_use, database_use
 from doctracker.databases.discovery import KINDS
 from doctracker.databases.lint import LEVELS as LINT_LEVELS, Lint
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
@@ -202,7 +203,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             found["crumbs"] = pages.db_crumbs(path)
             found["lint"] = lint.for_object(path, state.origins, connections.connections())
             found["lint_listing"] = list_page(lint_rows(found["lint"]), pages.LIST_COLUMNS["lint object"], {}, "lint-object")
+            found["code_use"] = code_use(path, found, state.code_links, state.origins, catalog, connections.connections(), project_root)
+            found["code_listing"] = list_page(code_rows(found["code_use"]), pages.LIST_COLUMNS["code use"], {}, "code-use")
         return found
+
+    def code_rows(found: list[dict]) -> list[dict]:
+        """The links between the code and the databases as rows of a list (see `list_page`): where each
+        one is written (`file:line`, and how many more lines), and whether its code has a page."""
+        return [{**link, "code": link["entity"], "page": link["entity"] in state.entities,
+                 "where": f"{link['file']}:{link['line']}" + (f" (+{len(link['lines']) - 1} lines)" if len(link["lines"]) > 1 else ""),
+                 "how": link["how"] + (f" in {link['databases']} databases" if link.get("databases", 0) > 1 else "")}
+                for link in found]
 
     def database_origin(name: str) -> dict | None:
         """An origin's page data: the origin as read, the databases it describes (its links, told in one
@@ -236,6 +247,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         else:
             content = "module.html" if entity["kind"] == "module" else "entity.html"  # for every language
             context["relations"] = pages.relations(state, path)
+            used = code_rows(database_use(path, state.code_links, state.origins, catalog, connections.connections(), project_root))
+            context["database_use"] = list_page([{**row, "of": path, "row": index} for index, row in enumerate(used)],
+                                                pages.LIST_COLUMNS["database use"], {}, "database-use")
             status = 200
             context["breadcrumbs"] = pages.breadcrumbs(state, path)
             context["previous_names"] = await earlier_names(path)
@@ -409,6 +423,21 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     async def lint_form(request: Request) -> Response:
         """The form accepting a finding of the lint: `?key=<the finding's key>`."""
         return HTMLResponse(lint_modal(request.query_params.get("key", "")))
+
+    async def code_reaches(request: Request) -> Response:
+        """What one use of a code entity reaches, in the consultation modal: `?entity=<the page's entity>&row=<its
+        row in that page's Database use>` (a module's lists its members' too); the places split into the live
+        databases and the files."""
+        entity, row = request.query_params.get("entity", ""), request.query_params.get("row", "")
+        rows = code_rows(database_use(entity, state.code_links, state.origins, catalog, connections.connections(), project_root))
+        found = rows[int(row)] if row.isdigit() and int(row) < len(rows) else None
+        places = {"live": [], "files": []}
+        for path in (found or {}).get("objects", []):
+            places["files" if path.startswith("origin:") else "live"].append(
+                {"path": path, "where": path.partition("::")[0].removeprefix("origin:") if path.startswith("origin:")
+                 else "/".join(path.removeprefix("db:").split("/")[:2]),
+                 "object": pages.db_place(path) if path.startswith("origin:") else path.split("/", 2)[-1]})
+        return HTMLResponse(templates.get_template("database_form.html").render(reaches_mode=True, link=found, places=places))
 
     evolution_cache: dict = {}  # the moments, kept until the origins are read again or git changes
 
@@ -1228,6 +1257,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/databases/evolution/part", evolution_part),
         Route("/databases/slice-form", slice_form),
         Route("/databases/lint-form", lint_form),
+        Route("/databases/code-reaches", code_reaches),
         Route("/databases/{action}", database_action, methods=["POST"]),
         Route("/databases/{page:path}", databases_page),
         Route("/code/diagrams/architecture", view_page),

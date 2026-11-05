@@ -1,0 +1,4 @@
+[project]
+name = "acme-test-bed"
+version = "0.1.0"
+description = "The test bed of doctracker's DATABASE section: its databases, the origins of their schema and code that uses them."

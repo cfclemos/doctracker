@@ -13,6 +13,7 @@ import griffe
 from doctracker.analysis.dead_code import scan
 from doctracker.config import project_files
 from doctracker.extraction.code import extract_code
+from doctracker.databases import code_links  # the module, not its names: it reads the code graph's own
 from doctracker.databases.origins import as_collection, extract_origins
 from doctracker.extraction.graph import extract_edges
 
@@ -50,8 +51,9 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool,
         `edges` (relations between entities, see `extract_edges`), `errors`
         (packages that could not be loaded, with the reason), `missing_grammars` (languages left out
         because their grammar could not be fetched, see `code.extract_code`), `dead_code` (see `analysis.scan`)
-        `origins` (the SQL files and migrations declaring a database schema, see `databases.origins`)
-        and `origin_collections` (what each declares, as a live database's collection: `as_collection`).
+        `origins` (the SQL files and migrations declaring a database schema, see `databases.origins`),
+        `origin_collections` (what each declares, as a live database's collection: `as_collection`) and
+        `code_links` (the tables and columns the code uses, see `databases.code_links.extract_links`).
     """
     logging.getLogger("griffe").setLevel(logging.ERROR)
     root = Path(project_root)
@@ -85,7 +87,8 @@ def extract_project(project_root: str, docstring_style: str, show_private: bool,
     origins = extract_origins(root, files, lambda done, total: _report(progress, 6, done, total, "origins"))
     return {"roots": roots, "entities": entities, "edges": edges, "errors": errors,
             "missing_grammars": missing_grammars, "dead_code": dead_code,
-            "origins": origins, "origin_collections": [as_collection(origin) for origin in origins]}
+            "origins": origins, "origin_collections": [as_collection(origin) for origin in origins],
+            "code_links": code_links.extract_links(root, files, entities, origins)}
 
 
 def python_roots(files: list[str]) -> tuple[list[str], list[str]]:

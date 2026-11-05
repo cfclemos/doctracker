@@ -5,6 +5,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.analysis import DEAD_KINDS, VERDICTS, dead_code_kinds, filter_rows
 from doctracker.config import Config, set_config_value
+from doctracker.databases import ConnectionStore
+from doctracker.databases.code_links import database_use
 from doctracker.graph import (CALL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram, entity_history,
                               trim_view)
 from doctracker.history import commit_diff, read_branch_graph
@@ -18,7 +20,7 @@ GUIDE_URI = "doctracker://guide"
 """URI of the MCP resource with the documentation guide."""
 
 
-def register_tools(mcp: MCPServer, state: DocState, config: Config, search: SearchEngine) -> None:
+def register_tools(mcp: MCPServer, state: DocState, config: Config, search: SearchEngine, connections: ConnectionStore) -> None:
     """Add the documentation tools and the documentation guide to the MCP server.
 
     Args:
@@ -26,6 +28,7 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
         state: Extracted entities the tools read.
         config: Project settings; the `set_*` tools change it and save it to config.json.
         search: Search engine behind the search tools (the same one the wiki uses).
+        connections: Store of the database connections, for the tables an entity uses.
     """
     embeddings = search.embeddings
     project_root = embeddings.project_root
@@ -371,13 +374,17 @@ Returns:
                 renamed or moved entity gives the entity it is now.
 
         Returns:
-            Signature data, parameters, docstring sections, location in the code and members, and
-            `previous_names` (earlier paths, newest first: path, how, commit, created).
+            Signature data, parameters, docstring sections, location in the code and members,
+            `previous_names` (earlier paths, newest first: path, how, commit, created) and `database_use`
+            (the tables and columns it and its members use: `use`, `table`, `column`, `line`, `evidence`,
+            `confidence`, `how` and `objects`, the paths reached; see `databases.code_links.database_use`).
         """
         entity = state.entities.get(path) or state.entities.get(search.notes.current_name(path))
         if entity is None:
             raise ToolError(f"Unknown entity: {path}")
-        return {**entity, "previous_names": search.notes.previous_names(entity["path"])}
+        return {**entity, "previous_names": search.notes.previous_names(entity["path"]),
+                "database_use": database_use(entity["path"], state.code_links, state.origins, search.catalog,
+                                             connections.connections(), project_root)}
 
     @mcp.tool(description=f"""Find dead code: what nothing in the project uses, from the code graph and vulture.
 

@@ -18,6 +18,7 @@ class DocState:
         missing_grammars: Languages left out because their grammar could not be fetched (e.g. without
             network): `language`, `grammar`, `files` and `error`.
         origins: The SQL files and migrations declaring a database schema, as read (see `databases.origins`).
+        code_links: The tables and columns the code uses (see `databases.code_links.extract_links`).
         retry: Set to read the code again at once (e.g. to try the grammars again), cleared by the watcher.
         ready: Whether the first extraction has finished.
         progress: Where the extraction running is (`step`, `steps`, `title`, `done`, `total`, `unit`, see
@@ -32,6 +33,7 @@ class DocState:
     dead_code: list[dict] = field(default_factory=list)
     missing_grammars: list[dict] = field(default_factory=list)
     origins: list[dict] = field(default_factory=list)
+    code_links: list[dict] = field(default_factory=list)
     retry: bool = False
     ready: bool = False
     progress: MutableMapping = field(default_factory=dict)
@@ -41,7 +43,7 @@ class DocState:
         """Replace the data with a new extraction result and notify the frontend.
 
         Args:
-            result: Output of `extract_project`: `roots`, `entities`, `edges`, `errors`, `dead_code` and `origins`.
+            result: Output of `extract_project`: `roots`, `entities`, `edges`, `errors`, `dead_code`, `origins` and `code_links`.
         """
         self.roots = result["roots"]
         self.entities = result["entities"]
@@ -50,6 +52,7 @@ class DocState:
         self.dead_code = result.get("dead_code", [])
         self.missing_grammars = result.get("missing_grammars", [])
         self.origins = result.get("origins", [])
+        self.code_links = result.get("code_links", [])
         self.ready = True
         self.notify()
 

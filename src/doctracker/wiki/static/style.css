@@ -1954,6 +1954,8 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .objects-table col.col-page { width: 4.5rem; }
 .objects-page-link { display: inline-flex; color: var(--muted); }
 .objects-page-link:hover { color: var(--accent); }
+/* The links between the code and the databases: the evidence on one line (all of it on hover). */
+.code-evidence { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .objects-modes { margin-right: 0.5rem; }
 /* DATABASES › Lint: the counters of the open findings (by level, then by rule, a click lists only those),
    each level in its colour, on its badges and in the list; an object's page shows its own findings. */
@@ -2018,6 +2020,8 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 /* The consultation modal's Close at the right of its footer, the other actions in the middle. */
 .page-dialog-foot { position: relative; }
 .page-dialog-foot > .page-dialog-close.see-in-link { position: absolute; right: 1.2rem; }
+/* Alone in the footer, Close holds the footer's height itself, on the right. */
+.page-dialog-foot > .page-dialog-close.see-in-link:only-child { position: static; margin-left: auto; }
 .objects-values-actions { display: inline-flex; gap: 0.35rem; }
 .objects-values-apply { padding: 0.1rem 0.6rem; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent); color: #fff; font-size: 0.75rem; cursor: pointer; }
 .objects-values-apply:hover { filter: brightness(1.1); }

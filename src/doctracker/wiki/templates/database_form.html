@@ -1,4 +1,4 @@
-{# The modals of DATABASES › Connections. `details`: everything about one connection (the card shows
+{# The modals of DATABASES: a lint finding, a slice, what a use of the code reaches, and those of Connections. `details`: everything about one connection (the card shows
    only its kind and server), in the consultation modal; with `editing`, its settings become the form's
    fields. Its actions sit in the modal's footer (sent out of band, as an entity's page does); they answer
    in the modal, the card following; Delete asks first, over the modal, then the page comes back and the
@@ -92,6 +92,31 @@
   <div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">Accept</button></div>
 </form>
 {% else %}<p class="empty">This finding is no longer found: the lint was read again.</p>{% endif %}
+{% elif reaches_mode %}
+{# What one use of a code entity reaches (its Database use's Reaches), in the consultation modal: the use
+   itself, then the places holding the table or column, the live databases apart from the files. #}
+{% if link %}
+<header class="page-header"><h1><span class="icon icon-database"></span><span class="name">{{ link.table }}{% if link.column %}.{{ link.column }}{% endif %}</span>
+  <span class="kind">{{ link.use }} by {{ link.entity }}</span></h1></header>
+<dl class="db-facts">
+  <dt>Where</dt><dd><code>{{ link.where }}</code></dd>
+  <dt>Confidence</dt><dd>{{ link.confidence }}</dd>
+  <dt>How</dt><dd>{{ link.how }}</dd>
+  <dt>Evidence</dt><dd><pre class="code-block"><code>{{ link.evidence }}</code></pre></dd>
+</dl>
+{% for group, title in (("live", "In the live databases"), ("files", "Declared in the project's files")) %}
+{% call ui.section("source", title, count=places[group] | length, name="reaches-" ~ group, divider=true) %}
+  {% if places[group] %}
+  <table class="db-table objects-table"><thead><tr><th>{{ "Database" if group == "live" else "File" }}</th><th>Object</th></tr></thead><tbody>
+  {% for p in places[group] %}<tr><td><code>{{ p.where }}</code></td><td><a {{ ui.nav(p.path) }}><code>{{ p.object }}</code></a></td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p class="empty">None.</p>{% endif %}
+{% endcall %}
+{% endfor %}
+{% else %}<p class="empty">This use is no longer found: the code was read again.</p>{% endif %}
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
+</footer>
 {% elif slice_mode %}
 {# A slice of the schema: its details in the consultation modal (its text, its tables as found now, Open in
    Diagram, Edit, Delete), or its form — name, text, the tables ticked in the box of ticks (searched), and a
