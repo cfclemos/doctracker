@@ -141,7 +141,9 @@ function restoreTree() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", restoreTree);
+// The wiki opens (or is reloaded) with every branch closed: what the user opened is kept only while
+// going from page to page.
+document.addEventListener("DOMContentLoaded", () => save(sessionStorage, TREE_KEY, {}));
 document.addEventListener("htmx:afterSettle", restoreTree);
 
 // View settings kept in cookies, so the server builds every page with them: the tree's format
