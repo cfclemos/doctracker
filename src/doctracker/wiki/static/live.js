@@ -477,12 +477,14 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // The rows under a drawing's bar (the filters, the evolution) open and close from the bar's buttons;
-// closed at first, kept for that drawing. A row the page needs open (nothing chosen yet) stays open.
+// closed at first (open at first when the page says so: data-open-first), kept for that drawing. A row the
+// page needs open (nothing chosen yet) stays open.
 function placeRows() {
   for (const button of document.querySelectorAll(".graph-row-toggle")) {
     const area = button.closest(".graph-area");
     const row = area.querySelector(`[data-row-of="${button.dataset.row}"]`);
-    const open = load(localStorage, drawingKey(area, `${button.dataset.row}-open`), false) || row?.dataset.forced === "1";
+    const open = load(localStorage, drawingKey(area, `${button.dataset.row}-open`), row?.dataset.openFirst === "1")
+      || row?.dataset.forced === "1";
     row?.classList.toggle("closed", !open);
     button.setAttribute("aria-pressed", String(open));
   }

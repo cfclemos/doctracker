@@ -69,7 +69,7 @@ def _static_url(name: str) -> str:
 
 
 DIAGRAM_TABS = ("architecture", "classes", "calls")
-"""The tabs of the DIAGRAMS page, each a view at its own URL (`/architecture`...)."""
+"""The tabs of CODE › Diagrams, each a view at its own URL (`/code/diagrams/architecture`...)."""
 
 EXAMPLES_FOLDER = "examples"
 """Folder of doctracker's own repository with the example projects, shown in the EXAMPLES section."""
@@ -87,7 +87,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                notes: NoteStore, connections: ConnectionStore, catalog: CatalogStore) -> list[BaseRoute]:
     """Build the frontend routes served next to the MCP endpoint.
 
-    `/wiki/<path>`, the graph views `/architecture`, `/classes`, `/calls` (and their data under
+    `/wiki/<path>`, CODE's diagrams `/code/diagrams/<tab>` (architecture, classes, calls; their data under
     `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the sections'
     explanation pages `/agent`, `/code` and `/databases`, AGENT's pages `/agent/<page>` (changed through
     `/agent/<action>`), the databases `/database` (changed
@@ -240,8 +240,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
-        """One of the views: architecture, classes, calls, git or dead code."""
-        view = request.url.path.strip("/")
+        """One of the views: CODE's diagrams (architecture, classes, calls) and dead code, git, the databases."""
+        view = request.url.path.rsplit("/", 1)[-1]
         params = dict(request.query_params)
         query = request.url.query
         if view == "calls":
@@ -277,10 +277,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "database":
             params = database_params(request.query_params)
             context.update(database_context(params))  # with its params
-        url = f"/{view}?{request.url.query}" if request.url.query else f"/{view}"
+        url = f"{request.url.path}?{request.url.query}" if request.url.query else request.url.path
         template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
         response = render_page(request, template if state.ready else "loading.html", url, context)
-        if view in DIAGRAM_TABS:  # DIAGRAMS in the menu opens the tab used last
+        if view in DIAGRAM_TABS:  # Diagrams in the tree opens the tab used last
             response.set_cookie("diagram-tab", view, max_age=31536000, samesite="lax")
         if view == "calls" and request.query_params:
             response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
@@ -1176,11 +1176,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/agent/{page}", agent_page),
         Route("/code", section_page),
         Route("/databases", section_page),
-        Route("/architecture", view_page),
-        Route("/classes", view_page),
-        Route("/calls", view_page),
+        Route("/code/diagrams/architecture", view_page),
+        Route("/code/diagrams/classes", view_page),
+        Route("/code/diagrams/calls", view_page),
         Route("/git", view_page),
-        Route("/dead-code", view_page),
+        Route("/code/dead-code", view_page),
         Route("/database", view_page),
         Route("/database/form", database_form),
         Route("/database/evolution", evolution_part),

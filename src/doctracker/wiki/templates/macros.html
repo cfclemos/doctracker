@@ -90,7 +90,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false, diff="", actions="") -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false, diff="", actions="", filters_open=false, caption="") -%}
 {# The side panel: the page's own (the planner's), or, with `details`, the one static/graph.js fills with
    the box clicked and what it relates to. #}
 {% set panel = panel or (('<div class="graph-details"><p class="empty">Click a box to see what it is and what it relates to.</p></div>') | safe if details else "") %}
@@ -162,7 +162,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     </span>
   </div>
   {% if filters %}
-  <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}>{{ filters }}</div>
+  <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}{% if filters_open %} data-open-first="1"{% endif %}>{{ filters }}</div>
   {% endif %}
   {% if diff %}
   <div class="graph-filters-row closed" data-row-of="diff">{{ diff }}</div>
@@ -187,6 +187,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
      inside its area, that the bar's button opens and closes and ⇄ moves to the other side. #}
   <div class="graph-stage{% if panel %} panel-closed{% endif %}">  {# closed until live.js says otherwise #}
   <div class="graph-canvas-box">
+    {% if caption %}<p class="graph-caption">{{ caption }}</p>{% endif %}{# what the drawing is of, in its top left corner #}
     <div class="graph-canvas" data-view="{{ view }}" data-url="{{ data_url }}" data-focus="{{ focus }}">
       <p class="empty">{{ empty or "Loading…" }}</p>
     </div>
@@ -337,7 +338,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 </span>
 {%- endmacro %}
 
-{# Tabs of a page (DIAGRAMS): `(name, label, url)` for each; the current one is marked. #}
+{# Tabs of a page (CODE › Diagrams): `(name, label, url)` for each; the current one is marked. #}
 {# The ? before a field or a name: on hover (or focus), a box explaining it in detail. #}
 {% macro help_hover(name, text) -%}
 <span class="help-hover" tabindex="0" aria-label="About {{ name }}"><i class="help-icon"></i><span class="help-box" role="tooltip">{{ text }}</span></span>

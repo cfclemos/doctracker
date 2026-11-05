@@ -1,4 +1,4 @@
-// Diagram pages (DIAGRAMS: architecture, classes, calls; the planner): HTML boxes over SVG lines,
+// Diagram pages (CODE › Diagrams: architecture, classes, calls; the planner): HTML boxes over SVG lines,
 // drawn by drawDiagram, placed in layers by dagre (MIT) or by forces with WebCola (MIT), as the
 // Layout switch of the drawing's bar says.
 // Each page has a .graph-canvas with data-view (which diagram), data-url (its data, built by

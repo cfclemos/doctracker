@@ -13,7 +13,7 @@
     <span class="kind">{{ role }}</span>
     {% set dead = dead_code_of(state, entity.path) %}
     {% if dead %}<a class="dead-badge verdict-{{ dead.verdict | replace(',', '') | replace(' ', '-') }}" title="{{ dead.message }}"
-       {{ ui.nav_url("/dead-code?path=" ~ entity.path) }}>{{ dead.verdict }}</a>{% endif %}
+       {{ ui.nav_url("/code/dead-code?path=" ~ entity.path) }}>{{ dead.verdict }}</a>{% endif %}
   </h1>
   <p class="meta">
     <code class="path">{{ entity.path }}</code>
@@ -26,11 +26,11 @@
   {# Open the graph views focused on this entity, with its direct neighbours. #}
   {% set views = [] %}
   {% if entity.kind == "module" %}
-    {% set views = [("architecture", "Architecture", "/architecture?depth=1&focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
+    {% set views = [("architecture", "Architecture", "/code/diagrams/architecture?depth=1&focus=" ~ entity.path), ("git", "Git", "/git?file=" ~ entity.filepath)] %}
   {% elif entity.kind == "class" %}
-    {% set views = [("classes", "Classes", "/classes?depth=1&focus=" ~ entity.path), ("calls", "Functions and Calls", "/calls?focus=" ~ entity.path)] %}
+    {% set views = [("classes", "Classes", "/code/diagrams/classes?depth=1&focus=" ~ entity.path), ("calls", "Functions and Calls", "/code/diagrams/calls?focus=" ~ entity.path)] %}
   {% elif entity.kind == "function" or entity.language != "python" %}
-    {% set views = [("calls", "Functions and Calls", "/calls?focus=" ~ entity.path)] %}
+    {% set views = [("calls", "Functions and Calls", "/code/diagrams/calls?focus=" ~ entity.path)] %}
   {% endif %}
   {% if modal %}
   {# In the consultation modal, the actions go to its footer (swapped out of band): the page, the views. #}
