@@ -2022,3 +2022,49 @@ html.loading::before {
   background: var(--accent); border-radius: 0 2px 2px 0; animation: loading-bar 1.1s ease-in-out infinite;
 }
 @keyframes loading-bar { 0% { left: -30%; } 100% { left: 100%; } }
+
+/* DATABASE › Diagram (ER): the levels of the DATABASES tree as frames (Connections and each connection,
+   the files of a project, a database and its schemas), the tables and views as boxes with their columns,
+   the relations coloured as in the Universe. */
+.arch-connections, .arch-connection { --arch: color-mix(in srgb, var(--fg) 75%, var(--bg)); }
+.arch-file, .arch-folder { --arch: var(--folder); }
+.arch-database { --arch: #bc4c00; }
+.arch-schema { --arch: color-mix(in srgb, var(--function) 80%, var(--fg)); }
+.arch-icon-connections, .arch-icon-connection, .arch-icon-database { --icon: url("icons/database.svg"); }
+.arch-icon-schema { --icon: url("icons/category.svg"); }
+.arch-icon-folder { --icon: url("icons/folder.svg"); }
+.arch-icon-table, .arch-icon-foreign-table, .arch-icon-view, .arch-icon-materialized-view { --icon: url("icons/list-details.svg"); }
+.er-box { --er: var(--accent); border-color: var(--er); }
+.er-box .uml-head { background: var(--er); color: #ffffff; }
+.er-view, .er-materialized-view { --er: var(--attribute); }
+.er-foreign-table { --er: var(--returns); }
+.er-row { cursor: pointer; }
+.er-row:hover { background: color-mix(in srgb, var(--er) 10%, transparent); }
+.er-marks { display: inline-flex; flex: none; gap: 1px; min-width: 2.2rem; }
+.er-mark { width: 0.8rem; height: 0.8rem; fill: none; stroke: var(--er); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.er-mark-null, .er-mark-notnull { stroke: var(--muted); }
+.er-more { color: var(--muted); font-style: italic; font-size: 0.75rem; }
+.uml-canvas[data-view="er"] .uml-line.foreign-key { stroke: var(--raises); }
+.uml-canvas[data-view="er"] .uml-line.implied { stroke: var(--note); stroke-dasharray: 6 4; }
+.uml-canvas[data-view="er"] .uml-line.view-reads { stroke: var(--attribute); stroke-dasharray: 2 3; }
+.uml-canvas[data-view="er"] .uml-line.partition-of, .uml-canvas[data-view="er"] .uml-line.inherits { stroke: var(--function); }
+.uml-canvas[data-view="er"] .uml-line.foreign-table { stroke: var(--returns); stroke-dasharray: 8 3; }
+.er-marker { fill: none; stroke: var(--fg); stroke-width: 1.5; }
+.er-marker-circle { fill: var(--bg); }
+.er-multiplicity { fill: var(--fg); font-size: 11px; font-family: system-ui, sans-serif; }
+.graph-legend .line.foreign-key { border-color: var(--raises); }
+.graph-legend .line.implied { border-color: var(--note); border-top-style: dashed; }
+.graph-legend .line.view-reads { border-color: var(--attribute); border-top-style: dotted; }
+.graph-legend .line.partition-of { border-color: var(--function); }
+.graph-legend .line.foreign-table { border-color: var(--returns); border-top-style: dashed; }
+.graph-legend .box.er-connection { background: var(--folder); }
+.graph-legend .box.er-database { background: #bc4c00; }
+.graph-legend .box.er-table { background: var(--accent); }
+.graph-legend .box.er-view { background: var(--attribute); }
+.graph-legend .er-ends b { font-family: ui-monospace, monospace; }
+.graph-canvas-bar .graph-icon.graph-text { width: auto; padding: 0 0.5rem; font-size: 0.75rem; white-space: nowrap; }
+.graph-canvas-bar .graph-notation[aria-checked="true"] { background: var(--accent); color: #ffffff; }
+.er-filters { flex-wrap: wrap; align-items: flex-end; }
+.er-filters .graph-filter { display: contents; }
+/* Nothing of a drawing is selected or dragged by the browser itself: the mouse moves the drawing. */
+.uml-canvas, .graph-canvas[data-view="universe"] { user-select: none; -webkit-user-select: none; }

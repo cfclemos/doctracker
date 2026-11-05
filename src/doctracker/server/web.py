@@ -20,7 +20,7 @@ from doctracker.databases.origins import comparisons, database_object as object_
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
-                              class_paths, file_timeline, find_callable)
+                              class_paths, er_diagram, file_timeline, find_callable)
 from doctracker.history import commit_diff, read_branch_graph, read_commit, read_history
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
@@ -309,7 +309,22 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context.update(objects_list(params))
         if tab == "drift":
             context.update(drift=drift(), catalog_databases=catalog.objects(kind="database"))
+        if tab == "diagram":
+            context.update(er_context(params))
         return context
+
+    def er_context(params: dict) -> dict:
+        """The Diagram (ER) tab: its data's URL (with the filters chosen), the projects of the DATABASES
+        tree, and what Focus offers (databases, schemas, files, tables and views)."""
+        outline = catalog.outline()
+        targets = [{"path": path, "name": name, "role": kind, "symbol": ""} for objects in outline.values()
+                   for path, kind, _, name in objects if kind in ("database", "schema", "table", "view", "materialized view", "foreign table")]
+        targets += [{"path": f"origin:{origin['name']}", "name": origin["name"], "role": "file", "symbol": ""} for origin in state.origins]
+        tree = pages.database_tree(state, connections.connections(), apart=EXAMPLES_FOLDER if developing else "", read=outline)
+        query = urlencode([(key, params[key]) for key in ("project", "focus", "depth") if params.get(key)])
+        return {"er_url": f"/graph/er{'?' + query if query else ''}" if targets else "",
+                "er_projects": [{"path": node["path"], "name": node["name"]} for node in tree if node["role"] == "project"],
+                "er_targets": targets}
 
     def drift() -> list[dict]:
         """The Drift tab: each origin (SQL files, migrations) with the databases it describes (how each
@@ -789,6 +804,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
         if view == "universe":  # DATABASE › Universe: the databases as the server last read them; or what a file declares
             return JSONResponse(catalog.universe(params.get("origin", "")))
+        if view == "er":  # DATABASE › Diagram (ER): the live databases and what the files declare, in the tree's levels
+            return JSONResponse(er_diagram(state, catalog, connections.connections(), EXAMPLES_FOLDER if developing else "",
+                                           params.get("project", ""), params.get("focus", ""), depth_of(params)))
         if view == "local":  # an entity's page: the entity and its neighbours, a few steps away
             graph = call_graph(state, params.get("focus", ""), depth_of(params), "both", kinds=LOCAL_KINDS)
             return JSONResponse(pages.visible_graph(state, graph, shown))

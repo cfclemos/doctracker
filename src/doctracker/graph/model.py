@@ -491,6 +491,148 @@ def class_diagram(state: DocState, package: str = "", apart: str = "", project: 
     return {"nodes": nodes, "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept]}
 
 
+ER_KINDS = ("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")
+"""The relations of the ER diagram: a foreign key and an implied one (from a column's row to a column's
+row, with their cardinality), a view reading a table, a partition or child table and its parent, a
+foreign table and the table it stands for."""
+
+_ER_TABLES = {"table": "table", "foreign table": "foreign-table", "view": "view", "materialized view": "materialized-view"}
+"""What the ER diagram draws as boxes, and the role each kind takes."""
+
+_ER_RELATIONS = {"implied": "implied", "view reads": "view-reads", "partition of": "partition-of", "inherits": "inherits",
+                 "foreign table": "foreign-table"}
+"""The catalog's relations the ER diagram draws besides the foreign keys (read from each table's keys)."""
+
+
+def _er_frame_role(node: dict) -> str:
+    """The role of a level of the DATABASES tree as a frame of the ER diagram."""
+    role, path = node["role"], node["path"]
+    if role.startswith("connection-"):
+        return "connection"
+    if role == "folder":  # a schema of a database, or a folder of files
+        return "schema" if path.startswith(("db:", "origin:")) else "folder"
+    return {"module": "file", "connections": "connections"}.get(role, role)
+
+
+def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "", project: str = "", focus: str = "",
+               depth: int = MAX_CALL_DEPTH) -> dict:
+    """Build the entity-relationship diagram of the project's databases: the live ones and what its files
+    declare, in the levels of the DATABASES tree (project › Connections / files › connection › database
+    › schema), each table and view a box with one row per column.
+
+    Args:
+        state: Extracted entities, with the origins.
+        catalog: The databases read and what the files declare (`CatalogStore`).
+        connections: Every connection of the project (`ConnectionStore.connections`).
+        apart: A folder whose subfolders are projects of their own (see `database_tree`).
+        project: Only the boxes inside this level (a project's `databases:<name>`); empty for all.
+        focus: A table or view (its path): only it and those `depth` relations away; a level (a database,
+            a schema, an origin): only what it holds; empty for all.
+        depth: How many relations away from a focused table.
+
+    Returns:
+        `nodes`: the levels as frames (`frame` true; `role` project, connections, connection, folder, file,
+        database, schema) and the tables and views as boxes (`role` table, view, materialized-view,
+        foreign-table; `columns`: name, type, marks, nullable, comment, path), each with `id` (its path),
+        `label`, `parent`, `page`, `summary`; `edges`: `source` and `target` (tables), `kind` (one of
+        `ER_KINDS`); a foreign key and an implied one also with `via` and `to` (the columns of each end),
+        `source_end` (`zero-one` when its columns are unique, else `zero-many`) and `target_end` (`one`
+        when its columns are NOT NULL, else `zero-one`).
+    """
+    from doctracker.wiki.pages import database_tree  # the tree's own levels
+
+    tree = database_tree(state, connections, apart=apart, read=catalog.outline())
+    nodes: list[dict] = []
+    placed: dict[str, str] = {}  # a table's path -> the level it is drawn in
+
+    def walk(items: list[dict], parent: str | None) -> None:
+        for item in items:
+            if "#" in item["path"] and not item["link"]:  # a kind group (Tables, Views…): its tables go in the level above
+                for child in item["children"]:
+                    placed.setdefault(child["path"], parent or "")
+                continue
+            if item["path"] in placed:  # an object of a file, straight in its file
+                continue
+            nodes.append({"id": item["path"], "label": item["name"], "role": _er_frame_role(item), "parent": parent, "frame": True,
+                          "page": item["path"] if item["path"].startswith(("db:", "origin:")) else "", "summary": item["name"]})
+            walk(item["children"], item["path"])
+
+    walk(tree, None)
+    objects = {o["path"]: o for o in catalog.objects(origins=True) if o["kind"] in _ER_TABLES and o["path"] in placed}
+    columns: dict[str, list[dict]] = {}
+    for column in catalog.objects(kind="column", origins=True):
+        if column["parent"] in objects:
+            columns.setdefault(column["parent"], []).append(column)
+    for path, obj in objects.items():
+        held = sorted(columns.get(path, []), key=lambda c: c["data"].get("position", 0))
+        nodes.append({"id": path, "label": obj["name"], "role": _ER_TABLES[obj["kind"]], "parent": placed[path] or None, "frame": False,
+                      "page": path, "summary": str(obj["data"].get("comment") or obj["kind"]),
+                      "columns": [{"name": c["name"], "type": c["data"].get("type", ""), "marks": c["data"].get("marks", []),
+                                   "nullable": bool(c["data"].get("nullable", True)), "comment": c["data"].get("comment", ""),
+                                   "path": c["path"]} for c in held]})
+    def unique(table: dict, names: list[str]) -> bool:
+        """Whether these columns of a table can hold each value once: its primary key, or a unique key or index on them."""
+        data, wanted = table["data"], sorted(names)
+        held = [(data.get("primary_key") or {}).get("columns") or []] + [u.get("columns") or [] for u in data.get("unique") or []]
+        held += [i.get("columns") or [] for i in data.get("indexes") or [] if i.get("unique")]
+        return any(sorted(columns_) == wanted for columns_ in held if columns_)
+
+    def nullable(table_path: str, names: list[str]) -> bool:
+        by_name = {c["name"]: c for c in columns.get(table_path, [])}
+        return any(by_name.get(name, {}).get("data", {}).get("nullable", True) for name in names)
+
+    edges = []
+    for path, obj in objects.items():  # foreign keys, from each table's own keys (one line per key, not per column)
+        for key in obj["data"].get("foreign_keys") or []:
+            if key.get("target") not in objects:
+                continue
+            names, targets = key.get("columns") or [], key.get("target_columns") or []
+            edges.append({"id": f"foreign-key:{path}({','.join(names)})->{key['target']}", "source": path, "target": key["target"],
+                          "kind": "foreign-key", "via": names[0] if names else "", "to": targets[0] if targets else "",
+                          "columns": names, "target_columns": targets, "name": key.get("name") or "",
+                          "source_end": "zero-one" if unique(obj, names) else "zero-many",
+                          "target_end": "zero-one" if nullable(path, names) else "one"})
+    by_place: dict[str, list[str]] = {}  # a foreign table's target, as the server reaches it, by database and name
+    for path in objects:
+        by_place.setdefault(path.split("/", 1)[-1], []).append(path)
+    column_table = {c["path"]: table for table, held in columns.items() for c in held}
+    for relation in catalog.relations(tuple(_ER_RELATIONS)):
+        kind, source, target = _ER_RELATIONS[relation["kind"]], relation["source"], relation["target"]
+        if kind == "foreign-table" and target not in objects and len(by_place.get(target.split("/", 1)[-1], [])) == 1:
+            target = by_place[target.split("/", 1)[-1]][0]
+        if kind == "implied":  # column to column
+            source_table, target_table = column_table.get(source), column_table.get(target)
+            if not source_table or not target_table:
+                continue
+            via, to = source.rsplit(".", 1)[-1], target.rsplit(".", 1)[-1]
+            edges.append({"id": f"implied:{source}->{target}", "source": source_table, "target": target_table, "kind": kind,
+                          "via": via, "to": to, "columns": [via], "target_columns": [to],
+                          "source_end": "zero-one" if unique(objects[source_table], [via]) else "zero-many",
+                          "target_end": "zero-one" if nullable(source_table, [via]) else "one"})
+        elif source in objects and target in objects and source != target:
+            edges.append({"id": f"{kind}:{source}->{target}", "source": source, "target": target, "kind": kind})
+    edges = list({edge["id"]: edge for edge in edges}.values())
+    frames = {node["id"] for node in nodes if node["frame"]}
+    if focus in frames:  # a level: what it holds
+        by_id = {node["id"]: node for node in nodes}
+        keep = {node["id"] for node in nodes if not node["frame"] and focus in _ancestors(by_id, node["id"])}
+        holding = {up for node_id in keep for up in _ancestors(by_id, node_id)}
+        nodes = [node for node in nodes if node["id"] in keep or node["id"] in holding]
+        focus = ""
+    nodes = _filtered(nodes, [(edge["source"], edge["target"]) for edge in edges], project, focus, depth)
+    kept = {node["id"] for node in nodes if not node["frame"]}
+    return {"nodes": nodes, "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept]}
+
+
+def _ancestors(by_id: dict[str, dict], node_id: str) -> list[str]:
+    """The levels above a node of a diagram, nearest first."""
+    found, at = [], by_id.get(node_id, {}).get("parent")
+    while at:
+        found.append(at)
+        at = by_id.get(at, {}).get("parent")
+    return found
+
+
 def _module_of(state: DocState, path: str) -> str | None:
     """The module (file or package) holding an entity, outside any class; `None` at the top."""
     parent = state.entities[path]["parent"]

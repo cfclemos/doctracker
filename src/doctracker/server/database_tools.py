@@ -12,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
+from doctracker.graph import MAX_CALL_DEPTH, er_diagram, trim_view
 from doctracker.server.state import DocState
 from doctracker.databases.readonly import run_test
 from doctracker.server.note_tools import refusals_reported
@@ -133,6 +134,34 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             holds a next level).
         """
         return catalog.level(at)
+
+    @mcp.tool()
+    @refusals_reported
+    def er_diagram_view(project: str = "", focus: str = "", depth: int = MAX_CALL_DEPTH, kinds: list[str] | None = None,
+                        hide_unconnected: bool = False) -> dict:
+        """Get the entity-relationship diagram of the project's databases, as the wiki's DATABASE › Diagram (ER) draws it.
+
+        The live databases and what the project's files declare, in the levels of the DATABASES tree;
+        each table and view with its columns, and how the tables relate. Over 500 boxes, only the most
+        connected.
+
+        Args:
+            project: Only what is inside this level (`databases:<project>`); empty for all.
+            focus: A table or view (its path): it and those `depth` relations away; or a level (a database,
+                schema or origin): only what it holds.
+            depth: How many relations away from a focused table (1 to 3).
+            kinds: Only these relations: `foreign-key`, `implied`, `view-reads`, `partition-of`, `inherits`,
+                `foreign-table`; all by default.
+            hide_unconnected: Leave out the tables with no relation.
+
+        Returns:
+            `nodes` (the levels as frames; tables and views with `columns`: name, type, marks, nullable,
+            comment, path), `edges` (`source`, `target`, `kind`; a foreign key's and an implied one's
+            `via` and `to` columns and the cardinality of each end: `source_end` zero-one / zero-many,
+            `target_end` one / zero-one) and `left_out` (boxes over the limit).
+        """
+        graph = er_diagram(state, catalog, connections.connections(), "", project, focus, max(1, min(depth, MAX_CALL_DEPTH)))
+        return trim_view(graph, kinds, hide_unconnected)
 
     @mcp.tool()
     @refusals_reported

@@ -27,14 +27,48 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
         {% if current %}aria-current="page"{% endif %} {% if aria %}aria-label="{{ aria }}"{% endif %}
         hx-get="/database?page={{ number }}" hx-include="#objects-filter, .objects-table thead" hx-target="#content" hx-push-url="true">{{ label }}</button>
 {%- endmacro %}
-<div class="{% if tab == 'universe' %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
+<div class="{% if tab in ('universe', 'diagram') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
   {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
-             ("objects", "Navigate Database", "/database?tab=objects"), ("drift", "Drift", "/database?tab=drift")), tab) }}
+             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("objects", "Navigate Database", "/database?tab=objects"),
+             ("drift", "Drift", "/database?tab=drift")), tab) }}
   {% if tab == "universe" %}
   <p class="tab-description">The databases doctracker read from the allowed connections, as SQL organises them: servers, databases, schemas, tables and views, columns. Click a node to go into it; choose in the legend which relations to see.</p>
   {{ ui.universe_canvas(params.open or "", "/graph/universe" if has_collections else "",
                         "" if has_collections else "No database read yet: allow a connection in Connections.") }}
+  {% elif tab == "diagram" %}
+  <p class="tab-description">The entity-relationship diagram of the databases read and of what the project's files declare, in the levels of the tree: each table and view with its columns, the foreign keys from a column to the column it refers to, with how many rows each end may have. Click a level to open it, its title to close it; choose in the legend which relations to see, and on the bar the notation.</p>
+  {% set bar_filters %}
+  <div class="graph-toolbar filters-line er-filters">
+    <form class="graph-filter" hx-get="/database" hx-target="#content" hx-push-url="true" hx-trigger="change">
+      <input type="hidden" name="tab" value="diagram">
+      {% call ui.form_field("Project", "Only what one project of the repository holds: its connections' databases and its files.", wide=False) %}
+      <select name="project"><option value="">All</option>{% for p in er_projects %}<option value="{{ p.path }}"{% if params.project == p.path %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>{% endcall %}
+      {% call ui.form_field("Focus", "A table or view: only it and the tables a few relations away (Depth). A database, schema or file: only what it holds. Type its name or path.") %}
+      <span class="field-clearable">
+        <input name="focus" data-options="er-targets" value="{{ params.focus or '' }}" placeholder="A database, schema, file or table…" class="focus-input" autocomplete="off">
+        <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
+      </span>
+      {{ ui.focus_options("er-targets", er_targets) }}{% endcall %}
+      {% call ui.form_field("Depth", "How many relations away from a focused table: 1 shows only the tables it links to directly.", wide=False) %}
+      <select name="depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>{% endcall %}
+    </form>
+    {% call ui.form_field("Columns", "Which columns the boxes show, by kind: a column shows when it is of any kind chosen (a key column is also indexed, say). Others: the columns of no kind above. Kept for this browser.", choice=True) %}
+    <span class="toggle-group er-columns">{% for kind, label in (("pk", "Primary key"), ("fk", "Foreign key"), ("unique", "Unique"), ("index", "Indexed"), ("generated", "Generated"), ("other", "Others")) %}<label><input type="checkbox" value="{{ kind }}" checked>{{ label }}</label>{% endfor %}</span>{% endcall %}
+  </div>
+  {% endset %}
+  {% call ui.view_canvas("er", er_url, params.focus or "", layouts=true, filters=bar_filters, details=true, notation=true,
+                         empty="" if er_url else "No database read and no schema file yet: allow a connection in Connections.") %}
+    <span title="A project of the repository, as in the tree"><i class="box project"></i>project</span>
+    <span title="A connection of doctracker, or a file of the project declaring a schema (SQL, migrations, ORM models, a dump)"><i class="box er-connection"></i>connection / file</span>
+    <span title="A database, and a schema inside it"><i class="box er-database"></i>database / schema</span>
+    <span title="A table, with one row per column: its name, its type as the database keeps it and its marks"><i class="box er-table"></i>table</span>
+    <span title="A view or materialized view"><i class="box er-view"></i>view</span>
+    <span title="Items with no relation at all, at each level"><i class="box unconnected"></i>unconnected</span>
+    <span title="A closed level: how many tables it holds; click to open it, click its title to close it"><i class="box closed">3 ▸</i>closed (click to open)</span>
+    {{ ui.relation_kinds(("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")) }}
+    <span class="er-ends" title="Crow's foot: what each end of a key's line allows"><b>||</b> one · <b>o|</b> zero or one · <b>o&lt;</b> zero or many</span>
+  {% endcall %}
   {% elif tab == "drift" %}
   <p class="tab-description">Where the project's SQL files, migrations and ORM models and the live databases they describe differ. An origin is linked to a database by hand, by the migration tool's history table in that database (the proof it was migrated, how far, and steps changed since), by its configuration, or — an ORM's models — through its migrations; the names of its tables only suggest a database, to link by hand. An ORM's models are also compared with its migrations: a model changed without its migration shows there.</p>
   {% set HOW = {"chosen": ("chosen by you", "You linked it by hand."),
