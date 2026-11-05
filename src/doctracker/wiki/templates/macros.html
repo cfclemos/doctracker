@@ -77,7 +77,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endcall %}
 {%- endmacro %}
 
-{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false, diff="") -%}
+{% macro view_canvas(view, data_url, focus="", layouts=false, evolution=false, panel="", filters="", empty="", details=false, notation=false, diff="", actions="") -%}
 {# The side panel: the page's own (the planner's), or, with `details`, the one static/graph.js fills with
    the box clicked and what it relates to. #}
 {% set panel = panel or (('<div class="graph-details"><p class="empty">Click a box to see what it is and what it relates to.</p></div>') | safe if details else "") %}
@@ -116,6 +116,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
       {% endfor %}
     </span>
     {% endif %}
+    {% if actions %}<span class="graph-buttons graph-actions">{{ actions }}</span>{% endif %}
     {% if notation %}{# The ER diagram's notation: crow's foot symbols or UML multiplicities at the ends of a key's line #}
     <span class="graph-buttons graph-notations" role="radiogroup" aria-label="Notation">
       <button type="button" role="radio" class="graph-icon graph-text graph-notation" data-notation="crow" aria-label="Crow's foot"

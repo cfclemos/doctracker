@@ -515,7 +515,7 @@ def _er_frame_role(node: dict) -> str:
 
 
 def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "", project: str = "", focus: str = "",
-               depth: int = MAX_CALL_DEPTH) -> dict:
+               depth: int = MAX_CALL_DEPTH, slice_: dict | None = None) -> dict:
     """Build the entity-relationship diagram of the project's databases: the live ones and what its files
     declare, in the levels of the DATABASES tree (project › Connections / files › connection › database
     › schema), each table and view a box with one row per column.
@@ -529,6 +529,8 @@ def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "
         focus: A table or view (its path): only it and those `depth` relations away; a level (a database,
             a schema, an origin): only what it holds; empty for all.
         depth: How many relations away from a focused table.
+        slice_: A slice as found now (`databases.slices.resolve`): only its tables, at their positions,
+            without the levels, and the tables related to them as suggestions.
 
     Returns:
         `nodes`: the levels as frames (`frame` true; `role` project, connections, connection, folder, file,
@@ -612,6 +614,8 @@ def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "
         elif source in objects and target in objects and source != target:
             edges.append({"id": f"{kind}:{source}->{target}", "source": source, "target": target, "kind": kind})
     edges = list({edge["id"]: edge for edge in edges}.values())
+    if slice_ is not None:
+        return _slice_view(nodes, edges, slice_)
     frames = {node["id"] for node in nodes if node["frame"]}
     if focus in frames:  # a level: what it holds
         by_id = {node["id"]: node for node in nodes}
@@ -622,6 +626,32 @@ def er_diagram(state: DocState, catalog, connections: list[dict], apart: str = "
     nodes = _filtered(nodes, [(edge["source"], edge["target"]) for edge in edges], project, focus, depth)
     kept = {node["id"] for node in nodes if not node["frame"]}
     return {"nodes": nodes, "edges": [edge for edge in edges if edge["source"] in kept and edge["target"] in kept]}
+
+
+def _slice_view(nodes: list[dict], edges: list[dict], found: dict) -> dict:
+    """A slice in the ER diagram: its tables found, at their saved positions, with no levels around them;
+    the tables one relation away from them, `suggested`; and `slice` (its name, text, the tables not found
+    and those found by name)."""
+    by_id = {node["id"]: node for node in nodes if not node["frame"]}
+    kept = {}
+    for table in found["tables"]:
+        if table["found"] in by_id:
+            kept[table["found"]] = {**by_id[table["found"]], "parent": None, "x": table.get("x"), "y": table.get("y"),
+                                    "found_by": table["found_by"]}
+    def base(path: str) -> str:  # the database (or file) a table is in
+        return path.split("::", 1)[0] if "::" in path else "/".join(path.split("/")[:2])
+
+    bases = {base(path) for path in kept}  # suggestions only from the databases the slice's tables are in
+    near = {end for edge in edges if edge["source"] in kept or edge["target"] in kept for end in (edge["source"], edge["target"])}
+    suggested = {path: {**by_id[path], "parent": None, "suggested": True} for path in near - set(kept)
+                 if path in by_id and base(path) in bases}
+    drawn = {**kept, **suggested}
+    return {"nodes": list(drawn.values()), "edges": [edge for edge in edges if edge["source"] in drawn and edge["target"] in drawn],
+            "slice": {"name": found["name"], "text": found.get("text", ""),
+                      "missing": [t["key"] for t in found["tables"] if not t["found"]],
+                      "by_name": [t["key"] for t in found["tables"] if t["found_by"] == "name"],
+                      "by_name_in": sorted({base(t["found"]).removeprefix("db:").removeprefix("origin:")
+                                            for t in found["tables"] if t["found_by"] == "name"})}}
 
 
 def _ancestors(by_id: dict[str, dict], node_id: str) -> list[str]:

@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.origins.evolution import moments, renames_between, schema_at, schema_diff as diff_schemas
+from doctracker.databases.slices import SliceStore, resolve as resolve_slice
 from doctracker.graph import MAX_CALL_DEPTH, er_diagram, trim_view
 from doctracker.server.state import DocState
 from doctracker.databases.readonly import run_test
@@ -163,6 +164,39 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         """
         graph = er_diagram(state, catalog, connections.connections(), "", project, focus, max(1, min(depth, MAX_CALL_DEPTH)))
         return trim_view(graph, kinds, hide_unconnected)
+
+    slices = SliceStore(project_root)  # the same files the wiki keeps, doc/slices/
+
+    @mcp.tool()
+    @refusals_reported
+    def list_slices() -> list[dict]:
+        """List the slices of the schema: cuts of the whole, each a few tables kept together with a name
+        and a text saying what that part of the system is for (made by the user in the wiki).
+
+        Returns:
+            Each slice's `name`, `text`, `file` (in doc/slices/), `databases` (where its tables are),
+            `total` (the tables those hold) and `tables`: `key` (schema.table), `path` (where it was taken
+            from), `found` (its path now, or none), `found_by` (`path`, `name`, or none) and `kind`.
+        """
+        return [resolve_slice(found, catalog) for found in slices.slices()]
+
+    @mcp.tool()
+    @refusals_reported
+    def get_slice(name: str) -> dict:
+        """Give one slice of the schema with its tables as the ER diagram draws them.
+
+        Args:
+            name: The slice's name (any case), from `list_slices`.
+
+        Returns:
+            The slice (see `list_slices`) and `diagram`: its tables with their columns (type, marks) and
+            the relations among them and to the tables near it (`suggested`), as `er_diagram_view`.
+        """
+        found = slices.slice(name)
+        if found is None:
+            raise ToolError(f"No slice named {name}.")
+        resolved = resolve_slice(found, catalog)
+        return {**resolved, "diagram": er_diagram(state, catalog, connections.connections(), "", slice_=resolved)}
 
     @mcp.tool()
     @refusals_reported

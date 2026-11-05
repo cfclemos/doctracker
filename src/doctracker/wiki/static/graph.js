@@ -709,17 +709,40 @@ function erBox(node) {
       <span class="uml-kind">${escapeHtml(column.type)}</span></div>`).join("");
   const left = node.columns.length - shown.length;
   const kind = node.role === "table" ? "" : `<span class="uml-stereotype">${escapeHtml(node.role.replace("-", " "))}</span>`;
-  return `<div class="uml-box er-box er-${escapeHtml(node.role)}" data-box="${escapeHtml(node.id)}" data-page="${escapeHtml(node.page)}">
+  return `<div class="uml-box er-box er-${escapeHtml(node.role)}${node.suggested ? " er-suggested" : ""}" data-box="${escapeHtml(node.id)}" data-page="${escapeHtml(node.page)}">
     <div class="uml-head" title="${escapeHtml(node.summary || node.id)}"><i class="arch-icon arch-icon-${escapeHtml(node.role)}"></i>
       <strong>${escapeHtml(node.label)}</strong>${kind}</div>
     ${rows || left ? `<div class="uml-section">${rows}${left ? `<div class="uml-row er-more">${left} more column${left > 1 ? "s" : ""}</div>` : ""}</div>` : ""}
   </div>`;
 }
 
-// Laid out as the architecture is, level by level, the table referred to above the one referring to it.
+// Laid out as the architecture is, level by level, the table referred to above the one referring to it. A
+// slice's tables stand where they were saved; those without a place, and the suggested ones, in a column
+// to the right of them. What the slice could not find is said above the drawing.
 function erLayout(boxes, data, aspect, heads) {
   archLayout(boxes, { ...data, edges: data.edges.map((edge) => ({ ...edge, source: edge.target, target: edge.source })) }, aspect, heads);
+  if (!data.slice) return;
+  const placed = data.nodes.filter((node) => boxes[node.id] && Number.isFinite(node.x) && Number.isFinite(node.y));
+  for (const node of placed) Object.assign(boxes[node.id], { x: node.x, y: node.y });
+  const right = Math.max(0, ...placed.map((node) => node.x + boxes[node.id].width)) + 80;
+  let y = 0;
+  for (const node of data.nodes.filter((item) => boxes[item.id] && !placed.includes(item))) {
+    Object.assign(boxes[node.id], { x: right, y });
+    y += boxes[node.id].height + 30;
+  }
+  const warning = Object.values(boxes)[0]?.element.closest(".graph-area")?.querySelector(".graph-warning");
+  const list = (keys) => keys.join(", ");
+  const told = [data.slice.missing.length ? `Not in any database read nor file: ${list(data.slice.missing)} (left out).` : "",
+    data.slice.by_name.length ? `Not where the slice took ${data.slice.by_name.length > 1 ? "them" : "it"} from, found by name in ${list(data.slice.by_name_in)}: `
+      + `${list(data.slice.by_name)}.` : ""].filter(Boolean);
+  if (warning && told.length) {
+    warning.hidden = false;
+    warning.textContent = told.join(" ");
+  }
 }
+
+// The tables a slice holds, or those chosen for a new one, kept for the browser tab across redraws.
+const erChosen = new Map();  // slice name ("" for a new one) → Set of table paths
 
 // From the side of the referring column's row to the side of the referred column's row (a box's title
 // when the row is not shown); a table referring to itself, a loop on its right. Remembers on the edge
@@ -763,7 +786,48 @@ function erLineEnds(element, edge) {
 }
 
 // The bar's Notation and the filters' Columns: kept for the browser, the drawing made again in place.
+// Ctrl + click on a table adds it to the slice open (a faded suggestion joins it) or takes it away; with
+// no slice open, it chooses tables for a new one (Save as slice). Save the slice keeps its tables and
+// where they stand now, in its file.
 function erBar(page, redraw, signal) {
+  const canvas = page.querySelector('.graph-canvas[data-view="er"]');
+  const data = canvas?.drawnData;
+  const name = data?.slice?.name ?? "";
+  if (canvas && data) {
+    if (!erChosen.has(name)) erChosen.set(name, new Set(data.slice ? data.nodes.filter((node) => !node.suggested).map((node) => node.id) : []));
+    const chosen = erChosen.get(name);
+    const saveAs = page.querySelector(".er-save-as"), save = page.querySelector(".er-save");
+    const mark = () => {
+      for (const box of canvas.querySelectorAll(".er-box[data-box]")) {
+        const inside = chosen.has(box.dataset.box);
+        box.classList.toggle("er-suggested", Boolean(data.slice) && !inside);
+        box.classList.toggle("er-chosen", !data.slice && inside);
+      }
+      if (saveAs) saveAs.hidden = Boolean(data.slice) || !chosen.size;
+    };
+    mark();
+    canvas.addEventListener("click", (event) => {
+      const box = event.target.closest(".er-box[data-box]");
+      if (!box || !(event.ctrlKey || event.metaKey)) return;
+      event.stopImmediatePropagation();
+      if (chosen.has(box.dataset.box)) chosen.delete(box.dataset.box);
+      else chosen.add(box.dataset.box);
+      mark();
+    }, { signal, capture: true });
+    const tables = () => {
+      const at = canvas.boxPositions();
+      return [...chosen].map((path) => ({ path, x: at[path]?.x, y: at[path]?.y }));
+    };
+    saveAs?.addEventListener("click", () => {
+      htmx.ajax("POST", "/database/slice-new", { target: "#database-dialog-body", values: { tables: JSON.stringify(tables()) } });
+    }, { signal });
+    save?.addEventListener("click", async () => {
+      const body = new URLSearchParams({ from: "diagram", name, previous: name, tables: JSON.stringify(tables()) });
+      const answer = await (await fetch("/database/slice-save", { method: "POST", body })).json();
+      save.textContent = answer.ok ? "Saved" : answer.error;
+      setTimeout(() => { save.textContent = "Save the slice"; }, 1800);
+    }, { signal });
+  }
   for (const button of page.querySelectorAll(".graph-notation")) {
     button.setAttribute("aria-checked", String(button.dataset.notation === erNotation()));
     button.addEventListener("click", () => {
@@ -881,7 +945,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
       saveOpenFrames(view.levels, open);
     }
   }
-  if (view.levels) data = foldLevels(data, openFrames(view.levels), setting("hide-loose"));
+  if (view.levels && !whole.slice) data = foldLevels(data, openFrames(view.levels), setting("hide-loose"));  // a slice has no levels
   // Colour by language or project (the bar's Colour): the groups of each box — its language or project,
   // or, for a closed level, those of everything inside it. A group turned off by its chip is left out of
   // the drawing: a box whose groups are all off, a frame left with nothing, their lines.
@@ -1090,6 +1154,8 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     apply();
   }
   canvas.viewState = () => ({ scale, panX, panY });
+  canvas.boxPositions = () => Object.fromEntries(Object.entries(boxes).map(([id, box]) => [id, { x: box.x, y: box.y }]));
+  canvas.drawnData = data;  // what is drawn, for the view's own controls (the ER diagram's slices)
   // When the drawing area changes size (window resized, panel moved under it), fit again.
   const areaSize = () => `${canvas.clientWidth}x${canvas.clientHeight}`;
   let lastSize = areaSize();

@@ -2114,3 +2114,14 @@ html.loading::before {
 .evo-origins summary.evo-origins-label { opacity: 1; display: inline-flex; align-items: center; gap: 0.3rem; min-height: 2.1rem; padding: 0 0.6rem;
   border: 1px solid var(--border); border-radius: 4px; color: var(--fg); background: var(--bg); max-width: 22rem; }
 .evo-origins-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Slices: a table chosen with Ctrl + click for a new slice, ringed; a table related to the slice open but
+   not in it, faded (Ctrl + click takes it in). The tab's cards are the Connections' ones. */
+.er-box.er-chosen { box-shadow: 0 0 0 3px var(--accent); }
+.er-box.er-suggested { opacity: 0.45; border-style: dashed; }
+.er-box.er-suggested:hover { opacity: 0.8; }
+.slice-card .slice-of { margin: 0.2rem 0; color: var(--muted); font-size: 0.8rem; }
+.slice-start { display: flex; gap: 0.4rem; align-items: center; width: 100%; }
+.slice-start input { flex: 1; min-width: 0; }
+.slice-list td, .slice-list th { text-align: center; vertical-align: middle; }
+/* A bar button hidden stays hidden (the bar's buttons are shown as flex boxes). */
+.graph-canvas-bar [hidden] { display: none !important; }
