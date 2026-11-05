@@ -30,7 +30,8 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
 <div class="{% if tab in ('universe', 'diagram', 'evolution') %}graph-page{% else %}notes-page{% endif %} database-page{% if tab == 'objects' %} objects-page{% endif %}">
   {{ ui.view_header("database", "DATABASE", "") }}
   {{ ui.tabs((("connections", "Connections", "/database?tab=connections"), ("universe", "Universe", "/database?tab=universe"),
-             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("evolution", "Evolution", "/database?tab=evolution"),
+             ("diagram", "Diagram (ER)", "/database?tab=diagram"), ("slices", "Slices", "/database?tab=slices"),
+             ("evolution", "Evolution", "/database?tab=evolution"),
              ("objects", "Navigate Database", "/database?tab=objects"),
              ("drift", "Drift", "/database?tab=drift")), tab) }}
   {% if tab == "universe" %}
@@ -51,6 +52,8 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
         <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
       </span>
       {{ ui.focus_options("er-targets", er_targets) }}{% endcall %}
+      {% call ui.form_field("Slice", "A slice of the schema (see Slices): only its tables, where they were placed, without the levels; the tables related to them drawn faded. Ctrl + click adds a table to it or takes one away; Save keeps the tables and where they stand.", wide=False) %}
+      <select name="slice"><option value="">None</option>{% for name in er_slices %}<option value="{{ name }}"{% if params.slice == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>{% endcall %}
       {% call ui.form_field("Depth", "How many relations away from a focused table: 1 shows only the tables it links to directly.", wide=False) %}
       <select name="depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>{% endcall %}
     </form>
@@ -58,7 +61,11 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     <span class="toggle-group er-columns">{% for kind, label in (("pk", "Primary key"), ("fk", "Foreign key"), ("unique", "Unique"), ("index", "Indexed"), ("generated", "Generated"), ("other", "Others")) %}<label><input type="checkbox" value="{{ kind }}" checked>{{ label }}</label>{% endfor %}</span>{% endcall %}
   </div>
   {% endset %}
-  {% call ui.view_canvas("er", er_url, params.focus or "", layouts=true, filters=bar_filters, details=true, notation=true,
+  {% set er_actions %}
+  <button type="button" class="graph-icon graph-text er-save-as" data-tip="Save the tables chosen with Ctrl + click (and where they stand) as a new slice" hidden>Save as slice</button>
+  <button type="button" class="graph-icon graph-text er-save" data-slice="{{ params.slice or '' }}" data-tip="Keep the slice's tables and where they stand now"{% if not params.slice %} hidden{% endif %}>Save the slice</button>
+  {% endset %}
+  {% call ui.view_canvas("er", er_url, params.focus or "", layouts=true, filters=bar_filters, details=true, notation=true, actions=er_actions,
                          empty="" if er_url else "No database read and no schema file yet: allow a connection in Connections.") %}
     <span title="A project of the repository, as in the tree"><i class="box project"></i>project</span>
     <span title="A connection of doctracker, or a file of the project declaring a schema (SQL, migrations, ORM models, a dump)"><i class="box er-connection"></i>connection / file</span>
@@ -70,6 +77,22 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     {{ ui.relation_kinds(("foreign-key", "implied", "view-reads", "partition-of", "inherits", "foreign-table")) }}
     <span class="er-ends" title="Crow's foot: what each end of a key's line allows"><b>||</b> one · <b>o|</b> zero or one · <b>o&lt;</b> zero or many</span>
   {% endcall %}
+  {% elif tab == "slices" %}
+  <p class="tab-description">Slices of the schema: a few tables kept together, cut from the whole — a part of the system with a name and a text saying what it is for, its boxes placed in the Diagram as you left them. Each slice is a file in doc/slices/, versioned with the project; its tables are found where they were taken from, or by their name elsewhere. The agents read them too.</p>
+  <div class="graph-toolbar">
+    <button type="button" class="notes-button primary" hx-get="/database/slice-form" hx-target="#database-dialog-body">New slice</button>
+  </div>
+  {% if not slices %}<p class="empty">No slice yet: make one with “New slice”, or choose tables in the Diagram (Ctrl + click) and Save as slice.</p>{% endif %}
+  <div class="connection-cards">
+    {% for s in slices %}
+    <article hx-get="/database/slice-form?details={{ s.name | urlencode }}" hx-target="#page-dialog-body" role="button" tabindex="0" title="Details of {{ s.name }}" class="connection-card slice-card">
+      <h3 title="{{ s.name }}">{{ ui.icon("database") }}<span class="connection-name">{{ s.name }}</span>
+        {% set missing = s.tables | rejectattr("found") | list | length %}{% if missing %}<span class="notes-pill connection-blocked">{{ missing }} not found</span>{% endif %}</h3>
+      <p class="slice-of">a slice of {{ s.databases | map("replace", "db:", "") | map("replace", "origin:", "") | join(", ") or "nothing read" }}: {{ s.tables | selectattr("found") | list | length }} of {{ s.total }} tables</p>
+      {% if s.text %}<p class="connection-test">{{ s.text }}</p>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
   {% elif tab == "evolution" %}
   <p class="tab-description">How the project's schema evolved, from its migrations and its commits: one lane per origin (SQL files, migration sets, ORM models, dumps), each migration step at the commit that brought it, each commit that changed the origin's files; a filled dot is a migration step, a hollow one a commit, a red ring a step changed after it was created. Click a moment to see what it did; Diff compares the schema at two moments.</p>
   {% macro moment_options(chosen) -%}
@@ -359,8 +382,8 @@ hx-post="/database/{{ action }}" hx-target="#content"{% if confirm %} hx-confirm
     {% for c in connections %}{{ card(c, tests.get(c.id)) }}{% endfor %}
   </div>
 
-  <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
   {% if open_connection %}{# reached from the tree: the connection's details open at once #}
   <div hidden hx-get="/database/form?details={{ open_connection }}" hx-target="#page-dialog-body" hx-trigger="load"></div>{% endif %}
   {% endif %}
+  <dialog id="database-dialog" class="notes-dialog"><div id="database-dialog-body"></div></dialog>
 </div>

@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import json
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -18,6 +19,7 @@ from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_
 from doctracker.databases.discovery import KINDS
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
 from doctracker.databases.origins.evolution import describe_moment, moments, renames_between, schema_at, schema_diff
+from doctracker.databases.slices import SliceStore, resolve as resolve_slice, table_key
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
@@ -284,6 +286,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return response
 
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
+    slices = SliceStore(project_root, state.notify)  # the slices of the schema, doc/slices/ (the MCP tools read the same files)
 
     def availability() -> dict[str, str]:
         """Whether each connection answers: `failed` when its last reading or its last test failed, `ok`
@@ -314,7 +317,53 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context.update(er_context(params))
         if tab == "evolution":
             context.update(evolution=evolution_moments(), evolution_labels=evolution_labels())
+        if tab == "slices":
+            context.update(slices=[resolve_slice(found, catalog) for found in slices.slices()])
         return context
+
+    def table_choices() -> list[dict]:
+        """Every table and view of the databases read and of the files, for the slices' forms."""
+        return [{"path": o["path"], "name": table_key(o["path"]), "kind": o["kind"],
+                 "place": o["path"].split("::", 1)[0] if "::" in o["path"] else "/".join(o["path"].split("/")[:2])}
+                for o in catalog.objects(origins=True) if o["kind"] in ("table", "view", "materialized view", "foreign table")]
+
+    def neighbours(start: str, steps: int) -> list[str]:
+        """A table and the tables its keys and views reach, `steps` relations away (either way)."""
+        tables = {choice["path"] for choice in table_choices()}
+        def table_of(path: str) -> str | None:
+            return path if path in tables else (path.rsplit(".", 1)[0] if path.rsplit(".", 1)[0] in tables else None)
+        links: dict[str, set[str]] = {}
+        for relation in catalog.relations(("foreign key", "implied", "view reads", "partition of", "inherits", "foreign table")):
+            a, b = table_of(relation["source"]), table_of(relation["target"])
+            if a and b and a != b:
+                links.setdefault(a, set()).add(b)
+                links.setdefault(b, set()).add(a)
+        reached = frontier = {start} if start in tables else set()
+        for _ in range(max(0, steps)):
+            frontier = {other for path in frontier for other in links.get(path, ())} - reached
+            reached = reached | frontier
+        return sorted(reached)
+
+    def slice_modal(details: str = "", editing: bool = False, chosen: list[dict] | None = None, form: dict | None = None,
+                    error: str = "") -> str:
+        """The slices' modals: one slice's details (`details`), its form (`editing`), or a new one's form
+        with the tables `chosen` (from the Diagram, with their positions)."""
+        found = slices.slice(details) if details else None
+        return templates.get_template("database_form.html").render(
+            slice_mode=True, slice=resolve_slice(found, catalog) if found else None, editing=editing or not found,
+            chosen=chosen if chosen is not None else (found or {}).get("tables", []), form=form or {}, error=error,
+            choices=table_choices())
+
+    async def slice_form(request: Request) -> Response:
+        """A slice's modal: `?details=<name>`, `&edit=1`; a new one; `start` and `steps` tick a table and
+        its neighbours in the form being filled (its fields kept)."""
+        query = request.query_params
+        chosen = None
+        if query.get("start"):
+            ticked = query.getlist("table")
+            chosen = [{"path": path} for path in dict.fromkeys(ticked + neighbours(query["start"], int(query.get("steps") or 1)))]
+        return HTMLResponse(slice_modal(query.get("details", ""), bool(query.get("edit")), chosen,
+                                        {"name": query.get("name", ""), "text": query.get("text", ""), "previous": query.get("previous", "")}))
 
     evolution_cache: dict = {}  # the moments, kept until the origins are read again or git changes
 
@@ -360,9 +409,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                    for path, kind, _, name in objects if kind in ("database", "schema", "table", "view", "materialized view", "foreign table")]
         targets += [{"path": f"origin:{origin['name']}", "name": origin["name"], "role": "file", "symbol": ""} for origin in state.origins]
         tree = pages.database_tree(state, connections.connections(), apart=EXAMPLES_FOLDER if developing else "", read=outline)
-        query = urlencode([(key, params[key]) for key in ("project", "focus", "depth") if params.get(key)])
+        query = urlencode([(key, params[key]) for key in ("project", "focus", "depth", "slice") if params.get(key)])
         return {"er_url": f"/graph/er{'?' + query if query else ''}" if targets else "",
                 "er_projects": [{"path": node["path"], "name": node["name"]} for node in tree if node["role"] == "project"],
+                "er_slices": [found["name"] for found in slices.slices()],
                 "er_targets": targets}
 
     def drift() -> list[dict]:
@@ -479,6 +529,45 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         except (ValueError, Locked):
             pass
 
+    async def slice_action(request: Request, name: str, form: dict) -> Response:
+        """A slice saved (`slice-save`: from its form, the tables ticked; from the Diagram, the tables and
+        positions as JSON in `tables`, answered in JSON), deleted (`slice-delete`), or the form of a new one
+        holding the Diagram's selection (`slice-new`)."""
+        if name == "slice-new":
+            chosen = json.loads(form.get("tables") or "[]")
+            return HTMLResponse(slice_modal(chosen=chosen))
+        if name == "slice-delete":
+            slices.delete(form.get("name", ""))
+            context = {"path": "", "view": "database", "params": {"tab": "slices"}, **database_context({"tab": "slices"})}
+            return render_page(request, "database.html", "/database?tab=slices", context)
+        from_diagram = form.get("from") == "diagram"
+        if from_diagram or form.get("tables", "").startswith("["):
+            tables = json.loads(form.get("tables") or "[]")
+        else:
+            sent = await request.form()
+            placed = {}
+            for value in sent.getlist("placed"):  # a new slice from the Diagram: where its boxes were
+                path, _, at = value.rpartition("|")
+                path, _, x = path.rpartition("|")
+                placed[path] = {"x": float(x), "y": float(at)}
+            tables = [{"path": path, **placed.get(path, {})} for path in sent.getlist("table")]
+        previous = slices.slice(form.get("previous", "")) if form.get("previous") else None
+        if not from_diagram and previous is not None:  # positions kept for the tables still in it
+            placed = {t["path"]: t for t in previous.get("tables", [])}
+            tables = [{**placed.get(t["path"], {}), **{k: v for k, v in t.items() if v is not None}} for t in tables]
+        try:
+            kept = slices.save(form.get("name", ""), form.get("text", previous.get("text", "") if previous and from_diagram else ""),
+                               tables, form.get("previous", ""))
+        except ValueError as problem:
+            if from_diagram:
+                return JSONResponse({"ok": False, "error": str(problem)})
+            body = "#page-dialog-body" if form.get("edit") else "#database-dialog-body"  # the refusal shown in the form
+            return HTMLResponse(slice_modal(form.get("previous", ""), True, tables, form, str(problem)), headers={"HX-Retarget": body})
+        if from_diagram:
+            return JSONResponse({"ok": True, "name": kept["name"]})
+        context = {"path": "", "view": "database", "params": {"tab": "slices"}, **database_context({"tab": "slices"})}
+        return render_page(request, "database.html", "/database?tab=slices", context)
+
     async def database_action(request: Request) -> Response:
         """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
         unlock the saved passwords, or link an origin to a database by hand (`origin-link`).
@@ -496,6 +585,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 if connection["allowed"]:
                     asyncio.create_task(refresh_quietly(connection["id"]))
             return Response("", status_code=204)
+        if name.startswith("slice-"):
+            return await slice_action(request, name, form)
         if name == "origin-link":  # an origin linked to a database by hand, unlinked, or left to the other layers
             choice = {"1": True, "0": False}.get(form.get("linked", ""))
             if form.get("origin") and form.get("database"):
@@ -846,8 +937,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "evolution":  # DATABASE › Evolution: every origin's moments, its lane
             return JSONResponse(evolution_moments())
         if view == "er":  # DATABASE › Diagram (ER): the live databases and what the files declare, in the tree's levels
+            found = slices.slice(params["slice"]) if params.get("slice") else None
             return JSONResponse(er_diagram(state, catalog, connections.connections(), EXAMPLES_FOLDER if developing else "",
-                                           params.get("project", ""), params.get("focus", ""), depth_of(params)))
+                                           params.get("project", ""), params.get("focus", ""), depth_of(params),
+                                           resolve_slice(found, catalog) if found else None))
         if view == "local":  # an entity's page: the entity and its neighbours, a few steps away
             graph = call_graph(state, params.get("focus", ""), depth_of(params), "both", kinds=LOCAL_KINDS)
             return JSONResponse(pages.visible_graph(state, graph, shown))
@@ -986,6 +1079,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/database", view_page),
         Route("/database/form", database_form),
         Route("/database/evolution", evolution_part),
+        Route("/database/slice-form", slice_form),
         Route("/database/{action}", database_action, methods=["POST"]),
         Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),

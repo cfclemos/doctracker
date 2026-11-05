@@ -1104,3 +1104,9 @@ document.addEventListener("click", (event) => {
   button.classList.add("busy");
   fetch("/database/refresh-all", { method: "POST" }).finally(() => setTimeout(() => button.classList.remove("busy"), 1500));
 });
+
+// A slice saved or deleted from the consultation modal: the page comes back redrawn, the modal closes.
+document.addEventListener("htmx:afterRequest", (event) => {
+  const dialog = document.getElementById("page-dialog");
+  if (dialog?.open && event.detail.successful && event.detail.target?.id === "content" && event.detail.elt.closest?.("#page-dialog")) dialog.close();
+});

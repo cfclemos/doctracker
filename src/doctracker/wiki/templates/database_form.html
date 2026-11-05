@@ -75,7 +75,85 @@
 {% endif %}
 {%- endmacro %}
 
-{% if details %}
+{% if slice_mode %}
+{# A slice of the schema: its details in the consultation modal (its text, its tables as found now, Open in
+   Diagram, Edit, Delete), or its form — name, text, the tables ticked in the box of ticks (searched), and a
+   table with its neighbours to start from — in the same modal; a new slice's form in the notes' modal. #}
+{% set SLICE_HELP = {
+  "Name": "The slice's name, as the Slices tab, the Diagram and the agents show it. Its file in doc/slices/ is named after it.",
+  "Text": "What the slice is for, in Markdown: the part of the system its tables make, how they are used, what to know about them. The agents read it with the tables.",
+  "Tables": "The tables and views the slice holds, from any database read or any of the project's files (type to search, tick, then Apply). In the Diagram, Ctrl + click adds or takes away a table too.",
+  "Start from": "A table, and the tables its keys and views reach a few steps away (Steps): Add ticks them all in Tables, beside what is ticked already.",
+} %}
+{% set s = slice %}
+{% set chosen_paths = chosen | map(attribute="path") | list %}
+{% macro slice_fields() -%}
+{% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+<input type="hidden" name="previous" value="{{ form.previous or (s.name if s else '') }}">
+{% if s %}<input type="hidden" name="details" value="{{ s.name }}"><input type="hidden" name="edit" value="1">{% endif %}
+{% call ui.form_field("Name", SLICE_HELP["Name"], required=True) %}<input name="name" required value="{{ form.name or (s.name if s else '') }}">{% endcall %}
+{% call ui.form_field("Text", SLICE_HELP["Text"]) %}<textarea name="text" class="grow-line" rows="3">{{ form.text or (s.text if s else '') }}</textarea>{% endcall %}
+{% call ui.form_field("Tables", SLICE_HELP["Tables"], required=True, choice=True) %}
+<details class="objects-column-filter slice-tables">
+  <summary class="evo-origins-label" title="Choose the tables"><span class="evo-origins-text">{{ chosen_paths | length }} table{{ "s" if chosen_paths | length != 1 }} ticked</span> <span class="objects-crumb-arrow">▾</span></summary>
+  <div class="objects-filter-box">
+    <input type="search" class="objects-values-find" placeholder="Search the tables…" aria-label="Search the tables" autocomplete="off">
+    <div class="objects-values-head"><span>{{ choices | length }} tables and views</span>
+      <span class="objects-values-actions"><button type="button" class="objects-values-clear">Clear</button>
+      <button type="button" class="objects-values-apply">Apply</button></span></div>
+    <ul class="objects-values">{% for t in choices | sort(attribute="name") %}
+      <li><label><input type="checkbox" name="table" value="{{ t.path }}"{% if t.path in chosen_paths %} checked{% endif %}>
+        <span class="objects-value">{{ t.name }}</span><span class="count">{{ t.place | replace("db:", "") | replace("origin:", "") }}</span></label></li>
+    {% endfor %}</ul>
+  </div>
+</details>{% endcall %}
+<datalist id="slice-starts">{% for t in choices %}<option value="{{ t.path }}">{% endfor %}</datalist>
+{% call ui.form_field("Start from", SLICE_HELP["Start from"]) %}
+<span class="slice-start">
+  <input name="start" list="slice-starts" placeholder="A table…" autocomplete="off">
+  <select name="steps" aria-label="Steps">{% for n in (1, 2, 3) %}<option value="{{ n }}">{{ n }} step{{ "s" if n > 1 }}</option>{% endfor %}</select>
+  <button type="button" class="notes-button" hx-get="/database/slice-form" hx-include="closest form" hx-target="closest .slice-modal" hx-select=".slice-modal" hx-swap="outerHTML">Add</button>
+</span>{% endcall %}
+{%- endmacro %}
+<div class="slice-modal">
+{% if s and not editing %}
+<header class="page-header">
+  <h1><span class="icon icon-database"></span><span class="name">{{ s.name }}</span><span class="kind">slice</span></h1>
+  <p class="meta">a slice of {{ s.databases | map("replace", "db:", "") | map("replace", "origin:", "") | join(", ") or "nothing read" }}: {{ s.tables | selectattr("found") | list | length }} of {{ s.total }} tables · <code>{{ s.file }}</code></p>
+</header>
+{% if s.text %}<div class="docstring">{{ s.text | markdown }}</div>{% endif %}
+<table class="objects-table slice-list"><thead><tr><th>Table</th><th>Where</th><th>Found</th></tr></thead><tbody>
+{% for t in s.tables %}<tr><td>{% if t.found %}<a {{ ui.nav(t.found) }}><code>{{ t.key }}</code></a>{% else %}<code>{{ t.key }}</code>{% endif %}</td>
+  <td>{% if t.found %}<code>{{ t.found.split("::")[0] if "::" in t.found else "/".join(t.found.split("/")[:2]) }}</code>{% else %}-{% endif %}</td>
+  <td>{% if t.found_by == "path" %}where it was taken from{% elif t.found_by == "name" %}by its name (taken from <code>{{ t.path }}</code>){% else %}<span class="failed">not found</span>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  <a class="see-in-link" {{ ui.nav_url("/database?tab=diagram&slice=" ~ (s.name | urlencode)) }}><i class="bar-icon bar-icon-link"></i>Open in Diagram</a>
+  <button type="button" class="see-in-link" hx-get="/database/slice-form?details={{ s.name | urlencode }}&edit=1" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-edit"></i>Edit</button>
+  <form hx-post="/database/slice-delete" hx-target="#content" hx-confirm="Delete the slice {{ s.name }}? Its file in doc/slices/ is removed; the tables stay as they are." data-confirm-title="Delete slice">
+    <input type="hidden" name="name" value="{{ s.name }}"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-remove"></i>Delete</button></form>
+  <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
+</footer>
+{% elif s %}
+<header class="page-header"><h1><span class="icon icon-database"></span><span class="name">{{ s.name }}</span><span class="kind">editing the slice</span></h1></header>
+<form id="slice-edit" class="form-group slice-form" hx-post="/database/slice-save" hx-target="#content">{{ slice_fields() }}</form>
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  <button type="button" class="see-in-link" hx-get="/database/slice-form?details={{ s.name | urlencode }}" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-cancel"></i>Cancel</button>
+  <button type="submit" form="slice-edit" class="see-in-link"><i class="bar-icon bar-icon-save"></i>Save</button>
+</footer>
+{% else %}
+<div class="dialog-head">
+  <h2>New slice</h2>
+  <button type="button" class="dialog-close" aria-label="Close" title="Close">×</button>
+</div>
+<form hx-post="/database/slice-save" hx-target="#content" class="form-group slice-form">
+  {% for t in chosen if t.x is defined %}<input type="hidden" name="placed" value="{{ t.path }}|{{ t.x }}|{{ t.y }}">{% endfor %}
+  {{ slice_fields() }}
+  <div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">Save the slice</button></div>
+</form>
+{% endif %}
+</div>
+{% elif details %}
 {% set c = details %}
 <header class="page-header">
   <h1><span class="icon icon-database"></span><span class="name">{{ c.name }}</span><span class="kind">{{ c.kind_name }}</span>
