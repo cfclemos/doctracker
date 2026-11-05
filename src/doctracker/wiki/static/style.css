@@ -2175,3 +2175,24 @@ html.loading::before {
 .slice-list td, .slice-list th { text-align: center; vertical-align: middle; }
 /* A bar button hidden stays hidden (the bar's buttons are shown as flex boxes). */
 .graph-canvas-bar [hidden] { display: none !important; }
+
+/* The dashboard (/): a block per section, side by side when there is room; each number a link to its page. */
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 1rem; margin-top: 1rem; }
+.dash-block { padding: 0.8rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.dash-head { margin: 0 0 0.7rem; font-size: 1rem; letter-spacing: 0.04em; }
+.dash-head a { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--fg); }
+.dash-stats { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+.dash-stat { display: flex; flex-direction: column; min-width: 6.5rem; padding: 0.4rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--panel); color: var(--fg); }
+a.dash-stat:hover { border-color: var(--accent); text-decoration: none; }
+.dash-stat b { font-size: 1.4rem; line-height: 1.2; }
+.dash-stat span { color: var(--muted); font-size: 0.8rem; }
+.dash-stat.lint-error b { color: #cf222e; }
+.dash-stat.lint-warning b { color: #bf8700; }
+.dash-stat.lint-info b { color: var(--accent); }
+.dash-stat .dash-branch { font-family: var(--mono, monospace); font-size: 1rem; overflow-wrap: anywhere; }
+.dash-list { list-style: none; margin: 0; padding: 0; }
+.dash-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.2rem 0.8rem; padding: 0.3rem 0;
+  border-top: 1px solid var(--border); font-size: 0.9rem; }
+.dash-counts { color: var(--muted); font-size: 0.8rem; }
+.dash-counts .state-todo, .dash-counts .state-doing, .dash-counts .state-done { color: var(--tint); font-weight: 600; }
