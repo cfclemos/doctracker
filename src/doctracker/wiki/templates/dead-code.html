@@ -2,9 +2,9 @@
 {# The dead code findings (doctracker.analysis), filtered and grouped by file. The filters go in the
    URL, so a filtered list can be kept or shared; the same filters as the dead_code MCP tool. #}
 <div class="dead-code-page">
-  {{ ui.view_header("dead-code", "DEAD CODE",
+  {{ ui.view_header("code", "CODE :: Dead Code",
      "What nothing in the project uses: the code graph and vulture together. Check before deleting: code used only from outside the project, or through data, is not seen.") }}
-  <form class="notes-filter dead-code-filter" hx-get="/dead-code" hx-target="#content" hx-push-url="true"
+  <form class="notes-filter dead-code-filter" hx-get="/code/dead-code" hx-target="#content" hx-push-url="true"
         hx-trigger="change, keyup changed delay:400ms from:input[name=path]">
     <label>Verdict
       <select name="verdict">

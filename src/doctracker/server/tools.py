@@ -385,7 +385,7 @@ A Python function or class is `unused` when both agree, `public, unused inside` 
 it (`__all__`, re-exported); the front-end (JS functions, CSS classes, templates, macros) is judged by
 the graph, `maybe used by data` when the Python code writes its name as a string; `vulture only` covers
 variables, attributes, properties, imports and unreachable code. Check before deleting: code used only
-from outside the project, or through data, is not seen. The same list as the wiki's DEAD CODE section.
+from outside the project, or through data, is not seen. The same list as the wiki's CODE › Dead Code page.
 
 Args:
     prefix: Only paths (or files) starting with it, e.g. `mypkg.api` or `mypkg/static`.

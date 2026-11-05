@@ -1342,7 +1342,7 @@ rect.git-ref { fill: color-mix(in srgb, var(--lane) 14%, var(--block)); stroke: 
 .notes-filter { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); }
 .notes-filter label { display: inline-flex; align-items: center; gap: 0.4rem; }
 
-/* DEAD CODE page: the filters, then one table per file; the verdict badge is also on entity pages. */
+/* CODE › Dead Code: the filters, then one table per file; the verdict badge is also on entity pages. */
 .dead-code-filter { flex-wrap: wrap; align-items: center; margin: 0.6rem 0 1rem; }
 .dead-code-filter input[type=search] { width: 16rem; max-width: 60vw; }
 .dead-code-count { margin-left: auto; }
@@ -1622,6 +1622,12 @@ body.splitting { cursor: col-resize; user-select: none; }
 .graph-zoom[hidden] { display: none; }
 /* Zoom and fit float in the drawing's top right corner, over it. */
 .graph-canvas-box { position: relative; }
+/* What the drawing is of (Calls: its Focus and Path to), in its top left corner, across from the zoom. */
+.graph-caption { position: absolute; top: 0.5rem; left: 0.5rem; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  max-width: calc(100% - 14rem); margin: 0; padding: 0.25rem 0.55rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 12%); font-size: 0.85rem; }
+.graph-caption span { color: var(--muted); font-weight: 600; }
+.graph-caption code { overflow-wrap: anywhere; font-weight: 700; }
 .graph-view-tools { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 5; display: flex; align-items: center; gap: 0.4rem; }
 .graph-view-tools button, .graph-view-tools .graph-zoom-level { height: 1.8rem; border: 1px solid var(--border); background: var(--bg);
   color: var(--fg); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); }

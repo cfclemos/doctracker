@@ -1,5 +1,5 @@
 {% import "macros.html" as ui %}
-{# DIAGRAMS: architecture, classes and calls as tabs of one page, each at its own URL. Every tab has the
+{# CODE › Diagrams: architecture, classes and calls as tabs of one page, each at its own URL. Every tab has the
    same header and the same bar: its options on the left, the language filter shown, the legend on the
    right; then the drawing, with its own bar (highlight, zoom, fit). #}
 {% set texts = {
@@ -41,15 +41,16 @@
 </form>
 {%- endmacro %}
 <div class="graph-page">
-  {{ ui.view_header("diagrams", "DIAGRAMS", "") }}
-  {{ ui.tabs((("architecture", "Architecture", "/architecture"), ("classes", "Classes", "/classes"), ("calls", "Functions and Calls", "/calls")), view) }}
+  {{ ui.view_header("code", "CODE :: Diagrams", (sections.code.pages | selectattr("name", "equalto", "diagrams") | first).text) }}
+  {{ ui.tabs((("architecture", "Architecture", "/code/diagrams/architecture"), ("classes", "Classes", "/code/diagrams/classes"),
+              ("calls", "Functions and Calls", "/code/diagrams/calls")), view) }}
   <p class="tab-description">{{ texts[view] }}</p>
   {% if view == "architecture" %}
   {# The filters of every tab on one line; narrower, the name fields (Focus, Path to) go to a second line;
      narrowest, one field per line. #}
   {% set bar_filters %}
   <div class="graph-toolbar filters-line">
-    {{ filters("/architecture", module_targets, "A module or file…") }}
+    {{ filters("/code/diagrams/architecture", module_targets, "A module or file…") }}
     <label class="field graph-language"><span class="field-label">Languages</span> {{ ui.language_select(languages_found, shown_languages, languages) }}</label>
   </div>
   {% endset %}
@@ -64,7 +65,7 @@
   {% elif view == "classes" %}
   {% set bar_filters %}
   <div class="graph-toolbar filters-line">
-    {{ filters("/classes", class_targets, "A class, interface, struct or enum…") }}
+    {{ filters("/code/diagrams/classes", class_targets, "A class, interface, struct or enum…") }}
     <label class="field graph-language"><span class="field-label">Languages</span> {{ ui.language_select(languages_found, shown_languages, languages) }}</label>
   </div>
   {% endset %}
@@ -78,7 +79,7 @@
   {% else %}
   {% set bar_filters %}
   <div class="graph-toolbar filters-line">
-    <form class="graph-filter" hx-get="/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
+    <form class="graph-filter" hx-get="/code/diagrams/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
       <label class="field graph-focus"><span class="field-label">Focus</span>
         <span class="field-clearable">
           <input name="focus" data-options="call-targets" value="{{ params.focus or '' }}" placeholder="A name or path…" class="focus-input" autocomplete="off">
@@ -112,7 +113,9 @@
   </div>
   {% endset %}
   {# Nothing is drawn until a focus is chosen: the filters stay open and the drawing says so. #}
-  {% call ui.view_canvas("calls", data_url if params.focus else "", params.focus, layouts=true, filters=bar_filters, details=true,
+  {% set caption %}{% if params.focus %}<span>Focus</span> <code>{{ params.focus }}</code>{% if params.to %} <span>Path to</span> <code>{{ params.to }}</code>{% endif %}{% endif %}{% endset %}
+  {% call ui.view_canvas("calls", data_url if params.focus else "", params.focus, layouts=true, filters=bar_filters, filters_open=true, details=true,
+                         caption=caption | trim,
                          empty="" if params.focus else "Choose a function, method or class in Focus to see its calls.") %}
     <span title="The function, method or class chosen in Focus"><i class="box call-focus"></i>focus</span>
     <span title="What the focus calls, on its right"><i class="box call-callee"></i>called by the focus</span>

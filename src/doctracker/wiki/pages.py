@@ -15,7 +15,8 @@ from pygments.lexers import (CssLexer, HtmlDjangoLexer, JavascriptLexer, PythonC
 from pygments.styles import get_all_styles, get_style_by_name
 from pygments.token import Token
 
-from doctracker.analysis import VERDICTS, dead_code_kinds, filter_rows
+from doctracker.analysis import VERDICTS, dead_code_kinds
+from doctracker.analysis import filter_rows as filter_dead_code
 from doctracker.extraction.languages import LANGUAGES, language_of
 from doctracker.server.state import DocState
 
@@ -96,11 +97,11 @@ SECTIONS = {
                 "function with its page, drawn in diagrams and checked for code nothing uses. Below the pages, the "
                 "code itself, by language or by folder (the switch beside CODE).",
         "pages": [
-            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/architecture",
+            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/code/diagrams/architecture",
              "views": ("architecture", "classes", "calls"), "tabs": (),
              "text": "The code drawn: the architecture (files and what they import), the classes and their "
                      "relations, the functions and their calls."},
-            {"name": "dead-code", "title": "Dead Code", "icon": "dead-code", "url": "/dead-code", "views": ("dead-code",),
+            {"name": "dead-code", "title": "Dead Code", "icon": "dead-code", "url": "/code/dead-code", "views": ("dead-code",),
              "tabs": (),
              "text": "What nothing in the project uses, from the code graph and vulture together."},
         ],
@@ -1100,11 +1101,11 @@ def relations(state: DocState, path: str) -> dict[str, list[dict]]:
 
 
 CONFIDENCE_STEPS = (0, 60, 90, 100)
-"""The minimum confidences offered by the DEAD CODE filters."""
+"""The minimum confidences offered by the filters of CODE › Dead Code."""
 
 
 def dead_code_view(state: DocState, params: dict, languages: set[str] | None = None) -> dict:
-    """What the DEAD CODE page shows: the findings kept by the filters, grouped by file.
+    """What CODE › Dead Code shows: the findings kept by the filters, grouped by file.
 
     Args:
         state: Extracted entities and the dead code findings.
@@ -1119,7 +1120,7 @@ def dead_code_view(state: DocState, params: dict, languages: set[str] | None = N
     confidence = params.get("confidence", "0")
     filters = {"verdict": params.get("verdict", ""), "kind": params.get("kind", ""),
                "confidence": int(confidence) if confidence.isdigit() else 0, "path": params.get("path", "").strip()}
-    rows = filter_rows(state.dead_code, filters["path"], filters["verdict"], filters["kind"], filters["confidence"])
+    rows = filter_dead_code(state.dead_code, filters["path"], filters["verdict"], filters["kind"], filters["confidence"])
     if languages is not None:
         rows = [row for row in rows if language_of(row["file"]) in languages]
     modules = {entity["filepath"]: path for path, entity in state.entities.items() if entity["kind"] == "module"}

@@ -26,9 +26,9 @@
   {% endif %}
 </li>
 {% endmacro %}
-{# A fixed page of a section (pages.SECTIONS), marked when it is the one shown; DIAGRAMS opens the tab used last. #}
+{# A fixed page of a section (pages.SECTIONS), marked when it is the one shown; CODE › Diagrams opens the tab used last. #}
 {% macro page_link(page) %}
-{% set url = "/" ~ diagram_tab if page.views[0] == "architecture" else page.url %}
+{% set url = "/code/diagrams/" ~ diagram_tab if page.views[0] == "architecture" else page.url %}
 <a class="role-page{% if not path and view in page.views and (not page.tabs or tab in page.tabs) %} current{% endif %}" {{ ui.nav_url(url) }}>{{ page.title }}</a>
 {%- endmacro %}
 {# A section's heading: its icon opens and closes it, its name opens its explanation page. #}
