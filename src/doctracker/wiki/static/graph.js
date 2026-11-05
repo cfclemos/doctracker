@@ -2119,10 +2119,119 @@ async function drawUniverse(canvas) {
   }
 }
 
+// DATABASE › Evolution: one lane per origin, its moments from left (oldest) to right, each in its own
+// column of time over every lane. A migration step is a filled dot, joined to the step it revises (two
+// steps revising the same one open a branch, a row of its own; a step revising two is the merge); a commit
+// is a hollow dot, a red ring a step changed after it was created, a dashed one what is not committed. A
+// click shows the moment in Details; with the Diff row open, the first click chooses A and the second B.
+const EVO = { left: 290, step: 34, row: 22, pad: 18, top: 16 };
+
+async function drawEvolution(canvas) {
+  const data = await (await fetch(canvas.dataset.url)).json();
+  const area = canvas.closest(".graph-area"), page = canvas.closest(".graph-page");
+  page.evolutionListeners?.abort();
+  page.evolutionListeners = new AbortController();
+  const signal = page.evolutionListeners.signal;
+  fillLegend(canvas);
+  const originBox = page.querySelector(".evo-origins");
+  const form = page.querySelector(".evo-diff-form");
+  const pick = { a: form?.querySelector(".evo-a"), b: form?.querySelector(".evo-b") };
+  let next = "a";  // which of A and B a click on a moment chooses
+  const draw = () => {
+    const chosen = new Set([...(originBox?.querySelectorAll("input:checked") || [])].map((input) => input.value));
+    const label = originBox?.querySelector(".evo-origins-text");
+    if (label) label.textContent = !chosen.size ? "All origins" : chosen.size === 1 ? [...chosen][0] : `${chosen.size} origins`;
+    const lanes = data.lanes.filter((lane) => !chosen.size || chosen.has(lane.origin));
+    const shown = new Set(lanes.map((lane) => lane.origin));
+    const moments = data.moments.filter((moment) => shown.has(moment.origin));
+    if (!moments.length) {
+      canvas.innerHTML = '<p class="empty">No moment here.</p>';
+      return;
+    }
+    const column = Object.fromEntries(moments.map((moment, index) => [moment.id, index]));
+    const spots = {}, parts = [], labels = [];
+    let y = EVO.top;
+    lanes.forEach((lane, laneIndex) => {
+      const colour = LANE_COLORS[laneIndex % LANE_COLORS.length];
+      const own = moments.filter((moment) => moment.origin === lane.origin);
+      // Rows of a migration lane: a step stays on its parent's row unless a sibling took it (a branch).
+      const rowOf = {}, taken = {};
+      let rows = 1;
+      for (const moment of own) {
+        if (moment.source !== "migration") { rowOf[moment.id] = 0; continue; }
+        const parents = (moment.revises || []).map((version) => `${lane.origin}@step:${version}`).filter((id) => id in rowOf);
+        let row = parents.length ? Math.min(...parents.map((id) => rowOf[id])) : 0;
+        if (parents.length === 1 && taken[parents[0]]) row = rows++;
+        if (parents.length === 1) taken[parents[0]] = true;
+        rowOf[moment.id] = row;
+      }
+      const height = EVO.pad + rows * EVO.row;
+      labels.push(`<g class="evo-lane" style="--lane:${colour}"><rect x="0" y="${y - EVO.pad / 2}" width="100%" height="${height}" class="evo-lane-band"/>
+        <text x="10" y="${y + 12}" class="evo-lane-name"><title>${escapeHtml(lane.origin)}</title>${escapeHtml(lane.origin.split("/").slice(-2).join("/"))}</text>
+        <text x="10" y="${y + 26}" class="evo-lane-kind">${escapeHtml(lane.kind)}</text></g>`);
+      for (const moment of own) {
+        spots[moment.id] = { x: EVO.left + column[moment.id] * EVO.step, y: y + 8 + rowOf[moment.id] * EVO.row, colour };
+      }
+      // The lines: a step to the steps it revises; a lane of commits, each to the one before.
+      let before = null;
+      for (const moment of own) {
+        const here = spots[moment.id];
+        const from = moment.source === "migration" ? (moment.revises || []).map((version) => spots[`${lane.origin}@step:${version}`]).filter(Boolean)
+          : (before ? [spots[before.id]] : []);
+        for (const there of from) {
+          const middle = (there.x + here.x) / 2;
+          parts.push(`<path class="evo-link" style="--lane:${colour}" d="M ${there.x} ${there.y} C ${middle} ${there.y}, ${middle} ${here.y}, ${here.x} ${here.y}"/>`);
+        }
+        if (moment.source !== "migration") before = moment;
+      }
+      y += height;
+    });
+    const dots = moments.map((moment) => {
+      const { x, y: top, colour } = spots[moment.id];
+      const kind = moment.commit ? (moment.changed?.length ? "changed" : moment.source === "migration" ? "migration" : "commit") : "now";
+      const tip = `${moment.origin}\n${moment.source === "migration" ? `step ${moment.version} ${moment.title}` : moment.title}`
+        + `\n${moment.commit ? `${moment.commit.short} · ${moment.commit.at.slice(0, 10)}` : "not committed"}`;
+      return `<g class="evo-moment evo-${kind}" data-moment="${escapeHtml(moment.id)}" style="--lane:${colour}">
+        <circle cx="${x}" cy="${top}" r="6"/><text class="evo-pick" x="${x}" y="${top - 10}"></text><title>${escapeHtml(tip)}</title></g>`;
+    });
+    const width = EVO.left + moments.length * EVO.step + EVO.pad;
+    canvas.innerHTML = `<svg class="evo-svg" width="${width}" height="${y + EVO.pad}">${labels.join("")}${parts.join("")}${dots.join("")}</svg>`;
+    marks();
+  };
+  // A and B, shown on their moments.
+  const marks = () => {
+    for (const element of canvas.querySelectorAll(".evo-moment")) {
+      const id = element.dataset.moment;
+      const letter = pick.a?.value === id ? "A" : pick.b?.value === id ? "B" : "";
+      element.classList.toggle("evo-picked", Boolean(letter));
+      element.querySelector(".evo-pick").textContent = letter;
+    }
+  };
+  draw();
+  originBox?.addEventListener("change", (event) => { if (event.target === originBox) draw(); }, { signal });
+  for (const select of Object.values(pick)) select?.addEventListener("change", marks, { signal });
+  canvas.addEventListener("click", (event) => {
+    const id = event.target.closest("[data-moment]")?.dataset.moment;
+    if (!id) return;
+    const diffOpen = form && !form.closest("[data-row-of]").classList.contains("closed");
+    if (diffOpen) {
+      pick[next].value = id;
+      pick[next].dispatchEvent(new Event("change", { bubbles: true }));
+      next = next === "a" ? "b" : "a";
+      return;
+    }
+    const details = area.querySelector(".graph-details");
+    if (!details) return;
+    htmx.ajax("GET", `/database/evolution?moment=${encodeURIComponent(id)}`, { target: details });
+    openSidePanel(area);
+  }, { signal });
+}
+
 function initViews() {
   for (const canvas of document.querySelectorAll(".graph-canvas")) {
     if (canvas.dataset.ready || !canvas.dataset.url) continue;  // no url: nothing chosen yet
     if (canvas.dataset.view === "universe") { canvas.dataset.ready = "1"; drawUniverse(canvas); continue; }
+    if (canvas.dataset.view === "evolution") { canvas.dataset.ready = "1"; drawEvolution(canvas); continue; }
     if (!DIAGRAMS[canvas.dataset.view]) continue;
     canvas.dataset.ready = "1";
     drawDiagram(canvas, DIAGRAMS[canvas.dataset.view]);

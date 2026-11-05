@@ -17,6 +17,7 @@ from doctracker.config import GRAMMARS_DIR, Config, set_config_value
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.discovery import KINDS
 from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
+from doctracker.databases.origins.evolution import describe_moment, moments, renames_between, schema_at, schema_diff
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
 from doctracker.graph import (CALL_DIRECTIONS, LOCAL_KINDS, MAX_CALL_DEPTH, architecture, call_graph, class_diagram,
@@ -311,7 +312,45 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context.update(drift=drift(), catalog_databases=catalog.objects(kind="database"))
         if tab == "diagram":
             context.update(er_context(params))
+        if tab == "evolution":
+            context.update(evolution=evolution_moments(), evolution_labels=evolution_labels())
         return context
+
+    evolution_cache: dict = {}  # the moments, kept until the origins are read again or git changes
+
+    def evolution_moments() -> dict:
+        """The Evolution tab's moments (see `moments`), read once per reading of the origins and state of git."""
+        index = project_root / ".git" / "index"
+        key = (id(state.origins), index.stat().st_mtime if index.exists() else 0)
+        if evolution_cache.get("key") != key:
+            evolution_cache.update(key=key, value=moments(project_root, state.origins))
+        return evolution_cache["value"]
+
+    def evolution_labels() -> dict[str, str]:
+        """Each moment as the fields A and B name it: its step or commit, and its date."""
+        labels = {}
+        for moment in evolution_moments()["moments"]:
+            commit = moment["commit"]
+            what = f"{moment['version']} {moment['title']}".strip() if moment["source"] == "migration" else \
+                (f"commit {commit['short']}" if commit else "not committed")
+            labels[moment["id"]] = f"{what} · {commit['at'][:10] if commit else 'now'}"
+        return labels
+
+    async def evolution_part(request: Request) -> Response:
+        """The Evolution tab's parts: a moment in the Details panel (`?moment=<id>`), or the diff of two
+        moments (`?a=&b=&view=side|only`)."""
+        query = request.query_params
+        parts = templates.get_template("macros.html").module
+        if query.get("moment"):
+            moment = next((m for m in evolution_moments()["moments"] if m["id"] == query["moment"]), None)
+            return HTMLResponse(str(parts.evolution_moment(moment, describe_moment(state.origins, query["moment"]) if moment else None)))
+        a, b, view = query.get("a", ""), query.get("b", ""), query.get("view", "only")
+        if not a or not b:
+            return HTMLResponse(str(parts.evolution_diff(None, a, b, view, evolution_labels())))
+        first, second = await asyncio.gather(asyncio.to_thread(schema_at, project_root, state.origins, a),
+                                             asyncio.to_thread(schema_at, project_root, state.origins, b))
+        diff = schema_diff(first, second, renames_between(state.origins, a, b)) if first and second else None
+        return HTMLResponse(str(parts.evolution_diff(diff, a, b, view, evolution_labels())))
 
     def er_context(params: dict) -> dict:
         """The Diagram (ER) tab: its data's URL (with the filters chosen), the projects of the DATABASES
@@ -804,6 +843,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
         if view == "universe":  # DATABASE › Universe: the databases as the server last read them; or what a file declares
             return JSONResponse(catalog.universe(params.get("origin", "")))
+        if view == "evolution":  # DATABASE › Evolution: every origin's moments, its lane
+            return JSONResponse(evolution_moments())
         if view == "er":  # DATABASE › Diagram (ER): the live databases and what the files declare, in the tree's levels
             return JSONResponse(er_diagram(state, catalog, connections.connections(), EXAMPLES_FOLDER if developing else "",
                                            params.get("project", ""), params.get("focus", ""), depth_of(params)))
@@ -944,6 +985,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/notes", view_page),
         Route("/database", view_page),
         Route("/database/form", database_form),
+        Route("/database/evolution", evolution_part),
         Route("/database/{action}", database_action, methods=["POST"]),
         Route("/notes/form", note_form),
         Route("/notes/{action}", note_action, methods=["POST"]),
