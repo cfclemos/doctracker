@@ -90,8 +90,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
     `/wiki/<path>`, CODE's diagrams `/code/diagrams/<tab>` (architecture, classes, calls; their data under
     `/graph/...`), the history `/git` (with `/git/branches` and `/git/commit/<hash>`), the sections'
     explanation pages `/agent`, `/code` and `/databases`, AGENT's pages `/agent/<page>` (changed through
-    `/agent/<action>`), the databases `/database` (changed
-    through `/database/<action>`), `/source/<path>`,
+    `/agent/<action>`), DATABASES' pages `/databases/<page>[/<tab>]` (changed through
+    `/databases/<action>`), `/source/<path>`,
     `/search` (modes `all`, `bm25`, `semantic`, `hybrid`),
     `/code-theme/<name>.css`, `/settings/code-theme`, `/events` (live updates) and `/static`.
 
@@ -135,6 +135,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         dead_code_of=pages.dead_code_of,
         db_place=pages.db_place,
         db_marks=pages.DB_MARKS,
+        db_urls=pages.DATABASE_URLS,
         db_groups=[(title, [kind for kind, same in pages.DB_GROUPS if same == title])
                    for title in dict.fromkeys(title for _, title in pages.DB_GROUPS)],
         browse_counts=pages.BROWSE_COUNTS,
@@ -204,7 +205,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     def database_origin(name: str) -> dict | None:
         """An origin's page data: the origin as read, the databases it describes (its links, told in one
-        line; the rest of it is DATABASE › Drift) and what it ends with (`declared`), from the same store
+        line; the rest of it is DATABASES › Drift) and what it ends with (`declared`), from the same store
         as the live databases."""
         origin = next((o for o in state.origins if o["name"] == name), None)
         if origin is None:
@@ -213,7 +214,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 "declared": catalog.objects(connection_id=f"origin:{name}")}  # what it ends with, as the store keeps it
 
     async def render(request: Request, path: str) -> HTMLResponse:
-        if path.startswith("connection:"):  # a connection in the tree: its screen, DATABASE › Connections with its details open
+        if path.startswith("connection:"):  # a connection in the tree: its screen, DATABASES › Connections with its details open
             context = {"path": path, "view": "database", "params": {"tab": "connections"},
                        **database_context({"tab": "connections"}), "open_connection": path.removeprefix("connection:")}
             return render_page(request, "database.html", f"/wiki/{path}", context)
@@ -240,7 +241,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return render_page(request, content, f"/wiki/{path}", context, status)
 
     async def view_page(request: Request) -> Response:
-        """One of the views: CODE's diagrams (architecture, classes, calls) and dead code, git, the databases."""
+        """One of the views: CODE's diagrams (architecture, classes, calls) and dead code, git."""
         view = request.url.path.rsplit("/", 1)[-1]
         params = dict(request.query_params)
         query = request.url.query
@@ -274,9 +275,6 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             context["selected"] = params.get("commit") or (commits[0].hash if commits else "")
         if view == "dead-code":
             context.update(pages.dead_code_view(state, params, view_settings(request)[1]))
-        if view == "database":
-            params = database_params(request.query_params)
-            context.update(database_context(params))  # with its params
         url = f"{request.url.path}?{request.url.query}" if request.url.query else request.url.path
         template = "diagrams.html" if view in DIAGRAM_TABS else f"{view}.html"
         response = render_page(request, template if state.ready else "loading.html", url, context)
@@ -285,6 +283,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if view == "calls" and request.query_params:
             response.set_cookie("calls-view", query, max_age=31536000, samesite="lax")
         return response
+
+    async def databases_page(request: Request) -> Response:
+        """A page of DATABASES (Connections, Navigate, Diagrams, Drift, Evolution, Lint), each tab of Navigate
+        and Diagrams at its own address: `/databases/<page>[/<tab>]` (pages.DATABASE_URLS)."""
+        tab = pages.DATABASE_VIEWS.get(request.path_params["page"])
+        if tab is None:
+            return render_page(request, "not_found.html", request.url.path, {"path": ""}, 404)
+        params = {**database_params(request.query_params), "tab": tab}
+        context = {"path": "", "view": "database", **database_context(params)}
+        url = f"{request.url.path}?{request.url.query}" if request.url.query else request.url.path
+        return render_page(request, "database.html" if state.ready else "loading.html", url, context)
 
     async def agent_page(request: Request) -> Response:
         """A page of AGENT: the planner, the guidelines or the memory, each at `/agent/<page>`."""
@@ -317,7 +326,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return found
 
     def database_params(query: QueryParams) -> dict:
-        """What an address of DATABASE asks for: its fields, each list's column filters (`f_<column>`, several
+        """What an address of DATABASES asks for: its fields, each list's column filters (`f_<column>`, several
         values each) and Browse's ticks (the servers, databases, schemas and tables ticked in its path)."""
         params: dict = dict(query)
         params["filters"] = {key[2:]: query.getlist(key) for key in query if key.startswith("f_")}
@@ -325,7 +334,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return params
 
     def database_context(params: dict, error: str = "") -> dict:
-        """What DATABASE shows: its tab (Connections, Universe or Navigate Database), the connections, their
+        """What a page of DATABASES shows: its view (`tab`, see pages.DATABASE_URLS), the connections, their
         last tests, whether the saved passwords wait for the master password, whether any database was
         read, the list of objects with its filters, and a refusal to show on top."""
         tab = params.get("tab", "connections")
@@ -437,7 +446,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return HTMLResponse(str(parts.evolution_diff(diff, a, b, view, evolution_labels())))
 
     def er_context(params: dict) -> dict:
-        """The Diagram (ER) tab: its data's URL (with the filters chosen), the projects of the DATABASES
+        """Diagrams › ER Diagrams: its data's URL (with the filters chosen), the projects of the DATABASES
         tree, and what Focus offers (databases, schemas, files, tables and views)."""
         outline = catalog.outline()
         targets = [{"path": path, "name": name, "role": kind, "symbol": ""} for objects in outline.values()
@@ -491,7 +500,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return "columns", rows, crumbs
 
     def objects_list(params: dict) -> dict:
-        """The Navigate Database tab. Browse (the default): one level of the SQL tree (`at`), its own
+        """Navigate › By Level. Browse (the default): one level of the SQL tree (`at`), its own
         columns. Search: every object read, filtered by database (or a server, from a page), schema, kind
         and name. In both, each column's own filter (the values chosen in it, `params["filters"]`) and the
         order chosen by its title; one page of the rows, the values each filter lists and the filters in use."""
@@ -533,7 +542,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     def list_page(rows: list[dict], columns: list[dict], params: dict, level: str, top: list | None = None,
                   chosen: dict[str, list[str]] | None = None) -> dict:
-        """One page of a list of DATABASE (Navigate Database, Lint), as `macros.list_table` draws it: the rows
+        """One page of a list of DATABASES (Navigate › By Level, Lint), as `macros.list_table` draws it: the rows
         its columns' filters let through (`params["filters"]`, or `chosen`), in the order chosen by a title
         (`sort`, `dir`), `page`; with the values each filter lists and the filters in use (`top`: those above
         the list, `(field, label, shown)`)."""
@@ -575,7 +584,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 "listing": {**list_page(lint_rows(found), pages.LIST_COLUMNS["lint"], params, "lint", chosen=chosen), "kept": ("state",)}}
 
     def database_modal(details: str = "", editing: bool = False, oob: bool = False, error: str = "") -> str:
-        """The modals of DATABASE: everything about a connection (`details`, changed in place with
+        """The modals of DATABASES: everything about a connection (`details`, changed in place with
         `editing`), or, without `details`, the form of a new one; `oob` sends its card again with it."""
         listed = {c["id"]: c for c in connections.connections()}
         return templates.get_template("database_form.html").render(
@@ -583,7 +592,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             collection=catalog.collection(details) if details else None, oob=oob, error=error)
 
     async def database_form(request: Request) -> Response:
-        """A modal of DATABASE (see `database_modal`): `?details=<id>`, `&edit=1` to change it, or a new one."""
+        """A modal of DATABASES (see `database_modal`): `?details=<id>`, `&edit=1` to change it, or a new one."""
         query = request.query_params
         return HTMLResponse(database_modal(query.get("details", ""), bool(query.get("edit"))))
 
@@ -605,7 +614,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if name == "slice-delete":
             slices.delete(form.get("name", ""))
             context = {"path": "", "view": "database", "params": {"tab": "slices"}, **database_context({"tab": "slices"})}
-            return render_page(request, "database.html", "/database?tab=slices", context)
+            return render_page(request, "database.html", pages.DATABASE_URLS["slices"], context)
         from_diagram = form.get("from") == "diagram"
         if from_diagram or form.get("tables", "").startswith("["):
             tables = json.loads(form.get("tables") or "[]")
@@ -632,7 +641,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if from_diagram:
             return JSONResponse({"ok": True, "name": kept["name"]})
         context = {"path": "", "view": "database", "params": {"tab": "slices"}, **database_context({"tab": "slices"})}
-        return render_page(request, "database.html", "/database?tab=slices", context)
+        return render_page(request, "database.html", pages.DATABASE_URLS["slices"], context)
 
     async def database_action(request: Request) -> Response:
         """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
@@ -667,18 +676,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                     return HTMLResponse(lint_modal(form.get("key", ""), form.get("reason", ""), str(problem)),
                                         headers={"HX-Retarget": "#database-dialog-body"})
             # The list comes back as it was (its filters, order and page): the address the page is at.
-            query = urlsplit(request.headers.get("HX-Current-URL", "")).query
-            params = database_params(QueryParams(query))
-            if params.get("tab") != "lint":
-                query, params = "tab=lint", database_params(QueryParams("tab=lint"))
-            context = {"path": "", "view": "database", "params": params, **database_context(params)}
-            return render_page(request, "database.html", f"/database?{query}", context)
+            at = urlsplit(request.headers.get("HX-Current-URL", ""))
+            query = at.query if at.path == pages.DATABASE_URLS["lint"] else ""
+            params = {**database_params(QueryParams(query)), "tab": "lint"}
+            context = {"path": "", "view": "database", **database_context(params)}
+            return render_page(request, "database.html", pages.DATABASE_URLS["lint"] + (f"?{query}" if query else ""), context)
         if name == "origin-link":  # an origin linked to a database by hand, unlinked, or left to the other layers
             choice = {"1": True, "0": False}.get(form.get("linked", ""))
             if form.get("origin") and form.get("database"):
                 catalog.choose_origin_link(form["origin"], form["database"], choice)
             context = {"path": "", "view": "database", "params": {"tab": "drift"}, **database_context({"tab": "drift"})}
-            return render_page(request, "database.html", "/database?tab=drift", context)
+            return render_page(request, "database.html", pages.DATABASE_URLS["drift"], context)
         if name == "sample-again":  # an object's page: its table sampled again now; the page follows by itself
             try:
                 await collect_connection(connections, catalog, identifier, sample_again=form.get("path", ""))
@@ -711,8 +719,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         if form.get("modal") and not (name == "remove" and not error):
             # From the details: they stay open, with the refusal if any, and the card follows.
             return HTMLResponse(database_modal(identifier, editing=name == "edit" and bool(error), oob=True, error=error))
-        context = {"path": "", "view": "database", "params": {}, **database_context({}, error)}
-        response = render_page(request, "database.html", "/database", context)
+        context = {"path": "", "view": "database", **database_context({"tab": "connections"}, error)}
+        response = render_page(request, "database.html", pages.DATABASE_URLS["connections"], context)
         if form.get("modal"):  # deleted from its details: the page comes back in place of them, which close
             response.headers.update({"HX-Retarget": "#content", "HX-Reswap": "innerHTML", "HX-Trigger": "page-dialog-done"})
         return response
@@ -1025,11 +1033,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "timeline":  # when each file appeared, for the timeline of the architecture
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
-        if view == "universe":  # DATABASE › Universe: the databases as the server last read them; or what a file declares
+        if view == "universe":  # DATABASES › Navigate › By Graph: the databases as the server last read them; or what a file declares
             return JSONResponse(catalog.universe(params.get("origin", "")))
-        if view == "evolution":  # DATABASE › Evolution: every origin's moments, its lane
+        if view == "evolution":  # DATABASES › Evolution: every origin's moments, its lane
             return JSONResponse(evolution_moments())
-        if view == "er":  # DATABASE › Diagram (ER): the live databases and what the files declare, in the tree's levels
+        if view == "er":  # DATABASES › Diagrams › ER Diagrams: the live databases and what the files declare, in the tree's levels
             found = slices.slice(params["slice"]) if params.get("slice") else None
             return JSONResponse(er_diagram(state, catalog, connections.connections(), EXAMPLES_FOLDER if developing else "",
                                            params.get("project", ""), params.get("focus", ""), depth_of(params),
@@ -1176,17 +1184,17 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/agent/{page}", agent_page),
         Route("/code", section_page),
         Route("/databases", section_page),
+        Route("/databases/form", database_form),
+        Route("/databases/evolution/part", evolution_part),
+        Route("/databases/slice-form", slice_form),
+        Route("/databases/lint-form", lint_form),
+        Route("/databases/{action}", database_action, methods=["POST"]),
+        Route("/databases/{page:path}", databases_page),
         Route("/code/diagrams/architecture", view_page),
         Route("/code/diagrams/classes", view_page),
         Route("/code/diagrams/calls", view_page),
         Route("/git", view_page),
         Route("/code/dead-code", view_page),
-        Route("/database", view_page),
-        Route("/database/form", database_form),
-        Route("/database/evolution", evolution_part),
-        Route("/database/slice-form", slice_form),
-        Route("/database/lint-form", lint_form),
-        Route("/database/{action}", database_action, methods=["POST"]),
         Route("/graph/{view}", view_data),
         Route("/git/branches", git_branches),
         Route("/git/commit/{hash}", git_commit),

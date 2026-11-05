@@ -2,7 +2,7 @@
 {# The page of an origin of the schema (`origin`, from databases.origins): a migration set (Flyway,
    golang-migrate, dbmate, Alembic, Django, Prisma), an SQL file, or an ORM's models (SQLAlchemy, Django,
    a Prisma schema). Its source, and the schema it ends with, each object to its page. Which databases it
-   describes and where they differ is DATABASE › Drift. #}
+   describes and where they differ is DATABASES › Drift. #}
 {% set KINDS = {"flyway": "Flyway migrations", "golang-migrate": "golang-migrate migrations", "dbmate": "dbmate migrations",
                 "dump": "schema dump", "sql file": "SQL file", "sqlalchemy": "SQLAlchemy models", "alembic": "Alembic migrations",
                 "django models": "Django models", "django migrations": "Django migrations", "prisma schema": "Prisma schema",
@@ -17,9 +17,9 @@
     <span class="location">{{ origin.steps | length }} step{% if origin.steps | length != 1 %}s{% endif %} · {{ DIALECTS.get(origin.dialect, origin.dialect) }}{% if origin.dialect_from %} (from {{ origin.dialect_from }}){% endif %}</span></p>
   <p class="see-in">{% if origin.links %}Describes {% for link in origin.links %}<a {{ ui.nav(link.database) }}><code>{{ db_place(link.database) }}</code></a>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Linked to no database read{% endif %}
     {% if origin.related %} · Same schema as <a {{ ui.nav("origin:" ~ origin.related) }}><code>{{ origin.related }}</code></a>{% endif %}
-    · <a class="see-in-link" {{ ui.nav_url("/database?tab=drift#" ~ (origin.name | urlencode)) }}>{{ ui.icon("database") }}Drift</a>
-    <a class="see-in-link" {{ ui.nav_url("/database?tab=diagram&focus=" ~ (("origin:" ~ origin.name) | urlencode)) }}>{{ ui.icon("database") }}Diagram</a>
-    <a class="see-in-link" {{ ui.nav_url("/database?tab=evolution&origin=" ~ (origin.name | urlencode)) }}>{{ ui.icon("database") }}Evolution</a></p>
+    · <a class="see-in-link" {{ ui.nav_url("/databases/drift#" ~ (origin.name | urlencode)) }}>{{ ui.icon("database") }}Drift</a>
+    <a class="see-in-link" {{ ui.nav_url("/databases/diagrams/er?focus=" ~ (("origin:" ~ origin.name) | urlencode)) }}>{{ ui.icon("database") }}Diagram</a>
+    <a class="see-in-link" {{ ui.nav_url("/databases/evolution?origin=" ~ (origin.name | urlencode)) }}>{{ ui.icon("database") }}Evolution</a></p>
   {# A dump: what it writes of itself (each with its line), when it was made and where that comes from. #}
   {% if origin.dump %}{% set d = origin.dump %}{% set g = origin.generated or {} %}
   {% macro said(key, before="") %}{% if d[key] %}{{ before }}<span title="line {{ d[key].line }}">{{ d[key].value }}</span>{% endif %}{% endmacro %}

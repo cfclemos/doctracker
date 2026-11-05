@@ -408,7 +408,7 @@ class CatalogStore:
         return found
 
     def level(self, at: str = "") -> dict:
-        """One level of the SQL tree, as the Navigate Database tab browses it: what `at` holds, one row each.
+        """One level of the SQL tree, as Navigate › By Level browses it: what `at` holds, one row each.
 
         Args:
             at: Empty for the servers; a server's path for its databases, a database's for its schemas,

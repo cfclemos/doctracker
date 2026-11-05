@@ -39,7 +39,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     def list_connections() -> list[dict]:
         """List the project's database connections: those its files declare and those the user entered.
 
-        A declared connection is blocked until the user allows it in the wiki (DATABASE ›
+        A declared connection is blocked until the user allows it in the wiki (DATABASES ›
         Connections); only allowed ones can be tested or read. Passwords are never given: `password`
         is the variable holding it (`${PGPASSWORD}`), `•••` when written in a file or saved, or empty.
 
@@ -68,7 +68,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         try:
             spec = connections.spec(connection_id)
         except Locked as locked:
-            raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASE › Connections).") from locked
+            raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASES › Connections).") from locked
         return await run_test(spec)
 
     @mcp.tool()
@@ -100,7 +100,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         try:
             return await collect_connection(connections, catalog, connection_id, sample_again="db:" if sample_again else "")
         except Locked as locked:
-            raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASE › Connections).") from locked
+            raise ToolError(f"{locked} The user unlocks it in the wiki (DATABASES › Connections).") from locked
 
     @mcp.tool()
     @refusals_reported
@@ -126,7 +126,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @mcp.tool()
     @refusals_reported
     def database_level(at: str = "") -> dict:
-        """Browse the databases as last read, one level of the SQL tree at a time (as the wiki's Navigate Database).
+        """Browse the databases as last read, one level of the SQL tree at a time (as the wiki's Navigate › By Level).
 
         Args:
             at: Empty for the servers; then a server's path for its databases, a database's for its
@@ -145,7 +145,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @refusals_reported
     def er_diagram_view(project: str = "", focus: str = "", depth: int = MAX_CALL_DEPTH, kinds: list[str] | None = None,
                         hide_unconnected: bool = False) -> dict:
-        """Get the entity-relationship diagram of the project's databases, as the wiki's DATABASE › Diagram (ER) draws it.
+        """Get the entity-relationship diagram of the project's databases, as the wiki's DATABASES › Diagrams › ER Diagrams draws it.
 
         The live databases and what the project's files declare, in the levels of the DATABASES tree;
         each table and view with its columns, and how the tables relate. Over 500 boxes, only the most
@@ -206,7 +206,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @mcp.tool()
     @refusals_reported
     def schema_moments() -> dict:
-        """List how the project's schema evolved, as the wiki's DATABASE › Evolution draws it.
+        """List how the project's schema evolved, as the wiki's DATABASES › Evolution draws it.
 
         Each origin (SQL files, migration sets, ORM models, dumps) is a lane; its moments are its
         migration steps, placed at the commit that brought each, and the commits that changed its files
@@ -276,7 +276,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
     @refusals_reported
     def database_lint(level: str = "", rule: str = "", path: str = "", accepted: bool = False) -> dict:
         """List what in the databases' schema and in the project's migrations deserves a look, as the wiki's
-        DATABASE › Lint shows it.
+        DATABASES › Lint shows it.
 
         The schema rules run over the live databases read and over what the project's files declare (SQL
         files, migrations, ORM models, dumps) alike; the migration rules over each migration step. The same

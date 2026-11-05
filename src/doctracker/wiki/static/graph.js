@@ -671,7 +671,7 @@ function plannerFrame(node) {
       ${add}</div></div>`;
 }
 
-// --- ER (DATABASE › Diagram): each table and view a box with one row per column (its name, its type as
+// --- ER (DATABASES › Diagram): each table and view a box with one row per column (its name, its type as
 // the database keeps it, its marks with the Universe's symbols), inside the levels of the DATABASES tree.
 // A key's line goes from the column's row to the row of the column it refers to, its ends telling how
 // many rows each side may have: crow's foot symbols or UML multiplicities, as chosen on the bar. Which
@@ -819,11 +819,11 @@ function erBar(page, redraw, signal) {
       return [...chosen].map((path) => ({ path, x: at[path]?.x, y: at[path]?.y }));
     };
     saveAs?.addEventListener("click", () => {
-      htmx.ajax("POST", "/database/slice-new", { target: "#database-dialog-body", values: { tables: JSON.stringify(tables()) } });
+      htmx.ajax("POST", "/databases/slice-new", { target: "#database-dialog-body", values: { tables: JSON.stringify(tables()) } });
     }, { signal });
     save?.addEventListener("click", async () => {
       const body = new URLSearchParams({ from: "diagram", name, previous: name, tables: JSON.stringify(tables()) });
-      const answer = await (await fetch("/database/slice-save", { method: "POST", body })).json();
+      const answer = await (await fetch("/databases/slice-save", { method: "POST", body })).json();
       save.textContent = answer.ok ? "Saved" : answer.error;
       setTimeout(() => { save.textContent = "Save the slice"; }, 1800);
     }, { signal });
@@ -1590,7 +1590,7 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   }
 }
 
-// DATABASE › Universe: the databases the server read, as SQL organises them (server → database → schema →
+// DATABASES › Navigate › By Graph: the databases the server read, as SQL organises them (server → database → schema →
 // tables and views → columns), drawn with sigma.js on WebGL (sigma.min.js: sigma, graphology, ForceAtlas2,
 // noverlap, edge-curve; MIT). One click goes into a node, the path at the top goes back; the legend's
 // relation kinds choose what is linked (none at first), Depth and Outside how far; every node is a badge
@@ -2193,7 +2193,7 @@ async function drawUniverse(canvas) {
   }
 }
 
-// DATABASE › Evolution: one lane per origin, its moments from left (oldest) to right, each in its own
+// DATABASES › Evolution: one lane per origin, its moments from left (oldest) to right, each in its own
 // column of time over every lane. A migration step is a filled dot, joined to the step it revises (two
 // steps revising the same one open a branch, a row of its own; a step revising two is the merge); a commit
 // is a hollow dot, a red ring a step changed after it was created, a dashed one what is not committed. A
@@ -2296,7 +2296,7 @@ async function drawEvolution(canvas) {
     }
     const details = area.querySelector(".graph-details");
     if (!details) return;
-    htmx.ajax("GET", `/database/evolution?moment=${encodeURIComponent(id)}`, { target: details });
+    htmx.ajax("GET", `/databases/evolution/part?moment=${encodeURIComponent(id)}`, { target: details });
     openSidePanel(area);
   }, { signal });
 }

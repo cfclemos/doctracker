@@ -113,25 +113,25 @@ SECTIONS = {
                 "the connections and the files, each down to its objects. With no database yet, add a connection in "
                 "Connections, or keep the SQL files, migrations or models in the project: they are found by themselves.",
         "pages": [
-            {"name": "connections", "title": "Connections", "icon": "connections", "url": "/database?tab=connections",
+            {"name": "connections", "title": "Connections", "icon": "connections", "url": "/databases/connections",
              "views": ("database",), "tabs": ("connections",),
              "text": "The databases the project declares and those you enter; doctracker reads only the allowed ones, "
                      "and only ever reads."},
-            {"name": "navigate", "title": "Navigate", "icon": "navigate", "url": "/database?tab=objects",
+            {"name": "navigate", "title": "Navigate", "icon": "navigate", "url": "/databases/navigate/level",
              "views": ("database",), "tabs": ("objects", "universe"),
              "text": "Every object read, by level (servers, databases, schemas, tables and views, columns) or as a "
                      "graph of their relations."},
-            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/database?tab=diagram",
+            {"name": "diagrams", "title": "Diagrams", "icon": "diagrams", "url": "/databases/diagrams/er",
              "views": ("database",), "tabs": ("diagram", "slices"),
              "text": "The entity-relationship diagrams, of the whole schema or of sub-diagrams: a few tables kept "
                      "together with a name and a purpose."},
-            {"name": "drift", "title": "Drift", "icon": "drift", "url": "/database?tab=drift", "views": ("database",),
+            {"name": "drift", "title": "Drift", "icon": "drift", "url": "/databases/drift", "views": ("database",),
              "tabs": ("drift",),
              "text": "Where the project's files and the live databases they describe differ."},
-            {"name": "evolution", "title": "Evolution", "icon": "evolution", "url": "/database?tab=evolution",
+            {"name": "evolution", "title": "Evolution", "icon": "evolution", "url": "/databases/evolution",
              "views": ("database",), "tabs": ("evolution",),
              "text": "How the schema evolved, from the migrations and the commits, and the schema at any two moments compared."},
-            {"name": "lint", "title": "Lint", "icon": "lint", "url": "/database?tab=lint", "views": ("database",),
+            {"name": "lint", "title": "Lint", "icon": "lint", "url": "/databases/lint", "views": ("database",),
              "tabs": ("lint",),
              "text": "What in the schema and the migrations deserves a look, each rule saying why it matters and how to fix it."},
         ],
@@ -140,6 +140,17 @@ SECTIONS = {
 """The sections of the wiki, in the tree's order before GIT: each with its explanation page (`url`, `text`)
 and its pages, listed in the tree under it. A page is the current one when the view shown is among its
 `views` and, if it has `tabs`, the tab shown is among them."""
+
+DATABASE_URLS = {"connections": "/databases/connections", "objects": "/databases/navigate/level",
+                 "universe": "/databases/navigate/graph", "diagram": "/databases/diagrams/er",
+                 "slices": "/databases/diagrams/sub-diagrams", "drift": "/databases/drift", "evolution": "/databases/evolution",
+                 "lint": "/databases/lint"}
+"""The address of each view of DATABASES, by its name in the code (`tab`): Navigate's By Level (`objects`) and
+By Graph (`universe`), Diagrams' ER Diagrams (`diagram`) and Sub-Diagrams (`slices`), and the other pages."""
+
+DATABASE_VIEWS = {url.removeprefix("/databases/"): tab for tab, url in DATABASE_URLS.items()} | {
+    "navigate": "objects", "diagrams": "diagram"}
+"""The view of DATABASES each address asks for (`navigate/level` → `objects`); a page with tabs opens its first."""
 
 MEMBER_FOLDERS = ("packages", "package")
 """Folders whose subfolders are the members of a monorepo, each a project of its own in the tree."""
@@ -1138,7 +1149,7 @@ def dead_code_of(state: DocState, path: str) -> dict | None:
     return next((row for row in state.dead_code if row["path"] == path), None)
 
 
-# --- Database objects (DATABASE): their pages and the Navigate Database list.
+# --- Database objects (DATABASES): their pages and the Navigate › By Level list.
 
 DB_MARKS = {"pk": "primary key", "fk": "foreign key", "unique": "unique", "index": "indexed",
             "generated": "computed by the database", "null": "null allowed", "sensitive": "sensitive"}
@@ -1214,7 +1225,7 @@ def size_text(size: int | None) -> str:
 
 
 def _list_columns(*columns: tuple[str, str, str]) -> list[dict]:
-    """The columns of a level of the Navigate Database list, with the page icon's own column right after
+    """The columns of a level of the Navigate › By Level list, with the page icon's own column right after
     Rows (or, without Rows, before Comment; else last)."""
     found = [{"key": key, "title": title, "filter": kind} for key, title, kind in columns]
     keys = [column["key"] for column in found]
@@ -1241,7 +1252,7 @@ LIST_COLUMNS = {
     "lint object": _list_columns(("level", "Level", ""), ("rule", "Rule", ""), ("object", "Object", ""), ("detail", "Detail", ""),
                                  ("found_in", "Found in", ""), ("state", "State", "")),
 }
-"""The columns of each level of DATABASE › Navigate Database (and of its Search), of the Lint tab and of an
+"""The columns of each level of DATABASES › Navigate › By Level (and of its Search), of the Lint tab and of an
 object's Lint: key, title, and whether it has a filter (any value: the filter lists its values to choose
 from; empty: none)."""
 
@@ -1327,8 +1338,8 @@ BROWSE_COUNTS = {"servers": ("databases",), "databases": ("schemas",), "schemas"
 
 def browse_url(picked: dict[str, list[str]]) -> str:
     """The address of Browse with these ticks in its path (levels missing: nothing ticked)."""
-    query = [("tab", "objects"), ("mode", "browse")] + [(BROWSE_FIELDS[level], path) for level, paths in picked.items() for path in paths]
-    return "/database?" + "&".join(f"{key}={quote(value, safe='')}" for key, value in query)
+    query = [("mode", "browse")] + [(BROWSE_FIELDS[level], path) for level, paths in picked.items() for path in paths]
+    return DATABASE_URLS["objects"] + "?" + "&".join(f"{key}={quote(value, safe='')}" for key, value in query)
 
 
 # --- DATABASES in the tree: by project, its connections (what was read) and its files (what they declare).
@@ -1384,7 +1395,7 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
     def node(path: str, name: str, link: bool = True, role: str = "package") -> dict:
         return {"path": path, "name": name, "role": role, "symbol": "", "link": link, "current": path == current, "children": []}
 
-    # Each connection opens its own screen (DATABASE › Connections, its details), green allowed, red blocked.
+    # Each connection opens its own screen (DATABASES › Connections, its details), green allowed, red blocked.
     available, read = available or {}, read or {}
 
     def schemas(objects: list[tuple[str, str, str, str]], database: str) -> list[dict]:

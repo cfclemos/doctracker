@@ -4,7 +4,7 @@
    view, column, function, trigger..., read from a live database or declared by a file (origin:...):
    the same page, from the same store, the header telling which (read from the live database / declared
    in file:line). Folding sections from the general to the specific, those that apply to its kind; what
-   is not known of it, or what later steps of DATABASE fill, says "Data unavailable". Empty cells of a
+   is not known of it, or what later steps of DATABASES fill, says "Data unavailable". Empty cells of a
    table show "-".
    Names link to their own pages (in the consultation modal too, as the code's pages do). The Universe
    opens in the page itself, in its own section, on this object; in the modal, its footer has Close,
@@ -21,13 +21,13 @@
 {%- endmacro %}
 {# Sample the table again now (a live one's): the page follows by itself once it is read. #}
 {% macro sample_again(table) -%}
-{% if item.read %}<form class="sample-again" hx-post="/database/sample-again" hx-swap="none" hx-disabled-elt="find button">
+{% if item.read %}<form class="sample-again" hx-post="/databases/sample-again" hx-swap="none" hx-disabled-elt="find button">
   <input type="hidden" name="id" value="{{ item.connection }}"><input type="hidden" name="path" value="{{ table }}">
   <button type="submit" class="see-in-link" title="Take its sample again now, read only: rows at random, masked where sensitive"><i class="bar-icon bar-icon-refresh"></i>Sample again</button></form>{% endif %}
 {%- endmacro %}
 {% macro sampled(found) -%}{{ "{:,}".format(found.rows) }} rows taken at random{% if found.read %} · {{ found.read | local_time(seconds=True) }}{% endif %}{%- endmacro %}
 {% set drawn = kind in ("server", "database", "schema", "table", "view", "materialized view", "foreign table", "column") %}
-{% set table_list = "/database?tab=objects&mode=browse&at=" ~ (item.path | urlencode) %}
+{% set table_list = "/databases/navigate/level?mode=browse&at=" ~ (item.path | urlencode) %}
 
 <header class="page-header">
   <p class="crumbs">
@@ -45,7 +45,7 @@
     <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
   </footer>
   {% elif drawn or item.kind in ("database", "schema", "table", "view", "materialized view", "foreign table") %}
-  <p class="see-in">See in {{ universe_button }}{% if item.kind in ("database", "schema", "table", "view", "materialized view", "foreign table") %}<a class="see-in-link" {{ ui.nav_url("/database?tab=diagram&focus=" ~ (item.path | urlencode)) }}>{{ ui.icon("database") }}Diagram</a>{% endif %}{% if item.path.startswith("db:") and (kind in ("server", "database", "schema") or tabular) %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Navigate Database</a>{% endif %}</p>
+  <p class="see-in">See in {{ universe_button }}{% if item.kind in ("database", "schema", "table", "view", "materialized view", "foreign table") %}<a class="see-in-link" {{ ui.nav_url("/databases/diagrams/er?focus=" ~ (item.path | urlencode)) }}>{{ ui.icon("database") }}Diagram</a>{% endif %}{% if item.path.startswith("db:") and (kind in ("server", "database", "schema") or tabular) %}<a class="see-in-link" {{ ui.nav_url(table_list) }}>{{ ui.icon("database") }}Navigate</a>{% endif %}</p>
   {% endif %}
 </header>
 
@@ -254,7 +254,7 @@
 {% call ui.section("warns", "Use in the code", name="code-use", divider=true) %}{{ unavailable("the links to the code that uses it come in a later step.") }}{% endcall %}
 {% if tabular %}{% call ui.section("warns", "Lint", count=item.lint | length, name="lint", divider=true) %}
   {% if item.lint %}{% call(row, key, value) ui.list_table("lint-object", "", item.lint_listing, "", interactive=False) %}{{ lint_cell(row, key, value, actions=false) }}{% endcall %}
-  <p class="see-in"><a class="see-in-link" {{ ui.nav_url("/database?tab=lint") }}>{{ ui.icon("database") }}Lint</a> lists every finding, to accept one saying why.</p>
+  <p class="see-in"><a class="see-in-link" {{ ui.nav_url("/databases/lint") }}>{{ ui.icon("database") }}Lint</a> lists every finding, to accept one saying why.</p>
   {% else %}<p class="empty">The lint finds nothing in it.</p>{% endif %}
 {% endcall %}{% endif %}
 {% call ui.section("warns", "History", name="history", divider=true) %}{{ unavailable("the history from migrations and commits comes in a later step.") }}{% endcall %}
