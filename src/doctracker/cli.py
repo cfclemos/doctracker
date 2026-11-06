@@ -1,4 +1,4 @@
-"""Command line interface: `doctracker init`, `start`, `restart` and `hook` (called by Claude Code and Codex)."""
+"""Command line interface: `doctracker init`, `start`, `stop`, `restart` and `hook` (run by the agents' hooks)."""
 
 import json
 import sys
@@ -77,6 +77,27 @@ def start(host: str | None, port: int | None) -> None:
     click.echo(f"MCP:  {_base_url(config)}/mcp")
     autostart.record_server(project_root, _base_url(config))
     run(project_root, config)
+
+
+@main.command()
+def stop() -> None:
+    """Stop the server of the current project.
+
+    \f
+    The server stopped is the one `start` recorded in `doc/logs/server.json`.
+
+    Raises:
+        click.ClickException: When the server still answers after being stopped.
+    """
+    project_root = Path.cwd()
+    running = autostart.recorded_url(project_root)
+    if running is None or not autostart.answers(running):
+        click.echo("No server of this project is running.")
+        return
+    base_url = autostart.stop_server(project_root)
+    if autostart.answers(base_url):
+        raise click.ClickException(f"A server still answers at {base_url}; stop it by hand.")
+    click.echo(f"Stopped: {base_url}")
 
 
 @main.command()

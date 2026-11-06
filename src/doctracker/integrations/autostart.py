@@ -133,6 +133,19 @@ def stop_server(project_root: Path) -> str | None:
     return running["url"]
 
 
+def recorded_url(project_root: Path) -> str | None:
+    """The address of the project's recorded server, running or not.
+
+    Args:
+        project_root: Root of the documented project.
+
+    Returns:
+        The address written by `doctracker start`, or None without a record.
+    """
+    running = _read_record(project_root)
+    return running["url"] if running else None
+
+
 def _make_logs_dir(project_root: Path) -> None:
     """Create `doc/logs/` with a `.gitignore` of its own, so it stays out of git in every project."""
     logs = (project_root / LOG_PATH).parent
