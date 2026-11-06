@@ -336,3 +336,15 @@ href="/agent/{{ tab }}?selected={{ ref }}" hx-get="/agent/{{ tab }}?selected={{ 
 <p class="notes-meta">Superseded{% if note.superseded_by %} by note #{{ note.superseded_by }}{% endif %}.</p>
 {% endif %}
 {% endif %}
+{# The panel's own actions, in its header beside ⇄ (out of band, so another item clears them): an open
+   review is approved and archived in one step, after the confirmation modal. #}
+{% if panel %}
+<span id="panel-actions" class="graph-panel-actions" hx-swap-oob="true">
+  {% if review %}
+  <form {{ post("close_review", "Approve the review of “" ~ item.title ~ "” and archive it? It leaves the Planner and stays in the archive with its commit, where the history and recall find it.", "Approve and archive", whole=True) }} class="inline-form">{{ keep() }}
+    <input type="hidden" name="item" value="{{ item.item }}">
+    <button type="submit" class="graph-panel-review" title="Approve and archive" aria-label="Approve and archive"><i class="review-icon"></i></button>
+  </form>
+  {% endif %}
+</span>
+{% endif %}

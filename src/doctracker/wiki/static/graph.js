@@ -1483,6 +1483,14 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
   const focus = whole.focus || canvas.dataset.focus;  // the path the server found for the name typed
   const focused = focus && (boxes[focus] ? focus : boxes[`${focus}.__init__`] ? `${focus}.__init__` : "");
   if (focused) highlight(focused);
+  // The item chosen in the page's address (`selected=`, e.g. reached from a notification) is highlighted
+  // as if it had been clicked.
+  const selected = new URLSearchParams(location.search).get("selected");
+  const selectedId = selected && (data.drawn_as?.[selected] || selected);
+  if (!focused && selectedId && (boxes[selectedId] || frames[selectedId])) {
+    chosen = selectedId;
+    highlight(selectedId);
+  }
   // Hide unconnected: leave out the UNCONNECTED groups, and draw again.
   const hideLoose = page.querySelector(".graph-hide-loose");
   if (hideLoose) {

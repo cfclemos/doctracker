@@ -666,6 +666,18 @@ function openSidePanel(area) {  // something clicked in the drawing: its details
   detailsOpen.add(viewOf(area));
   placePanels();
 }
+// A screen reached with an item chosen in its address (`selected=`, e.g. from a notification): its details
+// open at once, as if it had been clicked. Only when the item changes, so closing the panel sticks.
+let shownSelected = null;
+function openSelected() {
+  const selected = new URLSearchParams(location.search).get("selected");
+  if (selected && selected !== shownSelected) {
+    for (const area of document.querySelectorAll(".graph-area:has(.graph-side-panel)")) openSidePanel(area);
+  }
+  shownSelected = selected;
+}
+document.addEventListener("DOMContentLoaded", openSelected);
+document.addEventListener("htmx:pushedIntoHistory", openSelected);
 
 // Guidelines and Memory: the bar between the tree and the note sets how much of the width the tree
 // takes (25% to 75%, half at first), remembered in the browser.
@@ -874,9 +886,22 @@ function showMissingGrammars(always = false) {
 }
 document.addEventListener("DOMContentLoaded", () => showMissingGrammars());
 document.addEventListener("htmx:afterSettle", () => showMissingGrammars());
-// The warning in the topbar opens it again, even after Close.
+// Notification center: the bell opens its list under it, like the search's; opening a row, a click outside or Esc
+// closes it. The grammars row opens their modal again, even after Close.
 document.addEventListener("click", (event) => {
-  if (event.target.closest(".grammars-warning")) showMissingGrammars(true);
+  const center = document.getElementById("notifications");
+  if (!center) return;
+  if (event.target.closest(".notifications-toggle")) {
+    center.classList.toggle("open");
+    return;
+  }
+  if (event.target.closest(".notifications-grammars")) showMissingGrammars(true);
+  if (event.target.closest(".notification-open") || !event.target.closest("#notifications")) {
+    center.classList.remove("open");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") document.getElementById("notifications")?.classList.remove("open");
 });
 
 // Search options on a narrow screen: the filter button opens the modes and the language filter as a

@@ -1491,3 +1491,21 @@ def database_tree(state: DocState, connections: list[dict], current: str = "", a
         branch["children"] = folders(placed)
         tree.append(branch)
     return tree + folders(projects.get("(root)", []))
+
+
+def notifications(missing_grammars: list[dict], reviews: list[dict]) -> list[dict]:
+    """The notifications of the top bar: what needs attention, each with where it leads.
+
+    Args:
+        missing_grammars: Languages left out because their grammar could not be fetched (`DocState`).
+        reviews: The reviews waiting (`NoteStore.pending_reviews`).
+
+    Returns:
+        `kind` (`grammars` or `review`), `text` and `url` (empty for grammars, whose row opens their modal).
+    """
+    items = [{"kind": "review", "text": task["title"],
+              "url": f"/agent/planner?plans={task['plan']}&selected={task['item']}"} for task in reviews]
+    if missing_grammars:
+        items.insert(0, {"kind": "grammars", "url": "", "text": "Grammars not fetched: "
+                         + ", ".join(item["language"] for item in missing_grammars)})
+    return items

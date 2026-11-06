@@ -106,8 +106,7 @@ def session_context(notes: NoteStore) -> str:
     """
     head = [RULE, *_guidelines(notes, "always", "Guidelines:")]
     plans = notes.planner(include_done=False)["plans"]
-    reviews = [task for plan in plans if plan["fixed"] for feature in plan["features"] for task in feature["tasks"]
-               if task["state"] != "done"]
+    reviews = notes.pending_reviews()
     tail = ([f"Reviews: {len(reviews)} commit(s) made outside the flow wait for review "
              f"({', '.join(task['item'] for task in reviews)})."] if reviews else [])
     planning = []

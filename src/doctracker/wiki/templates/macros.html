@@ -247,6 +247,8 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
   <aside class="graph-side-panel">
     <header class="graph-side-head">
       <h2>Details</h2>
+      {# Actions of the item shown, sent out of band by the panel's content (e.g. a review's approval). #}
+      <span id="panel-actions" class="graph-panel-actions"></span>
       <button type="button" class="graph-panel-side" aria-label="Move to the other side" title="Move to the other side">⇄</button>
       {% if details %}{# the page of the box shown, in the consultation modal (graph.js sets it) #}
       <button type="button" class="graph-panel-page" aria-label="Open its page" title="Open its page" hidden><i class="bar-icon bar-icon-link"></i></button>
@@ -357,16 +359,35 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {% endif %}
 {%- endmacro %}
 
-{# The warning in the topbar while grammars are missing: how many languages are left out; it opens
-   the modal again (static/live.js). Every page sends it out of band (`oob`), so it goes when they come. #}
-{% macro grammars_warning(missing, oob=false) -%}
-<span id="grammars-warning"{% if oob %} hx-swap-oob="true"{% endif %}>
-  {% if missing %}
-  <button type="button" class="grammars-warning" title="Grammars not fetched: {{ missing | map(attribute='language') | join(', ') }}">
-    <i class="confirm-icon"></i>{{ missing | length }}
+{# The notification center of the topbar: a bell with a badge holding how many notifications there are,
+   and the list of them under it (static/live.js opens and closes it, like the search's). Each row leads to
+   what needs attention, its kind on the left and, on the right, the button that opens it: a review its task
+   in the Planner, missing grammars their modal. It loads
+   itself again on every change: `docs-changed`, and `notifications-changed`, which every answer to a change
+   made in the Planner carries (a page's own changes send it no `docs-changed`). #}
+{% macro notifications(items) -%}
+<div id="notifications-body" hx-get="/notifications" hx-trigger="docs-changed from:body, notifications-changed from:body"
+     hx-swap="outerHTML">
+  <button type="button" class="notifications-toggle" aria-haspopup="true" aria-controls="notifications-list"
+          title="Notifications" aria-label="Notifications{% if items %} ({{ items | length }}){% endif %}">
+    <i class="bell-icon"></i>
+    {% if items %}<span class="notifications-badge">{{ items | length if items | length < 100 else "99+" }}</span>{% endif %}
   </button>
-  {% endif %}
-</span>
+  <div id="notifications-list" class="search-popup notifications-list">
+    <ul class="notification-rows">
+      {% for item in items %}
+      <li class="notification-row">
+        <span class="notification-kind {{ item.kind }}">{{ item.kind }}</span>
+        <span class="notification-text">{{ item.text }}</span>
+        {% if item.url %}<a class="notification-open" href="{{ item.url }}" title="Open" aria-label="Open"><i class="open-icon"></i></a>
+        {% else %}<button type="button" class="notification-open notifications-{{ item.kind }}" title="Open" aria-label="Open"><i class="open-icon"></i></button>{% endif %}
+      </li>
+      {% else %}
+      <li class="notification-row notifications-empty">No notifications</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
 {%- endmacro %}
 
 {# Tabs of a page (CODE › Diagrams): `(name, label, url)` for each; the current one is marked. #}

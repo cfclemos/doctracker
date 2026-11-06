@@ -200,6 +200,12 @@ async def head(top: Path) -> str:
     return output.strip() if code == 0 else ""
 
 
+async def full_hash(top: Path, short: str) -> str:
+    """The full hash of a commit given by an abbreviated one; empty when git does not know it."""
+    code, output, _ = await _run(top, "rev-parse", "--verify", "--quiet", f"{short}^{{commit}}")
+    return output.strip() if code == 0 else ""
+
+
 async def commits_since(top: Path, since_commit: str, since_time: str) -> list[Commit]:
     """The commits reachable from HEAD and not from `since_commit`, made after `since_time`, oldest first.
 
