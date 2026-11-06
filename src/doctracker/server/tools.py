@@ -87,9 +87,9 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
         return trim_view(graph, kinds, hide_unconnected)
 
     @mcp.tool()
-    def call_graph_view(path: str, depth: int = MAX_CALL_DEPTH, direction: str = "both", to: str = "",
+    def call_graph_view(path: str, depth: int = MAX_CALL_DEPTH, direction: str = "both",
                         kinds: list[str] | None = None) -> dict:
-        """Get what a function, method or class calls and what calls it, or the calls from it to another.
+        """Get what a function, method or class calls and what calls it.
 
         The same options as the wiki's Functions and Calls tab; over 500 boxes, only the most connected.
 
@@ -97,17 +97,15 @@ def register_tools(mcp: MCPServer, state: DocState, config: Config, search: Sear
             path: Entity in the center: its path (`pkg.api.get_weather`) or its name (`get_weather`).
             depth: How many calls away to go (1 to 3).
             direction: `out` (what it calls), `in` (what calls it) or `both`.
-            to: Another entity (path or name): the shortest call paths between the two instead.
             kinds: Only these relations, followed and returned: `calls`, `refers`, `template`, `css-class`,
                 `route`; all by default.
 
         Returns:
             `focus` (the path found), `nodes` (with `distance` from the center and `side`: focus,
-            callee, caller, path), `edges` (`kind`) and `left_out`; `error` when nothing has that
-            name or no calls link the two.
+            callee, caller), `edges` (`kind`) and `left_out`; `error` when nothing has that name.
         """
         chosen = tuple(kind for kind in CALL_KINDS if kinds is None or kind in kinds)
-        return trim_view(call_graph(state, path, depth, direction, to, chosen))
+        return trim_view(call_graph(state, path, depth, direction, chosen))
 
     @mcp.tool()
     async def git_history(path: str, limit: int = 20) -> dict:

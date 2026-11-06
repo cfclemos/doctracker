@@ -125,8 +125,8 @@ SECTIONS = {
              "views": ("database",), "tabs": ("diagram", "slices"),
              "text": "The entity-relationship diagrams, of the whole schema or of sub-diagrams: a few tables kept "
                      "together with a name and a purpose."},
-            {"name": "drift", "title": "Drift", "icon": "drift", "url": "/databases/drift", "views": ("database",),
-             "tabs": ("drift",),
+            {"name": "diff", "title": "Diff", "icon": "diff", "url": "/databases/diff", "views": ("database",),
+             "tabs": ("diff",),
              "text": "Where the project's files and the live databases they describe differ."},
             {"name": "evolution", "title": "Evolution", "icon": "evolution", "url": "/databases/evolution",
              "views": ("database",), "tabs": ("evolution",),
@@ -143,7 +143,7 @@ and its pages, listed in the tree under it. A page is the current one when the v
 
 DATABASE_URLS = {"connections": "/databases/connections", "objects": "/databases/navigate/level",
                  "universe": "/databases/navigate/graph", "diagram": "/databases/diagrams/er",
-                 "slices": "/databases/diagrams/sub-diagrams", "drift": "/databases/drift", "evolution": "/databases/evolution",
+                 "slices": "/databases/diagrams/sub-diagrams", "diff": "/databases/diff", "evolution": "/databases/evolution",
                  "lint": "/databases/lint"}
 """The address of each view of DATABASES, by its name in the code (`tab`): Navigate's By Level (`objects`) and
 By Graph (`universe`), Diagrams' ER Diagrams (`diagram`) and Sub-Diagrams (`slices`), and the other pages."""

@@ -737,7 +737,7 @@ def find_callable(state: DocState, name: str) -> str | None:
     return max(found, key=lambda path: (degree.get(path, 0), -len(path)))
 
 
-def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, direction: str = "both", to: str = "",
+def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, direction: str = "both",
                kinds: tuple[str, ...] = CALL_KINDS) -> dict:
     """Build the call neighborhood of one function, method or class.
 
@@ -746,15 +746,13 @@ def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, directi
         focus: Path or name of the entity in the center (see `find_callable`).
         depth: How many calls away to go (1 to `MAX_CALL_DEPTH`).
         direction: `out` (what it calls), `in` (what calls it) or `both`.
-        to: Path or name of another entity: instead of the neighborhood, the shortest call paths
-            from `focus` to it (or from it to `focus`, when there are none the other way).
         kinds: The relations followed and drawn: `CALL_KINDS`, or `LOCAL_KINDS` for the local graph
             of an entity's page.
 
     Returns:
         `focus` (the path found), `nodes` (with `distance` from the focus and `side`: `focus`,
-        `callee`, `caller` or `path`) and `edges` (one of `kinds`); `nodes` and `edges`
-        are empty, with an `error`, when `focus` or `to` is unknown or no path links them.
+        `callee` or `caller`) and `edges` (one of `kinds`); `nodes` and `edges` are empty, with an
+        `error`, when `focus` is unknown.
     """
     read = sorted({_DRAWN_FROM.get(kind, kind) for kind in kinds})
     calls = [{**edge, "kind": _call_kind(state, edge)} for base in read for edge in _edges_of(state, base)]
@@ -767,18 +765,6 @@ def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, directi
     start = find_callable(state, focus)
     if start is None:
         return {"focus": "", "nodes": [], "edges": [], "error": f"Nothing is called {focus}."}
-    if to.strip():
-        end = find_callable(state, to)
-        if end is None:
-            return {"focus": start, "nodes": [], "edges": [], "error": f"Nothing is called {to}."}
-        found = _shortest_paths(start, end, callees) or _shortest_paths(end, start, callees)
-        if not found:
-            return {"focus": start, "nodes": [], "edges": [], "error": f"No calls lead from {focus} to {to}, nor back."}
-        nodes = [_node(state, path, distance=distance, side="focus" if path in (start, end) else "path")
-                 for path, distance in found.items()]
-        edges = [{"id": f"{e['kind']}:{e['source']}->{e['target']}", **e} for e in calls
-                 if e["source"] in found and e["target"] in found and found[e["target"]] == found[e["source"]] + 1]
-        return {"focus": start, "nodes": nodes, "edges": edges}
     depth = max(1, min(depth, MAX_CALL_DEPTH))
     reached_at = {start: (0, "focus")}
     walks = [("callee", callees)] if direction == "out" else [("caller", callers)] if direction == "in" else [
@@ -800,38 +786,6 @@ def call_graph(state: DocState, focus: str, depth: int = MAX_CALL_DEPTH, directi
         if e["source"] in reached_at and e["target"] in reached_at
     ]
     return {"focus": start, "nodes": nodes, "edges": edges}
-
-
-def _shortest_paths(start: str, end: str, callees: dict[str, list[str]]) -> dict[str, int]:
-    """The entities on every shortest call path from `start` to `end`, with their distance from `start`.
-
-    Args:
-        start: Where the calls start.
-        end: Where they must arrive.
-        callees: What each entity calls.
-
-    Returns:
-        Path → calls from `start`; empty when no calls lead from `start` to `end`.
-    """
-    ahead = {start: 0}
-    frontier = [start]
-    while frontier and end not in ahead:
-        reached = []
-        for path in frontier:
-            for callee in callees.get(path, []):
-                if callee not in ahead:
-                    ahead[callee] = ahead[path] + 1
-                    reached.append(callee)
-        frontier = reached
-    if end not in ahead:
-        return {}
-    on_path = {end}
-    frontier = [end]
-    while frontier:  # back from the end: what is one call closer to the start and calls it
-        frontier = [path for path in ahead for target in frontier
-                    if ahead[path] == ahead[target] - 1 and target in callees.get(path, []) and path not in on_path]
-        on_path.update(frontier)
-    return {path: ahead[path] for path in on_path}
 
 
 MAX_BOXES = 500

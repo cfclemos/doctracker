@@ -331,9 +331,11 @@ main { grid-area: main; }
 .icon-connection-blocked::before, .icon-connection-unread::before,
 .icon-dead-code::before, .icon-folder::before, .icon-schema::before, .icon-language::before, .icon-project::before,
 .icon-code::before, .icon-examples::before, .icon-file::before,
-.icon-planner::before, .icon-guidelines::before, .icon-memory::before, .icon-navigate::before, .icon-drift::before,
+.icon-planner::before, .icon-guidelines::before, .icon-memory::before, .icon-navigate::before, .icon-diff::before,
 .icon-evolution::before, .icon-lint::before,
-.icon-layout-folders::before, .icon-layout-languages::before {
+.icon-layout-folders::before, .icon-layout-languages::before,
+.icon-kind-migrations::before, .icon-kind-sql::before, .icon-kind-orm::before, .icon-kind-dumps::before, .icon-kind-databases::before,
+.icon-kind-table::before {
   content: "";
   display: inline-block;
   width: 1.05rem;
@@ -366,11 +368,20 @@ main { grid-area: main; }
 .icon-dead-code::before { -webkit-mask-image: url("icons/trash.svg"); mask-image: url("icons/trash.svg"); }
 .icon-planner::before { -webkit-mask-image: url("icons/checkbox.svg"); mask-image: url("icons/checkbox.svg"); }
 .icon-guidelines::before { -webkit-mask-image: url("icons/flag.svg"); mask-image: url("icons/flag.svg"); }
-.icon-memory::before { -webkit-mask-image: url("icons/info-circle.svg"); mask-image: url("icons/info-circle.svg"); }
+.icon-memory::before { -webkit-mask-image: url("icons/brain.svg"); mask-image: url("icons/brain.svg"); }
 .icon-navigate::before { -webkit-mask-image: url("icons/list-details.svg"); mask-image: url("icons/list-details.svg"); }
-.icon-drift::before { -webkit-mask-image: url("icons/stack-2.svg"); mask-image: url("icons/stack-2.svg"); }
+.icon-diff::before { -webkit-mask-image: url("icons/stack-2.svg"); mask-image: url("icons/stack-2.svg"); }
 .icon-evolution::before { -webkit-mask-image: url("icons/timeline.svg"); mask-image: url("icons/timeline.svg"); }
 .icon-lint::before { -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
+/* The kinds of place of DATABASES › Diff. */
+.icon-kind-migrations::before { -webkit-mask-image: url("icons/timeline.svg"); mask-image: url("icons/timeline.svg"); }
+.icon-kind-sql::before { -webkit-mask-image: url("icons/file-code.svg"); mask-image: url("icons/file-code.svg"); }
+.icon-kind-orm::before { -webkit-mask-image: url("icons/binary-tree.svg"); mask-image: url("icons/binary-tree.svg"); }
+.icon-kind-dumps::before { -webkit-mask-image: url("icons/download.svg"); mask-image: url("icons/download.svg"); }
+.icon-kind-databases::before { -webkit-mask-image: url("icons/database.svg"); mask-image: url("icons/database.svg"); }
+.icon-kind-table::before { -webkit-mask-image: url("icons/list-details.svg"); mask-image: url("icons/list-details.svg"); }
+.icon-kind-migrations { color: var(--accent); } .icon-kind-sql { color: var(--attribute); } .icon-kind-orm { color: var(--returns); }
+.icon-kind-dumps { color: var(--raises); } .icon-kind-databases { color: var(--exports); }
 .icon { color: var(--tint, inherit); }
 /* Each graph view and the code root have a color of their own; folders are yellow, files blue. */
 .icon-architecture, .icon-diagrams { --tint: var(--method); }
@@ -392,7 +403,7 @@ main { grid-area: main; }
 .icon-guidelines { --tint: var(--note); }
 .icon-memory { --tint: var(--returns); }
 .icon-navigate { --tint: var(--function); }
-.icon-drift { --tint: var(--exports); }
+.icon-diff { --tint: var(--exports); }
 .icon-evolution { --tint: var(--note); }
 .icon-lint { --tint: var(--raises); }
 .icon.icon-package, .icon.icon-code { --tint: var(--attribute); }
@@ -690,6 +701,12 @@ td p { margin: 0; }
 }
 .field-clear:hover { background: var(--panel); color: var(--fg); }
 .field-clear[hidden] { display: none; }
+/* Inside a page whose buttons have a border (notes, databases): the × stays a bare round icon, centred. */
+.notes-page .field-clearable .field-clear, .notes-dialog .field-clearable .field-clear {
+  top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5rem; height: 1.5rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 1.15rem; }
+.notes-page .field-clearable .field-clear:hover, .notes-dialog .field-clearable .field-clear:hover { background: var(--panel); color: var(--fg); }
+.notes-page .field-clearable .field-clear[hidden], .notes-dialog .field-clearable .field-clear[hidden] { display: none; }
 .graph-filter select, .graph-filter input, .field select, .field input {
   height: 2rem;
   padding: 0 0.5rem;
@@ -715,8 +732,10 @@ td p { margin: 0; }
 .focus-menu li { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.7rem; cursor: pointer; color: var(--fg); }
 .focus-menu li.active, .focus-menu li[data-value]:hover { background: var(--panel); }
 .focus-menu strong { font-weight: 600; white-space: nowrap; }
-.focus-menu-path { overflow: hidden; color: var(--muted); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
-.focus-menu-empty { color: var(--muted); cursor: default; }
+.focus-menu-path { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+/* The list opens as wide as its longest name and path, never wider than the window. */
+.focus-menu { right: auto; min-width: 100%; width: max-content; max-width: calc(100vw - 2rem); }
+.focus-menu-empty, .focus-menu-more { color: var(--muted); cursor: default; }
 .field select:focus, .field input:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 /* The fields of every form (macros.form_field): the ? first, then the outlined field taking the rest of the line. */
 .form-field { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.15rem; }
@@ -763,7 +782,6 @@ td p { margin: 0; }
 .graph-legend .box.call-focus { border-color: var(--fg); }
 .graph-legend .box.call-callee { border-color: var(--function); }
 .graph-legend .box.call-caller { border-color: var(--note); }
-.graph-legend .box.call-path { background: var(--panel); border: 2px solid var(--accent); }
 .graph-legend .line.lifted { border-color: var(--accent); border-top-style: dashed; }
 .graph-hint { padding: 2rem 0; }
 .graph-area { position: relative; margin-top: 0.8rem; }
@@ -1552,19 +1570,14 @@ body.splitting { cursor: col-resize; user-select: none; }
 .graph-filters-row .graph-toolbar { padding: 0; border: 0; }
 .graph-filters-row .field-label { background: var(--panel); }
 .graph-filters-row.closed, .graph-evolution.closed { display: none; }
-/* Filters on one line: the name fields (.graph-focus: Focus, Path to) take the room left. As the row
-   narrows (its own width, not the window's), they move to a second line under the others (the ::after
-   breaks the line); at the narrowest, each field has a line. */
+/* Filters on one line. As the row narrows (its own width, not the window's), the line breaks (the
+   ::after); at the narrowest, each field has a line. */
 .graph-filters-row { container-type: inline-size; }
 .graph-toolbar.filters-line { flex-wrap: nowrap; gap: 0.5rem 1rem; }
 .graph-toolbar.filters-line .graph-filter { display: contents; }
-.graph-toolbar.filters-line .graph-focus { flex: 1 1 16rem; min-width: 0; }
-.graph-toolbar.filters-line .graph-focus .field-clearable { flex: 1; min-width: 0; }
-.graph-toolbar.filters-line .graph-focus .focus-input { width: 100%; max-width: none; }
 @container (max-width: 860px) {
   .graph-toolbar.filters-line { flex-wrap: wrap; row-gap: 0; }
   .graph-toolbar.filters-line::after { content: ""; order: 1; flex-basis: 100%; }
-  .graph-toolbar.filters-line .graph-focus { order: 2; flex-basis: 12rem; }
 }
 @container (max-width: 460px) {
   .graph-toolbar.filters-line > .field, .graph-toolbar.filters-line .graph-filter > .field { flex-basis: 100%; }
@@ -1617,12 +1630,11 @@ body.splitting { cursor: col-resize; user-select: none; }
 .call-focus .uml-head { font-size: 1.05em; }
 .call-callee { border-color: var(--function); }
 .call-caller { border-color: var(--note); }
-.call-path { border-color: var(--accent); }
 .graph-zoom { display: inline-flex; align-items: center; }
 .graph-zoom[hidden] { display: none; }
 /* Zoom and fit float in the drawing's top right corner, over it. */
 .graph-canvas-box { position: relative; }
-/* What the drawing is of (Calls: its Focus and Path to), in its top left corner, across from the zoom. */
+/* What the drawing is of (Calls: its Focus), in its top left corner, across from the zoom. */
 .graph-caption { position: absolute; top: 0.5rem; left: 0.5rem; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
   max-width: calc(100% - 14rem); margin: 0; padding: 0.25rem 0.55rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
   box-shadow: 0 2px 6px rgb(0 0 0 / 12%); font-size: 0.85rem; }
@@ -2029,13 +2041,9 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 /* DATABASE ORIGINS: an origin's links to the databases it describes, its steps and the schema it ends with. */
 .origin-link { padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
 .origin-link-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
-.origin-link-actions { margin-left: auto; display: inline-flex; gap: 0.3rem; }
-.origin-choice { display: inline; }
 .origin-history { margin: 0.3rem 0 0; font-size: 0.85rem; }
 .origin-subtitle { margin: 0.8rem 0 0.2rem; font-weight: 600; font-size: 0.85rem; }
-.origin-how-chosen { border-color: var(--accent); color: var(--accent); }
 .origin-how-history { border-color: #2da44e; color: #2da44e; }
-.origin-link-form { margin-top: 0.8rem; }
 .origin-step { margin: 0.3rem 0; }
 .origin-step > summary { cursor: pointer; }
 .origin-statements { margin: 0.3rem 0; padding-left: 1.6rem; font-size: 0.85rem; }
@@ -2051,6 +2059,7 @@ textarea.grow-line, .notes-form textarea.grow-line { min-height: 0; resize: none
 .block-subtitle, .origin-subtitle { margin: 1rem 0 0.35rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--border);
   font-size: 0.95rem; font-weight: 700; color: var(--fg); text-transform: capitalize; }
 .block-subtitle:first-child { margin-top: 0.3rem; }
+.block-subtitle code, .origin-subtitle code { text-transform: none; } /* names as they are */
 .origin-file-title { text-transform: none; }
 /* A file of an origin's Source: folded by its title (a subtitle with its rule), well apart from the next one. */
 .origin-file { margin: 1.4rem 0; }
@@ -2200,3 +2209,64 @@ a.dash-stat:hover { border-color: var(--accent); text-decoration: none; }
   border-top: 1px solid var(--border); font-size: 0.9rem; }
 .dash-counts { color: var(--muted); font-size: 0.8rem; }
 .dash-counts .state-todo, .dash-counts .state-doing, .dash-counts .state-done { color: var(--tint); font-weight: 600; }
+
+/* DATABASES › Diff: trails A and B (Browse's boxes, one pick each), the tabs with their counts, and each
+   table as lines of its schema: - A's, + B's, ~ a change of the table itself, the rest the same. */
+.diff-places { display: flex; flex-direction: column; gap: 0.9rem; margin: 0.4rem 0 0.8rem; }
+.diff-side { display: flex; align-items: stretch; gap: 0.8rem; padding: 0 0.8rem 0 0; border: 1px solid var(--border); border-radius: 8px; overflow: visible; }
+.diff-side-body > .diff-fields { padding: 0.6rem 0; }
+/* Its name on the side, read bottom to top, like a commit's hash on the GIT page. */
+.diff-spine { flex: none; writing-mode: vertical-rl; transform: rotate(180deg); padding: 0.4rem 0.2rem; border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--accent); font: 700 0.72rem ui-monospace, monospace; text-align: center; }
+/* Tabs that frame what they show: their bar on a light background (as the tree), the tab chosen open onto the box below. */
+.tab-frame { margin: 0.8rem 0 1.4rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.tab-frame > .tabs { margin: 0; padding: 0.35rem 0.4rem 0; border-radius: 8px 8px 0 0; background: var(--panel); }
+.tab-frame > .tabs .tab { margin-bottom: -1px; }
+.tab-frame > .tabs .tab.current { border-color: var(--border); border-top: 2px solid var(--accent); background: var(--bg); color: var(--accent); font-weight: 600; }
+.tab-frame > .tab-body { padding: 0.8rem; }
+.tab-frame > .tab-body > .diff-places:first-child { margin-top: 0; }
+.diff-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; }
+.diff-fields > .sep { color: var(--muted); }
+.diff-fields { gap: 0.3rem 0.35rem; }
+.diff-fields .form-field { gap: 0.25rem; }
+.diff-places .form-field .field { flex: 1 1 auto; min-width: 0; padding-top: 0.55rem; }
+.diff-trail { flex-wrap: wrap; margin: 0; }
+.diff-option { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.15rem 0.3rem; color: var(--fg); }
+.diff-option:hover { background: var(--hover, color-mix(in srgb, var(--accent) 10%, transparent)); text-decoration: none; }
+.diff-option.current { font-weight: 600; color: var(--accent); }
+.tab.empty { opacity: 0.5; }
+.diff-table { margin-bottom: 1rem; }
+.diff-link { margin-left: 0.6rem; font-size: 0.8rem; font-weight: 400; }
+.diff-lines { margin: 0.3rem 0; padding: 0.4rem 0; border: 1px solid var(--border); border-radius: 6px; background: var(--code-bg, var(--bg)); font-size: 0.85rem; overflow-x: auto; }
+.diff-line { display: flex; align-items: center; gap: 1rem; padding: 0 0.7rem; white-space: pre; }
+/* Where the line is: the side's name, at the end of the line. */
+.diff-side-badge { margin-left: auto; padding: 0 0.45rem; border: 1px solid currentColor; border-radius: 10px; font: 600 0.72rem ui-monospace, monospace; opacity: 0.85; }
+.diff-a { background: color-mix(in srgb, var(--raises) 14%, transparent); color: var(--raises); }
+.diff-b { background: color-mix(in srgb, var(--attribute) 14%, transparent); color: var(--attribute); }
+.diff-change { color: var(--accent); }
+.diff-same { color: var(--muted); }
+.diff-commits { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin: 0.3rem 0 0; font-size: 0.85rem; color: var(--muted); }
+.diff-commit { padding: 0.05rem 0.45rem; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--accent);
+  font: 600 0.75rem ui-monospace, monospace; }
+.diff-commit:hover { border-color: var(--accent); text-decoration: none; }
+.diff-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.8rem; margin: 0 0 0.6rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+.diff-side-body { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.diff-created { margin: 0 0 0.5rem; }
+.diff-profile-card { cursor: default; }
+.diff-profile-card p { margin: 0; }
+.diff-profile-counts { color: var(--muted); }
+/* Its actions: icons in the card's footer, their name on hover. */
+.diff-profile-foot { display: flex; justify-content: flex-end; gap: 0.2rem; margin-top: 0.2rem; padding-top: 0.3rem; border-top: 1px solid var(--border); }
+.diff-profile-foot form { display: inline-flex; margin: 0; }
+.notes-page .diff-profile-icon, .diff-profile-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.6rem;
+  padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--muted); }
+.notes-page .diff-profile-icon:hover, .diff-profile-icon:hover { border-color: var(--border); background: var(--bg); color: var(--accent); text-decoration: none; }
+.field.field-choice { padding: 0.55rem 0.5rem 0.4rem; border: 1px solid var(--border); border-radius: 4px; }
+/* The pick_field (macros.html): as wide as what it holds, whatever the bar or form around it; the icon of
+   what is chosen inside it, when asked. */
+.form-field.pick-field .field { flex: none; }
+.pick-field .focus-input, .graph-filter .pick-field .focus-input, .graph-toolbar.filters-line .pick-field .focus-input { max-width: 70vw; }
+.pick-field .field-clearable > .icon { position: absolute; left: 0.5rem; pointer-events: none; }
+.pick-field .field-clearable > .icon + input[type=hidden] + input { padding-left: 1.9rem; }
+/* A bar holding pick_fields: a field with no room left goes, whole, to the next line. */
+.graph-toolbar.filters-line:has(.pick-field) { flex-wrap: wrap; }

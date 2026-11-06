@@ -15,11 +15,41 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 <span class="icon icon-{{ role | replace(' ', '-') }}">{{ symbol }}</span>
 {%- endmacro %}
 
-{# The choices of a Focus field (static/live.js shows them as an autocomplete under it): each with
-   its kind's icon, its name and its path. #}
-{% macro focus_options(id, targets) -%}
-<datalist id="{{ id }}">{% for row in targets %}<option value="{{ row.path }}" data-name="{{ row.name }}" data-role="{{ row.role | replace(' ', '-') }}" data-symbol="{{ row.symbol }}">{% endfor %}</datalist>
+{# The one field of the wiki that picks one of many (a diagram's Focus, the ER's Focus, the
+   Diff's trails): its name shown, its path sent (a hidden field `name`); as wide as what it holds; typing
+   lists, under it, the options holding that text in their name or path (each with its icon, its name and
+   its whole path, the list as wide as it needs), ↑ ↓ and Enter or a click choose; the × empties it. A
+   choice, or the ×, sends the form (the event `picked`, see static/live.js). `options`: rows with `path`,
+   `name`, `role` (its icon) and `symbol`; with `list` (the id of another pick_field's), its options are that
+   one's, `options` then only naming what is chosen. `all`: a
+   first option "All" (empty); `icon`: the chosen one's icon inside the field. #}
+{% macro pick_field(label, name, id, options=none, value="", placeholder="", required=false, help="", all=false, icon=false,
+                    clearable=true, list="", extra="") -%}
+{% set chosen = (options or []) | selectattr("path", "equalto", value) | first if value else none %}
+{% set shown = chosen.name if chosen else value %}
+{% call form_field(label, help, required=required, wide=False, extra=("pick-field " ~ extra) | trim) %}
+  <span class="field-clearable">
+    {% if icon and chosen %}<span class="icon icon-{{ chosen.role | replace(' ', '-') }}">{{ chosen.symbol or "" }}</span>{% endif %}
+    <input type="hidden" id="{{ id }}-value" name="{{ name }}" value="{{ value }}">
+    <input data-options="{{ list or id }}" data-value="{{ id }}-value" value="{{ shown }}" placeholder="{{ placeholder }}" class="focus-input"
+           style="width: {{ [(shown or placeholder) | length, 4] | max + (7 if icon and chosen else 4) }}ch" autocomplete="off">
+    {% if clearable %}<button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not value %} hidden{% endif %}>×</button>{% endif %}
+  </span>
+  {% if options is not none and not list %}<datalist id="{{ id }}">{% if all %}<option value="" data-name="All" data-role="" data-symbol="">{% endif %}
+    {%- for o in options %}<option value="{{ o.path }}" data-name="{{ o.name }}" data-role="{{ (o.role or '') | replace(' ', '-') }}" data-symbol="{{ o.symbol or '' }}">{% endfor %}</datalist>{% endif %}
+{% endcall %}
 {%- endmacro %}
+
+{# Where two sides differ, as lines (DATABASES › Diff, and an object's Declared by / Found in): `-` what only
+   A holds, `+` what only B holds, `~` a change of the table itself, the rest the same; each marked line
+   ends with the name of its side. `lines`: `mark` and `text` (origins.compare). #}
+{% macro diff_lines(lines, name_a, name_b) -%}
+<pre class="diff-lines">{% for line in lines %}<span class="diff-line diff-{{ {'-': 'a', '+': 'b', '~': 'change', '': 'same'}[line.mark] }}"><span>{{ line.mark or " " }} {{ line.text }}</span>{% if line.mark %}<span class="diff-side-badge">{{ {'-': name_a, '+': name_b, '~': name_a ~ ' → ' ~ name_b}[line.mark] }}</span>{% endif %}</span>{% endfor %}</pre>
+{%- endmacro %}
+
+{# The trigger of a form holding pick_fields: what a select or a box changes, and a pick_field's choice; not
+   a pick_field's text being typed (it waits for a choice). #}
+{% set pick_trigger = "change[!event.target.matches('[data-value]')], picked" %}
 
 {# Header of a section's page: its title, then, under a dividing line, what the page is for. #}
 {% macro view_header(view, title, text) -%}
@@ -162,7 +192,8 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
     </span>
   </div>
   {% if filters %}
-  <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}{% if filters_open %} data-open-first="1"{% endif %}>{{ filters }}</div>
+  <div class="graph-filters-row closed" data-row-of="filters"{% if empty %} data-forced="1"{% endif %}{% if filters_open %} data-open-first="1"{% endif %}
+       data-drawing-url="{{ data_url }}" data-drawing-focus="{{ focus }}">{{ filters }}</div>
   {% endif %}
   {% if diff %}
   <div class="graph-filters-row closed" data-row-of="diff">{{ diff }}</div>
@@ -346,11 +377,12 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 
 {# A field of any form of the wiki (the one way every form shows its fields): the ? explaining it, then a
    Material-style outlined field whose name sits on the border, with * when it is required; the control
-   (input, select, textarea, checkbox) is given by the caller. `choice`: the control is a toggle group of
-   buttons, shown as they are, without the outline around them. #}
-{% macro form_field(label, help, required=False, wide=True, choice=False, extra="") -%}
-<div class="form-field{% if not wide %} narrow{% endif %}{% if extra %} {{ extra }}{% endif %}">{{ help_hover(label, help) }}
-{%- if choice %}<div class="field-choice" role="group" aria-label="{{ label }}">{{ caller() }}</div>
+   (input, select, textarea, checkbox) is given by the caller; no `help`, no ?. `choice`: the control is a toggle group of
+   buttons, shown as they are, without the outline around them (`named`: the outline and its name kept). #}
+{% macro form_field(label, help, required=False, wide=True, choice=False, extra="", named=False) -%}
+<div class="form-field{% if not wide %} narrow{% endif %}{% if extra %} {{ extra }}{% endif %}">{% if help %}{{ help_hover(label, help) }}{% endif %}
+{%- if choice and named %}<div class="field field-choice" role="group" aria-label="{{ label }}"><span class="field-label">{{ label }}{% if required %} *{% endif %}</span>{{ caller() }}</div>
+{%- elif choice %}<div class="field-choice" role="group" aria-label="{{ label }}">{{ caller() }}</div>
 {%- else %}<label class="field"><span class="field-label">{{ label }}{% if required %} *{% endif %}</span>{{ caller() }}</label>{% endif %}</div>
 {%- endmacro %}
 
@@ -526,7 +558,7 @@ href="{{ url }}" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
 {%- endmacro %}
 
 {# DATABASES › Evolution: the diff of two moments, side by side (both schemas, aligned by name) or only what
-   differs (as the Drift's differences). #}
+   differs (as the Diff's differences). #}
 {% macro evolution_diff(diff, a, b, view, labels) -%}
 {% if not a or not b %}<p class="empty">Choose the moments A and B (in the fields, or by clicking two moments in the drawing).</p>
 {% elif not diff %}<p class="empty">One of the moments cannot be read (its commit or step is no longer there).</p>

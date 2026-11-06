@@ -117,6 +117,66 @@
 <footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
   <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
 </footer>
+{% elif diff_profile_mode %}
+{# A comparison of DATABASES › Diff kept as a profile, in doc/diff/: its name, what it is for and what it
+   leaves out; A and B are the comparison shown in Trails. A saved one is changed in place (`previous`). #}
+{% set p = profile %}
+{% set chosen_ignore = form.ignore if form.ignore is defined else (p.ignore if p else []) %}
+{% if details %}
+{# Its details, in the consultation modal: everything it keeps and what its comparison finds now. #}
+<header class="page-header">
+  <h1><span class="icon icon-diff"></span><span class="name">{{ p.name }}</span><span class="kind">comparison profile</span></h1>
+  <p class="meta"><code>{{ p.file }}</code></p>
+</header>
+{% if p.description %}<div class="docstring">{{ p.description | markdown | safe }}</div>{% endif %}
+<dl class="connection-details">
+  <dt>A</dt><dd><code>{{ p.a }}</code></dd>
+  <dt>B</dt><dd><code>{{ p.b }}</code></dd>
+  <dt>Ignores</dt><dd>{% for key in p.ignore %}{{ ignorable[key] }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</dd>
+  {% if counts.error %}<dt>Comparison</dt><dd class="failed">{{ counts.error }}</dd>{% else %}
+  <dt>Only in A</dt><dd>{{ counts.only_a }}</dd>
+  <dt>Only in B</dt><dd>{{ counts.only_b }}</dd>
+  <dt>Differences</dt><dd>{{ counts.different }}</dd>{% endif %}
+  <dt>Created</dt><dd>{{ p.created | local_time }}</dd>
+  <dt>Changed</dt><dd>{{ p.changed | local_time }}</dd>
+</dl>
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  <a class="see-in-link" {{ ui.nav_url("/databases/diff?view=trails&profile=" ~ (p.name | urlencode)) }}><i class="bar-icon bar-icon-link"></i>Open in Trails</a>
+  <button type="button" class="see-in-link" hx-get="/databases/diff-profile-form?profile={{ p.name | urlencode }}" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-edit"></i>Edit</button>
+  <form hx-post="/databases/diff-profile-delete" hx-target="#content" hx-confirm="Delete the profile {{ p.name }}? Its file in doc/diff/ is removed." data-confirm-title="Delete profile">
+    <input type="hidden" name="name" value="{{ p.name }}"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-remove"></i>Delete</button></form>
+  <button type="button" class="see-in-link page-dialog-close"><i class="bar-icon bar-icon-cancel"></i>Close</button>
+</footer>
+{% else %}
+{% macro profile_fields() -%}
+  {% if error %}<p class="notes-error">{{ error }}</p>{% endif %}
+  <input type="hidden" name="a" value="{{ a }}"><input type="hidden" name="b" value="{{ b }}">
+  <input type="hidden" name="previous" value="{{ form.previous or (p.name if p else '') }}">
+  <p class="summary">Compares <code>{{ a.removeprefix("db:").removeprefix("origin:") }}</code> with <code>{{ b.removeprefix("db:").removeprefix("origin:") }}</code>.</p>
+  {% call ui.form_field("Name", "The profile's name, as Saved profiles and the agents show it. Its file in doc/diff/ is named after it.", required=True) %}<input name="name" required value="{{ form.name or (p.name if p else '') }}">{% endcall %}
+  {% call ui.form_field("Description", "What the comparison is for: production against staging before a deploy, the migrations against the database they created... The agents read it.") %}<textarea name="description" class="grow-line" rows="3">{{ form.description or (p.description if p else '') }}</textarea>{% endcall %}
+  {% call ui.form_field("Ignore", "What the comparison leaves out: the checks, the comments or the indexes, when one side does not keep them the way the other does.", choice=True, named=True) %}
+  <span class="toggle-group">{% for key, label in ignorable.items() %}<label><input type="checkbox" name="ignore" value="{{ key }}"{% if key in chosen_ignore %} checked{% endif %}>{{ label }}</label>{% endfor %}</span>{% endcall %}
+{%- endmacro %}
+{% if p %}
+{# A saved one, edited in the consultation modal, as a slice is: Cancel goes back to its details. #}
+<header class="page-header"><h1><span class="icon icon-diff"></span><span class="name">{{ p.name }}</span><span class="kind">editing the profile</span></h1></header>
+<form id="profile-edit" class="form-group" hx-post="/databases/diff-profile-save" hx-target="#content">{{ profile_fields() }}</form>
+<footer id="page-dialog-foot" class="page-dialog-foot" hx-swap-oob="true">
+  <button type="button" class="see-in-link" hx-get="/databases/diff-profile-form?details={{ p.name | urlencode }}" hx-target="#page-dialog-body"><i class="bar-icon bar-icon-cancel"></i>Cancel</button>
+  <button type="submit" form="profile-edit" class="see-in-link"><i class="bar-icon bar-icon-save"></i>Save</button>
+</footer>
+{% else %}
+<div class="dialog-head">
+  <h2>Save as a profile</h2>
+  <button type="button" class="dialog-close" aria-label="Close" title="Close">×</button>
+</div>
+<form hx-post="/databases/diff-profile-save" hx-target="#content" class="form-group">
+  {{ profile_fields() }}
+  <div class="dialog-foot"><button type="button" class="dialog-close dialog-cancel">Cancel</button><button type="submit" class="primary">Save the profile</button></div>
+</form>
+{% endif %}
+{% endif %}
 {% elif slice_mode %}
 {# A slice of the schema: its details in the consultation modal (its text, its tables as found now, Open in
    Diagram, Edit, Delete), or its form — name, text, the tables ticked in the box of ticks (searched), and a
