@@ -1,4 +1,4 @@
-"""Command line interface: `doctracker init`, `start`, `restart` and `hook` (called by Claude Code)."""
+"""Command line interface: `doctracker init`, `start`, `restart` and `hook` (called by Claude Code and Codex)."""
 
 import json
 import sys
@@ -7,9 +7,10 @@ from pathlib import Path
 import click
 
 from doctracker import __version__
-from doctracker.config import CONFIG_PATH, Config, ensure_gitignore, load_config, project_files, write_config
+from doctracker.config import (CONFIG_PATH, Config, ensure_gitignore, free_ports, load_config, port_free,
+                               project_files, write_config)
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES, language_of
-from doctracker.integrations import autostart, claude_code, opencode
+from doctracker.integrations import autostart, claude_code, codex, opencode
 
 
 @click.group()
@@ -51,6 +52,9 @@ def start(host: str | None, port: int | None) -> None:
 
     The code is found in the source folders (`src/`, `packages/*/src/`, `package/*/src/`); without
     any, the server still starts and says there is nothing to document.
+
+    Raises:
+        click.ClickException: When the port is in use.
     """
     from doctracker.server.app import run
 
@@ -63,6 +67,10 @@ def start(host: str | None, port: int | None) -> None:
         config.host = host
     if port:
         config.port = port
+    if not port_free(config.host, config.port):
+        raise click.ClickException(
+            f"Port {config.port} is in use, by this project's server already running or by another program. "
+            f"Choose another `port` in {CONFIG_PATH.as_posix()} (or use --port).")
     _echo_sources(project_root)
     _write_integrations(project_root, config)
     click.echo(f"Wiki: {_base_url(config)}/")
@@ -99,13 +107,13 @@ def restart() -> None:
 @click.argument("event")
 @click.option("--url", help="Address of the server, as `start` wrote it; by default the one in the configuration.")
 def hook(event: str, url: str | None) -> None:
-    """Answer a Claude Code hook: read its event on stdin, print the context of that moment.
+    """Answer a Claude Code or Codex hook: read its event on stdin, print the context of that moment.
 
     \f
     Never fails: a hook that cannot answer prints nothing, so the agent goes on.
 
     Args:
-        event: The Claude Code event the hook was set for (the event's own name is read from stdin).
+        event: The event the hook was set for (the event's own name is read from stdin).
         url: The server, e.g. `http://127.0.0.1:8765`; None reads it from the configuration.
     """
     try:
@@ -127,12 +135,13 @@ def _base_url(config: Config) -> str:
 
 
 def _initialize(project_root: Path) -> None:
-    """Write a default configuration and the agents' integrations, and tell what code will be read.
+    """Write a default configuration, on free ports, and the agents' integrations; tell what code will be read.
 
     Args:
         project_root: Root of the project to configure.
     """
     config = Config()
+    free_ports(config)
     write_config(project_root, config)
     click.echo(f"Created {CONFIG_PATH.as_posix()}.")
     _echo_sources(project_root)
@@ -158,7 +167,7 @@ def _echo_sources(project_root: Path) -> None:
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:
-    """Write the Claude Code hooks and MCP server and, when OpenCode is used, its plugin; print where they went.
+    """Write the Claude Code and Codex hooks and MCP servers, and the OpenCode plugin when used; print where they went.
 
     Args:
         project_root: Root of the project.
@@ -168,6 +177,10 @@ def _write_integrations(project_root: Path, config: Config) -> None:
     click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
     mcp_config = claude_code.write_mcp_config(project_root, _base_url(config))
     click.echo(f"Claude Code MCP server: {mcp_config.relative_to(project_root).as_posix()}")
+    codex_hooks = codex.write_hooks(project_root, _base_url(config))
+    click.echo(f"Codex hooks: {codex_hooks.relative_to(project_root).as_posix()}")
+    codex_config = codex.write_mcp_config(project_root, _base_url(config))
+    click.echo(f"Codex MCP server: {codex_config.relative_to(project_root).as_posix()}")
     if opencode.uses_opencode(project_root):
         plugin = opencode.write_plugin(project_root, _base_url(config))
         click.echo(f"OpenCode plugin: {plugin.relative_to(project_root).as_posix()}")
