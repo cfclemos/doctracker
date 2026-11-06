@@ -1385,7 +1385,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             try:
                 while True:
                     try:
-                        await asyncio.wait_for(queue.get(), KEEPALIVE_SECONDS)
+                        if await asyncio.wait_for(queue.get(), KEEPALIVE_SECONDS) == "closed":
+                            return
                         yield "event: changed\ndata: 1\n\n"
                     except TimeoutError:
                         yield ": keepalive\n\n"

@@ -61,11 +61,17 @@ class DocState:
         for queue in self.listeners:
             queue.put_nowait("changed")
 
+    def close(self) -> None:
+        """Tell every open wiki page that the server is stopping, so their live updates end."""
+        for queue in self.listeners:
+            queue.put_nowait("closed")
+
     def subscribe(self) -> asyncio.Queue:
         """Register a wiki page to be notified of changes.
 
         Returns:
-            Queue that receives `"changed"` every time the data is replaced.
+            Queue that receives `"changed"` every time the data is replaced, and `"closed"` when the
+            server stops.
         """
         queue: asyncio.Queue = asyncio.Queue()
         self.listeners.add(queue)

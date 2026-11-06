@@ -2,7 +2,9 @@
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from pathlib import Path
+from types import FrameType
 
 import uvicorn
 from mcp.server import MCPServer
@@ -105,6 +107,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
                 await embeddings.stop()
 
     app.router.lifespan_context = lifespan
+    app.state.close_streams = state.close
     return app
 
 
@@ -135,8 +138,9 @@ def run(project_root: Path, config: Config) -> None:
         project_root: Root of the documented project.
         config: Project settings; with `ssl_certfile` and `ssl_keyfile`, the server uses HTTPS.
     """
-    uvicorn.run(
-        create_app(project_root, config),
+    app = create_app(project_root, config)
+    settings = uvicorn.Config(
+        app,
         host=config.host,
         port=config.port,
         ssl_certfile=config.ssl_certfile,
@@ -144,3 +148,22 @@ def run(project_root: Path, config: Config) -> None:
         log_level="info",
         timeout_graceful_shutdown=SHUTDOWN_TIMEOUT,
     )
+    _Server(settings, app.state.close_streams).run()
+
+
+class _Server(uvicorn.Server):
+    """uvicorn's server, which also ends the wiki's live updates as soon as it is asked to stop.
+
+    Without it, each open wiki page holds its connection until the shutdown timeout, and uvicorn
+    cancels it with an error.
+    """
+
+    def __init__(self, settings: uvicorn.Config, close_streams: Callable[[], None]) -> None:
+        super().__init__(settings)
+        self._close_streams = close_streams
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        """Ask the open wiki pages to end their live updates, then stop as uvicorn does."""
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop().call_soon_threadsafe(self._close_streams)
+        super().handle_exit(sig, frame)
