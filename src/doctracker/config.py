@@ -2,6 +2,7 @@
 
 import json
 import os
+import socket
 import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -127,6 +128,47 @@ def load_config(project_root: Path) -> Config:
     known_embeddings = EmbeddingsConfig.__dataclass_fields__
     values["embeddings"] = EmbeddingsConfig(**{k: v for k, v in embeddings.items() if k in known_embeddings})
     return Config(**values)
+
+
+PORT_CHECK_TIMEOUT = 1.0
+"""Seconds `port_free` waits for an answer on a port."""
+
+
+def port_free(host: str, port: int) -> bool:
+    """Whether nothing listens on a port, so a server can listen there.
+
+    The port is tried with a connection, not a bind: a server that just stopped leaves connections
+    closing on its port, which refuse a plain bind but not the server started next.
+
+    Args:
+        host: The address the server listens on, e.g. `127.0.0.1`; an "any" address is tried on loopback.
+        port: The port.
+
+    Returns:
+        True when nothing answers on the port.
+    """
+    target = {"0.0.0.0": "127.0.0.1", "::": "::1", "": "127.0.0.1"}.get(host, host)
+    try:
+        with socket.create_connection((target, port), timeout=PORT_CHECK_TIMEOUT):
+            return False
+    except OSError:
+        return True
+
+
+def free_ports(config: Config) -> None:
+    """Move the server and embedding ports to the first free ones from their current values.
+
+    Used when a project's configuration is created, so each project gets ports of its own; they
+    stay fixed afterwards, since the agents' hooks and MCP settings are written with them.
+
+    Args:
+        config: The settings, changed in place (`port` and `embeddings.port`).
+    """
+    while not port_free(config.host, config.port):
+        config.port += 1
+    embeddings = config.embeddings
+    while embeddings.port == config.port or not port_free("127.0.0.1", embeddings.port):
+        embeddings.port += 1
 
 
 def write_config(project_root: Path, config: Config) -> None:

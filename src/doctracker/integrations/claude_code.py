@@ -5,10 +5,12 @@
 Each hook runs `doctracker hook <event>` with the server's address, which reads the event Claude
 Code sends, asks the running server for the context of that moment (`/hooks/context/...`) and
 answers it as `additionalContext`. When a session opens and the server does not answer, the hook
-starts it and waits (`doctracker.integrations.autostart`).
+starts it and waits (`doctracker.integrations.autostart`). Codex hooks share the format and are
+answered here too (`doctracker.integrations.codex`).
 """
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -50,18 +52,21 @@ START_HOOK_TIMEOUT = int(START_TIMEOUT) + 15
 SERVER_TIMEOUT = 5.0
 """Seconds a hook waits for the doctracker server."""
 
-FILE_TOOLS = ("Read", "Edit", "Write", "MultiEdit")
-"""Tools that read or change one file; its notes are given once per session."""
+FILE_TOOLS = ("Read", "Edit", "Write", "MultiEdit", "apply_patch")
+"""Tools that read or change files; the notes of each file are given once per session."""
 
-EDIT_TOOLS = ("Edit", "Write", "MultiEdit")
-"""Tools that change a file; outside plan mode, editing the project needs a task in progress."""
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "apply_patch")
+"""Tools that change files; outside plan mode, editing the project needs a task in progress."""
+
+PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+"""The files of a Codex `apply_patch`, one per line of its patch text."""
 
 
 def answer(event: dict, base_url: str, project_root: Path) -> dict | None:
     """The answer to one hook event: the context of its moment, or nothing.
 
     Args:
-        event: What Claude Code sent: `hook_event_name`, `session_id`, `permission_mode`,
+        event: What Claude Code or Codex sent: `hook_event_name`, `session_id`, `permission_mode`,
             `tool_name`, `tool_input`...
         base_url: The doctracker server, e.g. `http://127.0.0.1:8765`.
         project_root: Root of the project, where the server is started when a session opens without it.
@@ -83,21 +88,30 @@ def answer(event: dict, base_url: str, project_root: Path) -> dict | None:
     elif name == "PreToolUse" and tool == "ExitPlanMode":
         text = RECORD_THE_PLAN
     elif name == "PreToolUse" and tool in EDIT_TOOLS:
-        path = (event.get("tool_input") or {}).get("file_path", "")
-        if event.get("permission_mode") == "plan" or not _gated(project_root, path):
+        paths = _tool_files(tool, event.get("tool_input") or {})
+        if event.get("permission_mode") == "plan" or not any(_gated(project_root, path) for path in paths):
             return None
         reason = _ask(base_url, "edit", session=session, once=False)
         if not reason:
             return None
         return {"hookSpecificOutput": {"hookEventName": name, "permissionDecision": "deny",
                                        "permissionDecisionReason": reason}}
-    elif name == "PostToolUse" and tool in FILE_TOOLS and (event.get("tool_input") or {}).get("file_path"):
-        text = _ask(base_url, "file", session=session, once=True, path=event["tool_input"]["file_path"])
+    elif name == "PostToolUse" and tool in FILE_TOOLS:
+        texts = [_ask(base_url, "file", session=session, once=True, path=path)
+                 for path in _tool_files(tool, event.get("tool_input") or {})]
+        text = "\n\n".join(text for text in texts if text)
     else:
         text = None
     if not text:
         return None
     return {"hookSpecificOutput": {"hookEventName": name, "additionalContext": text}}
+
+
+def _tool_files(tool: str, tool_input: dict) -> list[str]:
+    """The files a tool call reads or changes: Claude Code's `file_path`, or the files of Codex's `apply_patch`."""
+    if tool == "apply_patch":
+        return [match.strip() for match in PATCH_FILE.findall(tool_input.get("command", ""))]
+    return [tool_input["file_path"]] if tool_input.get("file_path") else []
 
 
 def _gated(project_root: Path, path: str) -> bool:
@@ -164,13 +178,7 @@ def write_settings(project_root: Path, base_url: str) -> Path:
     """
     file = project_root / SETTINGS_PATH
     settings = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {}
-    hooks = settings.setdefault("hooks", {})
-    for event, matcher in HOOKS.items():
-        groups = [group for group in hooks.get(event, []) if not _is_ours(group)]
-        timeout = START_HOOK_TIMEOUT if event in START_EVENTS else HOOK_TIMEOUT
-        ours = {"hooks": [{"type": "command", "command": hook_command(event, base_url), "timeout": timeout}]}
-        groups.append({"matcher": matcher, **ours} if matcher else ours)
-        hooks[event] = groups
+    set_hooks(settings.setdefault("hooks", {}), HOOKS, base_url)
     enabled = settings.setdefault("enabledMcpjsonServers", [])
     if MCP_NAME not in enabled:
         enabled.append(MCP_NAME)
@@ -178,6 +186,24 @@ def write_settings(project_root: Path, base_url: str) -> Path:
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return file
+
+
+def set_hooks(hooks: dict, events: dict[str, str], base_url: str) -> None:
+    """Put doctracker's hooks into a `hooks` table (Claude Code's and Codex's share its format).
+
+    The table's other hooks are kept; doctracker's own (those running `doctracker hook`) are replaced.
+
+    Args:
+        hooks: The table, by event, changed in place.
+        events: The events to answer, with the tools they are limited to (empty: every one).
+        base_url: The doctracker server the hooks ask, e.g. `http://127.0.0.1:8765`.
+    """
+    for event, matcher in events.items():
+        groups = [group for group in hooks.get(event, []) if not _is_ours(group)]
+        timeout = START_HOOK_TIMEOUT if event in START_EVENTS else HOOK_TIMEOUT
+        ours = {"hooks": [{"type": "command", "command": hook_command(event, base_url), "timeout": timeout}]}
+        groups.append({"matcher": matcher, **ours} if matcher else ours)
+        hooks[event] = groups
 
 
 def write_mcp_config(project_root: Path, base_url: str) -> Path:

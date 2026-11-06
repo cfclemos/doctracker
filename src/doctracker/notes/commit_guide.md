@@ -1,5 +1,5 @@
 How to commit in a project documented by doctracker:
 - Never add a Co-Authored-By line, or any other Claude or AI attribution, to commit messages or pull request descriptions.
-- doctracker's local files never go into a commit: doc/, .mcp.json, .claude/settings.local.json and .opencode/plugins/doctracker.js.
+- doctracker's local files never go into a commit: doc/, .mcp.json, .claude/settings.local.json, .codex/hooks.json, .codex/config.toml and .opencode/plugins/doctracker.js.
 - The message has a short subject saying what changed, then a body saying why.
 - Name every rename or move listed by the pre-commit (`renames`) in the message of the commit that holds it, as `old.path → new.path`.
