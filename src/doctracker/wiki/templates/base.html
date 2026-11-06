@@ -21,7 +21,6 @@
   <header id="topbar">
     <button id="tree-toggle" type="button" title="Show/hide the tree" aria-label="Show/hide the tree">☰</button>
     <a class="brand" href="/">doctracker</a>
-    {{ ui.grammars_warning(state.missing_grammars) }}
     {# On a small screen the search is this button: it opens the search as a panel under the bar,
        modes and languages on top, the field below (static/live.js). #}
     <button type="button" class="search-open" title="Search (/)" aria-label="Search"><i class="search-open-icon"></i></button>
@@ -55,6 +54,7 @@
       </div>
       <div id="search-results" class="search-popup"></div>
     </div>
+    <div class="notifications" id="notifications">{{ ui.notifications(notifications) }}</div>
   </header>
   {% include "tree.html" %}
   <div id="tree-resizer" title="Drag to resize"></div>

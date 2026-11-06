@@ -16,6 +16,7 @@ The renames and moves of classes and functions are listed at the pre-commit and 
 rename registry for every commit, made by the flow (`record_renames`) or outside it.
 """
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -299,6 +300,43 @@ def clean_done(notes: NoteStore, items: list[str]) -> dict:
         except ValueError:
             pass  # already gone with the plan or feature holding it
     return {"deleted": deleted, "refused": refused, "pending": report["pending"]}
+
+
+REVIEWED_COMMIT = re.compile(r"^Commit ([0-9a-f]{7,40}) by ")
+"""The commit a review's evidence names (written by `review_outside_commits`)."""
+
+
+async def close_review(notes: NoteStore, project_root: Path, item: str) -> dict:
+    """Approve a review and archive it, in one step: the user checked the commit against the planning.
+
+    The review's commit is recorded with it, as the flow does with its own commits, so the archive
+    finds it by that commit; then it leaves the Planner as `clean_done` does.
+
+    Args:
+        notes: The store.
+        project_root: Root of the documented project, to read the commit's full hash.
+        item: The review (`task:<id>`).
+
+    Returns:
+        What `clean_done` returns.
+
+    Raises:
+        ValueError: When the item is not an open task of the Reviews plan.
+    """
+    kind, task_id = parse_item(item)
+    task = notes.get_task(task_id) if kind == "task" else None
+    in_reviews = task is not None and notes.get_plan(notes.get_feature(task["feature_id"])["plan_id"])["fixed"]
+    if not in_reviews or task["state"] == "done":
+        raise ValueError(f"{item} is not an open review.")
+    notes.approve_task(task_id)
+    top = await working.top_level(project_root)
+    for evidence in task["evidence"]:
+        found = REVIEWED_COMMIT.match(evidence["detail"])
+        commit_hash = found and top and await working.full_hash(top, found[1])
+        if commit_hash:
+            notes.record_commit(commit_hash, [item])
+            notes.close_commit(commit_hash)
+    return clean_done(notes, [item])
 
 
 async def review_outside_commits(notes: NoteStore, project_root: Path, entities: dict[str, dict] | None = None

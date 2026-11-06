@@ -780,6 +780,15 @@ class NoteStore:
         kept = {item for plan in plans for item in _items_of(plan)}
         return {"plans": plans, "dependencies": [d for d in dependencies if d["item"] in kept or d["depends_on"] in kept]}
 
+    def pending_reviews(self) -> list[dict]:
+        """The reviews waiting: the tasks of the Reviews plan that are not done.
+
+        Returns:
+            The tasks (see `get_task`), oldest first, each with `plan`, the Reviews plan's id.
+        """
+        return [{**task, "plan": plan["id"]} for plan in self.planner(include_done=False)["plans"] if plan["fixed"]
+                for feature in plan["features"] for task in feature["tasks"] if task["state"] != "done"]
+
     def planner_graph(self, plan_ids: list[int] | None = None) -> dict:
         """The planner as a graph, for the wiki: plans and features are frames, tasks are boxes.
 

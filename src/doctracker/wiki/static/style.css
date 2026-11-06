@@ -128,15 +128,35 @@ main { grid-area: main; }
     box-shadow: 0 8px 24px rgb(0 0 0 / 18%); }
   .search-filters.open .search-options-menu { display: flex; }
 }
-/* The topbar warning while grammars are missing: the alert of the modal it opens, with how many. */
-.grammars-warning { display: inline-flex; align-items: center; gap: 0.35rem; height: 2rem; padding: 0 0.6rem; border: 1px solid #d32f2f;
-  border-radius: 6px; background: #fdeded; color: #5f2120; font-weight: 700; cursor: pointer; }
-.grammars-warning .confirm-icon { --mark: #d32f2f; width: 1rem; height: 1rem;
-  -webkit-mask-image: url("icons/alert-triangle.svg"); mask-image: url("icons/alert-triangle.svg"); }
-@media (prefers-color-scheme: dark) {
-  .grammars-warning { border-color: #f44336; background: #160b0b; color: #f4c7c7; }
-  .grammars-warning .confirm-icon { --mark: #f44336; }
-}
+/* The notification center at the right end of the topbar: a bell, a red badge with how many, and the
+   list under it, which looks like the search's (.search-popup, .search-link). */
+.notifications { position: relative; flex: none; }
+.notifications-toggle { position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 2.4rem; height: 2.4rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--fg); cursor: pointer; }
+.notifications-toggle:hover, .notifications.open .notifications-toggle { background: var(--panel); color: var(--accent); }
+.bell-icon { width: 1.35rem; height: 1.35rem; background: currentColor;
+  -webkit-mask: url("icons/bell.svg") center / contain no-repeat; mask: url("icons/bell.svg") center / contain no-repeat; }
+.notifications-badge { position: absolute; top: 0.1rem; right: 0.05rem; box-sizing: border-box; min-width: 1.15rem; height: 1.15rem;
+  padding: 0 0.3rem; border-radius: 999px; background: #d32f2f; color: #fff; font-size: 0.7rem; font-weight: 700;
+  line-height: 1.15rem; text-align: center; }
+/* Placed by its right edge under the bell, so it opens toward the page and never past the window
+   (`.notifications` makes it win over .search-popup's left: 0, written later). */
+.notifications .notifications-list { left: auto; right: 0; z-index: 30; width: min(30rem, calc(100vw - 2rem)); }
+.notifications:not(.open) .notifications-list { display: none; }
+.notification-rows { list-style: none; margin: 0; padding: 0; }
+.notification-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.65rem 0.75rem 0.65rem 1rem; }
+.notification-row + .notification-row { border-top: 1px solid var(--border); }
+.notification-kind { flex: none; min-width: 4.6rem; padding: 0.15rem 0.5rem; border-radius: 999px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.04em; text-align: center; text-transform: uppercase; }
+.notification-kind.grammars { background: color-mix(in srgb, #d32f2f 12%, transparent); color: #d32f2f; }
+.notification-text { flex: 1; min-width: 0; color: var(--fg); font-size: 0.9rem; line-height: 1.35; overflow-wrap: anywhere; }
+.notification-open { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.notification-open:hover { background: var(--panel); color: var(--accent); text-decoration: none; }
+.open-icon { width: 1.05rem; height: 1.05rem; background: currentColor;
+  -webkit-mask: url("icons/external-link.svg") center / contain no-repeat; mask: url("icons/external-link.svg") center / contain no-repeat; }
+.notifications-empty { justify-content: center; color: var(--muted); font-size: 0.9rem; }
 
 /* Languages shown in the whole wiki, before the search modes. */
 .graph-language { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
@@ -1019,6 +1039,13 @@ body.drawing-expanded::after { content: ""; position: fixed; inset: 0; z-index: 
   border-bottom: 1px solid var(--border); background: var(--bg); }
 .graph-side-head h2 { flex: 1; margin: 0; padding: 0; border: 0; font-size: 1.05rem; }
 .graph-side-head .graph-panel-page { display: inline-flex; align-items: center; justify-content: center; }
+/* The item's own actions in the head (an open review: approve and archive). */
+.graph-panel-actions { display: inline-flex; align-items: center; }
+.graph-side-head .graph-panel-review { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: #2e7d32; cursor: pointer; }
+.graph-side-head .graph-panel-review:hover { background: color-mix(in srgb, #2e7d32 14%, transparent); }
+.review-icon { width: 1.1rem; height: 1.1rem; background: currentColor;
+  -webkit-mask: url("icons/check.svg") center / contain no-repeat; mask: url("icons/check.svg") center / contain no-repeat; }
 .graph-side-head .graph-panel-page[hidden] { display: none; }
 .graph-side-head .graph-panel-side, .graph-side-head .graph-panel-page, .graph-side-head .graph-close { position: static; width: 1.7rem; height: 1.7rem; padding: 0;
   border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 1rem; cursor: pointer; }

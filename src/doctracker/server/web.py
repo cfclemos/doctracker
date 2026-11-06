@@ -32,6 +32,7 @@ from doctracker.history import commit_diff, read_branch_graph, read_commit, read
 from doctracker.history.working import changed_files, current_branch, top_level
 from doctracker.notes import (MOMENTS, NOT_A_NOTE, NOTE_GROUP_TEXTS, NOTE_GROUPS, NOTE_TYPE_USES, NOTE_TYPES,
                               NoteStore, parse_item)
+from doctracker.notes.commit_flow import close_review
 from doctracker.search import DEFAULT_LIMIT, DEFAULT_MODE, MODES, RECALL_GROUPS, WIKI_WAIT_SECONDS, SearchEngine, SimilarNotesFound
 from doctracker.server.state import DocState
 from doctracker.wiki import pages
@@ -172,6 +173,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             database_tree=pages.database_tree(state, connections.connections(), current, EXAMPLES_FOLDER if developing else "",
                                               availability(), catalog.outline()),
             tree_layout=layout, tree_layouts=pages.TREE_LAYOUTS, shown_languages=shown,
+            notifications=pages.notifications(state.missing_grammars, notes.pending_reviews()),
             diagram_tab=request.cookies.get("diagram-tab") if request.cookies.get("diagram-tab") in DIAGRAM_TABS else "architecture",
             languages_found=pages.languages_found(state), **context)
         return HTMLResponse(html, status_code=status)
@@ -1017,6 +1019,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 context["item"] = notes.get_item(query["item"])
                 context["kind"] = parse_item(query["item"])[0]
                 context["choices"] = dependency_choices(query["item"])
+                context["review"] = (context["kind"] == "task" and context["item"]["state"] != "done"
+                                     and notes.get_plan(notes.get_feature(context["item"]["feature_id"])["plan_id"])["fixed"])
                 context["titles"] = {entry["item"]: entry["title"] for plan in notes.planner()["plans"]
                                      for entry in [plan, *plan["features"], *(t for f in plan["features"] for t in f["tasks"])]}
             elif query.get("note"):
@@ -1037,6 +1041,15 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return HTMLResponse(render_form(dict(request.query_params)))
 
     async def note_action(request: Request) -> Response:
+        """Apply a change of the planner or the notes (`apply_note_action`), and tell the topbar's notification
+        center to count again: the change may have closed a review."""
+        response = await apply_note_action(request)
+        if response.status_code == 200:
+            events = [event.strip() for event in response.headers.get("HX-Trigger", "").split(",") if event.strip()]
+            response.headers["HX-Trigger"] = ", ".join([*events, "notifications-changed"])
+        return response
+
+    async def apply_note_action(request: Request) -> Response:
         """Change the planner or the notes from the notes page, through the same methods the MCP tools use.
 
         Every change made here is recorded with the source `wiki`. The page comes back redrawn; a
@@ -1088,6 +1101,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                                                            form.get("reason", ""), "wiki"),
             "remove_dependency": lambda: notes.remove_dependency(form.get("item", ""), form.get("depends_on", "")),
             "delete_item": lambda: notes.delete_item(form.get("item", "")),
+            "close_review": lambda: close_review(notes, project_root, form.get("item", "")),
             "create_note": lambda: search.create_reviewed_note(form.get("type", ""), form.get("statement", ""),
                                                                form.get("why", ""), lines(form.get("entities")),
                                                                form.get("different_because", ""), "wiki", moments()),
@@ -1135,7 +1149,10 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return HTMLResponse(reply, headers={"HX-Trigger": changed})
         # From the panel, only deleting the item shown changes what is shown (the whole page comes back);
         # anything else, deleting a feature or task of its lists included, answers with the panel alone.
-        deleting_shown = (name == "delete_item" and form.get("item") == params["selected"]) or name == "delete_note"
+        deleting_shown = ((name in ("delete_item", "close_review") and form.get("item") == params["selected"])
+                          or name == "delete_note")
+        if name == "close_review" and not error:  # the review left the Planner: nothing is shown in the panel
+            params["selected"] = ""
         if form.get("panel") == "1" and not deleting_shown:
             # Sent from the planner's panel: only the panel and the plan cards come back, and the page
             # redraws its graph in place (keeping zoom and position), so nothing else blinks.
@@ -1378,6 +1395,11 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             return HTMLResponse("", headers={"HX-Refresh": "true"})
         return HTMLResponse(templates.get_template("macros.html").module.reading_progress(dict(state.progress)))
 
+    async def notification_center(request: Request) -> HTMLResponse:
+        """The topbar's notification center again (its badge and list), when something changed."""
+        items = pages.notifications(state.missing_grammars, notes.pending_reviews())
+        return HTMLResponse(templates.get_template("macros.html").module.notifications(items))
+
     async def events(request: Request) -> Response:
         queue = state.subscribe()
 
@@ -1426,6 +1448,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/settings/code-theme", set_code_theme, methods=["POST"]),
         Route("/grammars/retry", retry_grammars, methods=["POST"]),
         Route("/events", events),
+        Route("/notifications", notification_center),
         Route("/progress", progress),
         Mount("/static", StaticFiles(packages=[("doctracker.wiki", "static")]), name="static"),
     ]
