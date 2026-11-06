@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.datastructures import QueryParams
@@ -20,8 +20,9 @@ from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_
 from doctracker.databases.code_links import code_use, database_use
 from doctracker.databases.discovery import KINDS
 from doctracker.databases.lint import LEVELS as LINT_LEVELS, Lint
-from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
-from doctracker.databases.origins.evolution import describe_moment, moments, renames_between, schema_at, schema_diff
+from doctracker.databases.origins import DIFF_TABS, ORIGIN_PREFIX, compare, database_object as object_with_origins, default_b, describe_origins
+from doctracker.databases.origins.evolution import MIGRATION_KINDS, describe_moment, moments, renames_between, schema_at, schema_diff
+from doctracker.databases.diff_profiles import IGNORABLE, ProfileStore
 from doctracker.databases.slices import SliceStore, resolve as resolve_slice, table_key
 from doctracker.databases.readonly import SIGN_INS, run_test
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES
@@ -158,6 +159,9 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             # The page alone, for the consultation modal opened from a drawing (no tree, no local graph).
             html = templates.get_template(content).render(page_url=url, state=state, modal=True, **context)
             return HTMLResponse(html, status_code=status)
+        if is_fragment and request.headers.get("X-Part") == "drawing":  # a drawing's filters: its area alone, the tree as it is
+            html = templates.get_template("fragment_content.html").render(content=content, page_url=url, state=state, **context)
+            return HTMLResponse(html, status_code=status)
         template = "fragment.html" if is_fragment else "base.html"
         layout, shown = view_settings(request)
         current = context.get("path", "")
@@ -217,7 +221,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     def database_origin(name: str) -> dict | None:
         """An origin's page data: the origin as read, the databases it describes (its links, told in one
-        line; the rest of it is DATABASES › Drift) and what it ends with (`declared`), from the same store
+        line; the rest of it is DATABASES › Diff) and what it ends with (`declared`), from the same store
         as the live databases."""
         origin = next((o for o in state.origins if o["name"] == name), None)
         if origin is None:
@@ -261,14 +265,14 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         params = dict(request.query_params)
         query = request.url.query
         if view == "calls":
-            # Calls opens on what was chosen last (focus, path to, depth, direction), and its fields
+            # Calls opens on what was chosen last (focus, depth, direction), and its fields
             # show what is drawn: the path found for a name typed, the depth (all of it by default).
             if not params and request.cookies.get("calls-view"):
                 params = dict(parse_qsl(request.cookies["calls-view"]))
             params.setdefault("depth", str(MAX_CALL_DEPTH))
-            for field in ("focus", "to"):
-                if params.get(field, "").strip():
-                    params[field] = find_callable(state, params[field]) or params[field]
+            params.pop("to", None)  # Path to was taken away (Filipe, 2026-11-06): an old address's is dropped
+            if params.get("focus", "").strip():
+                params["focus"] = find_callable(state, params["focus"]) or params["focus"]
             query = urlencode(params)
         classes = set(class_paths(state))  # what the class diagram (and its Focus) holds
         context = {
@@ -300,7 +304,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         return response
 
     async def databases_page(request: Request) -> Response:
-        """A page of DATABASES (Connections, Navigate, Diagrams, Drift, Evolution, Lint), each tab of Navigate
+        """A page of DATABASES (Connections, Navigate, Diagrams, Diff, Evolution, Lint), each tab of Navigate
         and Diagrams at its own address: `/databases/<page>[/<tab>]` (pages.DATABASE_URLS)."""
         tab = pages.DATABASE_VIEWS.get(request.path_params["page"])
         if tab is None:
@@ -326,6 +330,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     connection_tests: dict[str, dict] = {}  # the last test of each connection, shown on its card
     slices = SliceStore(project_root, state.notify)  # the slices of the schema, doc/slices/ (the MCP tools read the same files)
+    profiles = ProfileStore(project_root, state.notify)  # the Diff's comparison profiles, doc/diff/ (the MCP tools read the same files)
     lint = Lint(project_root, catalog, slices, state.notify)  # the lint, its accepted findings in doc/lint/ (the MCP tools read the same)
 
     def availability() -> dict[str, str]:
@@ -359,8 +364,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                    "has_collections": bool(catalog.objects(kind="database"))}
         if tab == "objects":
             context.update(objects_list(params))
-        if tab == "drift":
-            context.update(drift=drift(), catalog_databases=catalog.objects(kind="database"))
+        if tab == "diff":
+            context.update(diff_context(params))
         if tab == "diagram":
             context.update(er_context(params))
         if tab == "evolution":
@@ -477,28 +482,136 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     def er_context(params: dict) -> dict:
         """Diagrams › ER Diagrams: its data's URL (with the filters chosen), the projects of the DATABASES
-        tree, and what Focus offers (databases, schemas, files, tables and views)."""
+        tree, and what Focus offers: what the drawing can show with the Project chosen (its databases,
+        schemas, files, tables and views), taken from the drawing itself."""
         outline = catalog.outline()
-        targets = [{"path": path, "name": name, "role": kind, "symbol": ""} for objects in outline.values()
-                   for path, kind, _, name in objects if kind in ("database", "schema", "table", "view", "materialized view", "foreign table")]
-        targets += [{"path": f"origin:{origin['name']}", "name": origin["name"], "role": "file", "symbol": ""} for origin in state.origins]
+        drawn = er_diagram(state, catalog, connections.connections(), EXAMPLES_FOLDER if developing else "", params.get("project", ""))
+        icons = {"database": "database", "schema": "schema", "file": "file"}
+        targets = [{"path": node["id"], "name": node["label"], "role": icons.get(node["role"], "kind-table"), "symbol": ""}
+                   for node in drawn["nodes"] if node["role"] in ("database", "schema", "file") or not node["frame"]]
         tree = pages.database_tree(state, connections.connections(), apart=EXAMPLES_FOLDER if developing else "", read=outline)
+        # The filters cascade: the Project limits the Focus and the Slices offered; a Focus or Slice it does not
+        # hold is let go; Depth counts only from a table or view.
+        offered = {target["path"] for target in targets}
+        if params.get("focus") and params["focus"] not in offered:
+            params["focus"] = ""
+        slice_names = [found["name"] for found in slices.slices()
+                       if any(t["found"] in offered for t in resolve_slice(found, catalog)["tables"] if t["found"])]
+        if params.get("slice") and params["slice"] not in slice_names:
+            params["slice"] = ""
+        focused_table = params.get("focus", "") in {target["path"] for target in targets if target["role"] == "kind-table"}
         query = urlencode([(key, params[key]) for key in ("project", "focus", "depth", "slice") if params.get(key)])
         return {"er_url": f"/graph/er{'?' + query if query else ''}" if targets else "",
                 "er_projects": [{"path": node["path"], "name": node["name"]} for node in tree if node["role"] == "project"],
-                "er_slices": [found["name"] for found in slices.slices()],
-                "er_targets": targets}
+                "er_slices": slice_names, "er_targets": targets, "er_depth": focused_table}
 
-    def drift() -> list[dict]:
-        """The Drift tab: each origin (SQL files, migrations) with the databases it describes (how each
-        link was made), its suggestions and its differences from each database linked."""
-        described = describe_origins(state.origins, catalog, connections.connections(), project_root)
-        read_at = {}  # when each database was read, beside a dump's age
-        for database in catalog.objects(kind="database"):
-            read_at[database["path"]] = (catalog.collection(database["connection"]) or {}).get("started", "")
-        return [{**origin, **described[origin["name"]], "read_at": read_at,
-                 "comparisons": comparisons(origin, described[origin["name"]], catalog)}
-                for origin in state.origins]
+    DIFF_GROUPS = (("migrations", "Migrations"), ("sql", "SQL files"), ("orm", "ORM models"), ("dumps", "Dumps"),
+                   ("databases", "Databases"))  # the buttons over each trail of the Diff page: the kind of place
+
+    def diff_group(place: str) -> str:
+        """Which button of the Diff page a place is under: `databases` for a live one, else its origin's kind."""
+        if not place.startswith(ORIGIN_PREFIX):
+            return "databases"
+        name = place.removeprefix(ORIGIN_PREFIX).partition("::")[0]
+        kind = next((o["kind"] for o in state.origins if o["name"] == name), "")
+        if kind == "dump":
+            return "dumps"
+        if kind == "sql file":
+            return "sql"
+        return "migrations" if kind in MIGRATION_KINDS or kind.endswith("migrations") else "orm"
+
+    def diff_context(params: dict) -> dict:
+        """The Diff page: places A and B (`?a=&b=`; B left out: the database A's origin created, see
+        `default_b`), the kind of place each trail lists (`?ga=&gb=`, see `DIFF_GROUPS`), the boxes of each
+        trail, where they differ (`compare`) and the tab shown (`?show=`)."""
+        def chosen(side: str) -> str:  # the deepest field filled, each under the one before it (a changed one empties those under it)
+            place = params.get(side, "")
+            for depth in range(4):
+                value = params.get(f"{side}{depth}", "")
+                if depth == 0:
+                    place = value if f"{side}0" in params else place
+                elif value and place and value.startswith(place) and value != place:
+                    place = value
+                else:
+                    break
+            return place
+
+        profile = profiles.profile(params["profile"]) if params.get("profile") else None  # opened from Saved profiles
+        a = chosen("a") or (profile or {}).get("a", "")
+        if params.get("ga") and a and diff_group(a) != params["ga"]:
+            a = ""
+        start = default_b(a, state.origins, catalog, connections.connections(), project_root)
+        b = chosen("b") or (profile or {}).get("b", "") or start["b"]
+        if params.get("gb") and b and diff_group(b) != params["gb"]:
+            b = ""
+        profile = next((p for p in profiles.profiles() if p["a"] == a and p["b"] == b), None) if a and b else None  # this comparison, saved
+        ignore = (profile or {}).get("ignore", [])
+        compared = compare(catalog, a, b, project_root, ignore) if a and b else None
+        keys = [key for key, _ in DIFF_TABS]
+        show = params.get("show") if params.get("show") in keys else \
+            next((key for key in keys if compared and compared["tabs"][key]["count"]), keys[0])
+        held = [o for o in catalog.objects(origins=True) if o["kind"] in ("database", "schema", "table", "view", "materialized view", "foreign table")]
+        present = {diff_group(f"{ORIGIN_PREFIX}{o['name']}") for o in state.origins} | ({"databases"} if catalog.objects(kind="database") else set())
+        groups = [(key, label) for key, label in DIFF_GROUPS if key in present]
+        group_a = params.get("ga") or (diff_group(a) if a else next((key for key, _ in groups), ""))
+        group_b = params.get("gb") if params.get("gb") and (params.get("b0") is not None or not start["b"]) else (diff_group(b) if b else "databases")
+        closest = [] if start["b"] else start["suggestions"]
+        def named(place: str) -> str:  # a place as the tabs name it: its database (or file), then schema.table
+            if place.startswith(ORIGIN_PREFIX):
+                name, _, key = place.removeprefix(ORIGIN_PREFIX).partition("::")
+                base = "/".join(name.split("/")[-2:])
+            else:
+                parts = place.removeprefix("db:").split("/", 2)
+                base, key = parts[1] if len(parts) > 1 else parts[0], parts[2] if len(parts) > 2 else ""
+            return f"{base}.{key}" if key else base
+
+        view = "profiles" if params.get("view") == "profiles" else "trails"
+        saved = [{**found, "names": {"a": named(found["a"]), "b": named(found["b"])}}
+                 for found in (profiles.profiles() if view == "profiles" else [])]
+        return {"diff_view": view, "diff_profile": profile, "diff_ignore": ignore, "diff_profiles": saved, "ignorable": IGNORABLE,
+                "diff_names": {"a": named(a) if a else "A", "b": named(b) if b else "B"},
+                "diff_a": a, "diff_b": b, "diff_start": start, "diff": compared, "diff_show": show, "diff_tabs": DIFF_TABS,
+                "diff_groups": groups, "diff_group": {"a": group_a, "b": group_b},
+                "diff_trails": {"a": diff_trail(held, a, group_a), "b": diff_trail(held, b, group_b, closest)}}
+
+    def diff_trail(held: list[dict], place: str, group: str, closest: list[str] = ()) -> list[dict]:
+        """The fields of a side of the Diff page, down to a place: each its `title`, `help`, `placeholder`,
+        `options` (`path`, `name`, `kind`, `role`: its icon, `closest`) and the one `picked`, then a field for
+        the level under it, empty. The first lists the places of the kind chosen (`group`): those origins,
+        or the servers read (`closest`: the databases suggested, first)."""
+        by_path = {o["path"]: o for o in held}
+        children: dict[str, list[dict]] = {}
+        for o in held:
+            children.setdefault(o["parent"], []).append({"path": o["path"], "name": o["name"], "kind": o["kind"],
+                                                         "role": {"database": "kind-databases", "schema": "schema"}.get(o["kind"], "kind-table")})
+        if group == "databases":
+            servers = sorted({o["parent"] for o in held if o["kind"] == "database" and o["parent"]})
+            roots = [{"path": by_path[path]["path"], "name": f"{by_path[path]['parent'].removeprefix('db:')} › {by_path[path]['name']}",
+                      "kind": "database", "role": "kind-databases", "closest": True} for path in closest if path in by_path]
+            roots += [{"path": server, "name": server.removeprefix("db:"), "kind": "server", "role": "kind-databases"} for server in servers]
+        else:
+            roots = sorted(({"path": f"{ORIGIN_PREFIX}{o['name']}", "name": "/".join(o["name"].split("/")[-2:]), "kind": o["kind"],
+                             "role": f"kind-{group}"} for o in state.origins
+                            if diff_group(f"{ORIGIN_PREFIX}{o['name']}") == group), key=lambda o: o["name"].lower())
+        chain, at = [], place if diff_group(place) == group else ""
+        while at in by_path:
+            chain.insert(0, at)
+            at = by_path[at]["parent"]
+        if at.startswith("db:"):
+            chain.insert(0, at)
+        firsts = {"migrations": "Migrations", "sql": "SQL file", "orm": "ORM models", "dumps": "Dump", "databases": "Server"}
+        titles = {"database": "Database", "schema": "Schema"}
+        boxes = []
+        for depth in range(len(chain) + 1):
+            options = roots if depth == 0 else sorted(children.get(chain[depth - 1], []), key=lambda o: o["name"].lower())
+            if not options:
+                break
+            title = firsts.get(group, "Place") if depth == 0 else titles.get(options[0]["kind"], "Table or view")
+            help_text = (f"The {title.lower()} compared; type a part of its name or path." if depth == 0 else
+                         f"Only this {title.lower()} of what the field before holds; empty: all of it.")
+            boxes.append({"title": title, "help": help_text, "placeholder": f"{title}…" if depth == 0 else "All",
+                          "options": options, "picked": chain[depth] if depth < len(chain) else ""})
+        return boxes
 
     OBJECTS_PER_PAGE = 50
 
@@ -634,6 +747,45 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         except (ValueError, Locked):
             pass
 
+    def diff_profile_modal(a: str, b: str, name: str = "", error: str = "", form: dict | None = None, details: bool = False) -> str:
+        """The form saving a comparison of the Diff as a profile: a new one for A and B, or a saved one (`name`)
+        to change, its fields kept when a refusal is shown; with `details`, the saved one's details (what it
+        keeps and what its comparison finds now), in the consultation modal."""
+        found = profiles.profile(name) if name else None
+        counts = {}
+        if details and found:
+            counted = compare(catalog, found["a"], found["b"], ignore=found.get("ignore", []))
+            counts = {"error": counted["error"], **{key: counted["tabs"][key]["count"] for key, _ in DIFF_TABS}}
+        return templates.get_template("database_form.html").render(
+            diff_profile_mode=True, profile=found, a=a or (found or {}).get("a", ""), b=b or (found or {}).get("b", ""),
+            ignorable=IGNORABLE, form=form or {}, error=error, details=details and found is not None, counts=counts)
+
+    async def diff_profile_form(request: Request) -> Response:
+        """The profile form: `?a=&b=` (the comparison shown) and `&profile=<name>` (the one opened); or a
+        profile's details, `?details=<name>`."""
+        query = request.query_params
+        if query.get("details"):
+            return HTMLResponse(diff_profile_modal("", "", query["details"], details=True))
+        return HTMLResponse(diff_profile_modal(query.get("a", ""), query.get("b", ""), query.get("profile", "")))
+
+    def diff_profile_action(request: Request, name: str, form: dict, ignore: list[str]) -> Response:
+        """A profile saved (`diff-profile-save`: a new one, or over the one it was, `previous`), its comparison
+        then shown in Trails; or deleted (`diff-profile-delete`), Saved profiles shown again."""
+        if name == "diff-profile-delete":
+            profiles.delete(form.get("name", ""))
+            params = {"tab": "diff", "view": "profiles"}
+            return render_page(request, "database.html", "/databases/diff?view=profiles",
+                               {"path": "", "view": "database", **database_context(params)})
+        try:
+            kept = profiles.save(form.get("name", ""), form.get("a", ""), form.get("b", ""), form.get("description", ""), ignore,
+                                 form.get("previous", ""))
+        except ValueError as problem:
+            return HTMLResponse(diff_profile_modal(form.get("a", ""), form.get("b", ""), form.get("previous", ""), str(problem),
+                                                   {**form, "ignore": ignore}), headers={"HX-Retarget": "#database-dialog-body"})
+        params = {"tab": "diff", "view": "trails", "profile": kept["name"]}
+        return render_page(request, "database.html", f"/databases/diff?view=trails&profile={quote(kept['name'], safe='')}",
+                           {"path": "", "view": "database", **database_context(params)})
+
     async def slice_action(request: Request, name: str, form: dict) -> Response:
         """A slice saved (`slice-save`: from its form, the tables ticked; from the Diagram, the tables and
         positions as JSON in `tables`, answered in JSON), deleted (`slice-delete`), or the form of a new one
@@ -675,8 +827,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
 
     async def database_action(request: Request) -> Response:
         """Allow, block, test, refresh (read its database again now), add, change or delete a connection,
-        unlock the saved passwords, link an origin to a database by hand (`origin-link`), or sample a
-        table again (`sample-again`: the connection's `id` and the table's `path`).
+        unlock the saved passwords, or sample a table again (`sample-again`: the connection's `id` and the table's `path`).
 
         The same store the MCP tools use. Sent from a connection's details (`modal`), the details come
         back (a refusal shown in them) and its card follows; otherwise the page comes back redrawn,
@@ -691,6 +842,8 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
                 if connection["allowed"]:
                     asyncio.create_task(refresh_quietly(connection["id"]))
             return Response("", status_code=204)
+        if name.startswith("diff-profile-"):
+            return diff_profile_action(request, name, form, (await request.form()).getlist("ignore"))
         if name.startswith("slice-"):
             return await slice_action(request, name, form)
         if name in ("lint-accept", "lint-reopen"):  # a finding of the lint accepted (with its reason), or open again
@@ -711,12 +864,6 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             params = {**database_params(QueryParams(query)), "tab": "lint"}
             context = {"path": "", "view": "database", **database_context(params)}
             return render_page(request, "database.html", pages.DATABASE_URLS["lint"] + (f"?{query}" if query else ""), context)
-        if name == "origin-link":  # an origin linked to a database by hand, unlinked, or left to the other layers
-            choice = {"1": True, "0": False}.get(form.get("linked", ""))
-            if form.get("origin") and form.get("database"):
-                catalog.choose_origin_link(form["origin"], form["database"], choice)
-            context = {"path": "", "view": "database", "params": {"tab": "drift"}, **database_context({"tab": "drift"})}
-            return render_page(request, "database.html", pages.DATABASE_URLS["drift"], context)
         if name == "sample-again":  # an object's page: its table sampled again now; the page follows by itself
             try:
                 await collect_connection(connections, catalog, identifier, sample_again=form.get("path", ""))
@@ -1059,7 +1206,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
             plans = [int(part) for part in params.get("plans", "").split(",") if part.isdigit()]
             return JSONResponse(notes.planner_graph(plans))
         if view == "calls":
-            graph = call_graph(state, params.get("focus", ""), depth_of(params), params.get("direction", "both"), params.get("to", ""))
+            graph = call_graph(state, params.get("focus", ""), depth_of(params), params.get("direction", "both"))
             return JSONResponse(pages.visible_graph(state, graph, shown))
         if view == "timeline":  # when each file appeared, for the timeline of the architecture
             return JSONResponse(await file_timeline(project_root) or {"commits": [], "added": {}})
@@ -1098,9 +1245,12 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         listed = connections.connections()
         answers = availability()
         opened = [f for f in lint.findings(state.origins, listed) if f["state"] == "open"]
-        differing = [origin["name"] for origin in drift()
-                     if any(c["missing"] or c["extra"] or any(t["differences"] for t in c["tables"].values())
-                            for c in origin["comparisons"].values())]
+        differing = []
+        for origin in state.origins:  # compared with the database it created, as Diff opens it
+            place = f"{ORIGIN_PREFIX}{origin['name']}"
+            if (b := default_b(place, state.origins, catalog, listed, project_root)["b"]) and \
+                    any(tab["count"] for tab in compare(catalog, place, b)["tabs"].values()):
+                differing.append(origin["name"])
         top = await top_level(project_root)
         commits = await read_history(project_root, 5) or []
         return {
@@ -1256,6 +1406,7 @@ def web_routes(state: DocState, project_root: Path, config: Config, search: Sear
         Route("/databases/form", database_form),
         Route("/databases/evolution/part", evolution_part),
         Route("/databases/slice-form", slice_form),
+        Route("/databases/diff-profile-form", diff_profile_form),
         Route("/databases/lint-form", lint_form),
         Route("/databases/code-reaches", code_reaches),
         Route("/databases/{action}", database_action, methods=["POST"]),

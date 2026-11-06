@@ -74,19 +74,15 @@ hx-post="/databases/{{ action }}" hx-target="#content"{% if confirm %} hx-confir
   <p class="tab-description">The entity-relationship diagram of the databases read and of what the project's files declare, in the levels of the tree: each table and view with its columns, the foreign keys from a column to the column it refers to, with how many rows each end may have. Click a level to open it, its title to close it; choose in the legend which relations to see, and on the bar the notation.</p>
   {% set bar_filters %}
   <div class="graph-toolbar filters-line er-filters">
-    <form class="graph-filter" hx-get="{{ db_urls.diagram }}" hx-target="#content" hx-push-url="true" hx-trigger="change">
+    <form class="graph-filter" hx-get="{{ db_urls.diagram }}" hx-swap="none" hx-headers='{"X-Part": "drawing"}' hx-push-url="true" hx-trigger="{{ ui.pick_trigger }}">
       {% call ui.form_field("Project", "Only what one project of the repository holds: its connections' databases and its files.", wide=False) %}
       <select name="project"><option value="">All</option>{% for p in er_projects %}<option value="{{ p.path }}"{% if params.project == p.path %} selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>{% endcall %}
-      {% call ui.form_field("Focus", "A table or view: only it and the tables a few relations away (Depth). A database, schema or file: only what it holds. Type its name or path.") %}
-      <span class="field-clearable">
-        <input name="focus" data-options="er-targets" value="{{ params.focus or '' }}" placeholder="A database, schema, file or table…" class="focus-input" autocomplete="off">
-        <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
-      </span>
-      {{ ui.focus_options("er-targets", er_targets) }}{% endcall %}
+      {{ ui.pick_field("Focus", "focus", "er-targets", er_targets, value=params.focus or "", placeholder="A database, schema, file or table…",
+                       help="A table or view: only it and the tables a few relations away (Depth). A database, schema or file: only what it holds. Type its name or path.") }}
       {% call ui.form_field("Slice", "A slice of the schema (see Slices): only its tables, where they were placed, without the levels; the tables related to them drawn faded. Ctrl + click adds a table to it or takes one away; Save keeps the tables and where they stand.", wide=False) %}
       <select name="slice"><option value="">None</option>{% for name in er_slices %}<option value="{{ name }}"{% if params.slice == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select>{% endcall %}
       {% call ui.form_field("Depth", "How many relations away from a focused table: 1 shows only the tables it links to directly.", wide=False) %}
-      <select name="depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>{% endcall %}
+      <select name="depth"{% if not er_depth %} disabled title="Depth counts the relations from a table or view: choose one in Focus"{% endif %}>{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>{% endcall %}
     </form>
     {% call ui.form_field("Columns", "Which columns the boxes show, by kind: a column shows when it is of any kind chosen (a key column is also indexed, say). Others: the columns of no kind above. Kept for this browser.", choice=True) %}
     <span class="toggle-group er-columns">{% for kind, label in (("pk", "Primary key"), ("fk", "Foreign key"), ("unique", "Unique"), ("index", "Indexed"), ("generated", "Generated"), ("other", "Others")) %}<label><input type="checkbox" value="{{ kind }}" checked>{{ label }}</label>{% endfor %}</span>{% endcall %}
@@ -96,7 +92,7 @@ hx-post="/databases/{{ action }}" hx-target="#content"{% if confirm %} hx-confir
   <button type="button" class="graph-icon graph-text er-save-as" data-tip="Save the tables chosen with Ctrl + click (and where they stand) as a new slice" hidden>Save as slice</button>
   <button type="button" class="graph-icon graph-text er-save" data-slice="{{ params.slice or '' }}" data-tip="Keep the slice's tables and where they stand now"{% if not params.slice %} hidden{% endif %}>Save the slice</button>
   {% endset %}
-  {% call ui.view_canvas("er", er_url, params.focus or "", layouts=true, filters=bar_filters, details=true, notation=true, actions=er_actions,
+  {% call ui.view_canvas("er", er_url, params.focus or "", layouts=true, filters=bar_filters, filters_open=true, details=true, notation=true, actions=er_actions,
                          empty="" if er_url else "No database read and no schema file yet: allow a connection in Connections.") %}
     <span title="A project of the repository, as in the tree"><i class="box project"></i>project</span>
     <span title="A connection of doctracker, or a file of the project declaring a schema (SQL, migrations, ORM models, a dump)"><i class="box er-connection"></i>connection / file</span>
@@ -169,86 +165,99 @@ hx-post="/databases/{{ action }}" hx-target="#content"{% if confirm %} hx-confir
     <span title="A step follows the step it revises; two steps revising the same one are a branch, a step revising two is a merge"><i class="line evo-line"></i>follows (branches and merges)</span>
   {% endcall %}
   <div id="evolution-diff" class="evo-diff">{% if params.a and params.b %}<p class="empty" hx-get="/databases/evolution/part?a={{ params.a | urlencode }}&b={{ params.b | urlencode }}&view={{ params.view or 'only' }}" hx-trigger="load" hx-target="#evolution-diff">Loading…</p>{% endif %}</div>
-  {% elif tab == "drift" %}
-  <p class="tab-description">Where the project's SQL files, migrations and ORM models and the live databases they describe differ. An origin is linked to a database by hand, by the migration tool's history table in that database (the proof it was migrated, how far, and steps changed since), by its configuration, or — an ORM's models — through its migrations; the names of its tables only suggest a database, to link by hand. An ORM's models are also compared with its migrations: a model changed without its migration shows there.</p>
-  {% set HOW = {"chosen": ("chosen by you", "You linked it by hand."),
-                "history": ("history", "The database's own history table of this tool records these steps as applied."),
-                "declared": ("declared", "The origin's configuration, or a connection declared in its folder, names this database."),
-                "related": ("through its migrations", "The ORM's migrations are linked to this database (by its history or its configuration): its models describe the same one.")} %}
-  {% macro choose(origin, database, linked, label, icon) -%}
-  <form class="origin-choice" hx-post="/databases/origin-link" hx-target="#content">
-    <input type="hidden" name="origin" value="{{ origin }}"><input type="hidden" name="database" value="{{ database }}">
-    <input type="hidden" name="linked" value="{{ linked }}"><button type="submit" class="see-in-link"><i class="bar-icon bar-icon-{{ icon }}"></i>{{ label }}</button>
-  </form>
-  {%- endmacro %}
-  {# Where an origin and the other side differ (a database, or the ORM's other origin), each table in turn. #}
-  {% macro differences(c, origin, here, there, same) -%}
-      {% set differing = c.tables.items() | selectattr("1.differences") | list %}
-      {% if not c.missing and not c.extra and not differing %}<p class="summary">No differences: {{ same }}.</p>{% endif %}
-      {% if c.missing %}<h3 class="block-subtitle">In {{ here }}, not in {{ there }}</h3>
-      <ul class="db-list">{% for key in c.missing %}<li><a {{ ui.nav("origin:" ~ origin.name ~ "::" ~ key) }}><code>{{ key }}</code></a></li>{% endfor %}</ul>{% endif %}
-      {% if c.extra %}<h3 class="block-subtitle">In {{ there }}, not in {{ here }}</h3>
-      <ul class="db-list">{% for key in c.extra %}<li><code>{{ key }}</code></li>{% endfor %}</ul>{% endif %}
-      {% for key, table in differing %}
-      <h3 class="block-subtitle"><a {{ ui.nav(table.path) }}><code>{{ key }}</code></a></h3>
-      <ul class="db-list">{% for d in table.differences %}<li>{{ d }}</li>{% endfor %}</ul>
-      {% endfor %}
-  {%- endmacro %}
-  {% for origin in drift %}
-  {% call ui.section("class", origin.name, name="drift-" ~ loop.index, divider=true, attrs='id="' ~ (origin.name | urlencode) ~ '"') %}
-    <p class="summary"><a {{ ui.nav("origin:" ~ origin.name) }}>the file's page</a> · {{ origin.kind }} · {{ origin.steps | length }} step{% if origin.steps | length != 1 %}s{% endif %}</p>
-    {% if origin.warning %}<p class="notes-error">{{ origin.warning }}</p>{% endif %}
-    {% for link in origin.links %}
-    {% set c = origin.comparisons[link.database] %}
-    <div class="origin-link">
-      <div class="origin-link-head">
-        <a {{ ui.nav(link.database) }}><code>{{ db_place(link.database) }}</code></a>
-        {% for how in link.how %}<span class="db-mark origin-how-{{ how }}" title="{{ HOW[how][1] }}">{{ HOW[how][0] }}</span>{% endfor %}
-        {% if link.declared %}<span class="summary">in <code>{{ link.declared }}</code></span>{% endif %}
-        {% if origin.generated and origin.generated.at %}{% set g = origin.generated %}<span class="summary" title="When the dump was made, and when the database was last read">{% if g.source == "dump" and not g.zone %}dump made {{ g.written }} (no time zone){% else %}dump {{ g.at | age }}{% if g.source == "git" %} (in the repository){% endif %}{% endif %} · database read {{ origin.read_at.get(link.database, "") | age }}</span>{% endif %}
-        <span class="origin-link-actions">
-          {% if "chosen" in link.how %}{{ choose(origin.name, link.database, "", "Forget my choice", "cancel") }}{% endif %}
-          {{ choose(origin.name, link.database, "0", "Unlink", "remove") }}
-        </span>
-      </div>
-      {% if link.history %}{% set h = link.history %}
-      <p class="origin-history">{{ h.applied }} of {{ h.steps }} steps applied (version <code>{{ h.version }}</code>)
+  {% elif tab == "diff" %}
+  <p class="tab-description">Two places compared, each chosen down its trail: a file of the project (its SQL, migrations, ORM models or dump, as it ends once every step is applied) or a database read, a whole one, a schema, or one table or view. Choosing a file fills B with the database it created (by the migration tool's history table, or the configuration naming it); B can be changed to any other place, a staging database say. Two schemas or two tables of different names are compared with each other. Computed when the page opens: nothing is kept.</p>
+  {% set HOW = {"history": ("by its history", "The database's own history table of this tool records these steps as applied."),
+                "declared": ("by its configuration", "The origin's configuration, or a connection declared in its folder, names this database."),
+                "related": ("through its migrations", "The ORM's migrations created this database: its models describe the same one.")} %}
+  {# One side of the comparison, a form of its own: the kind of place (buttons), then one autocomplete field
+     per level (Focus's: type a part of the name or path, ↑ ↓ and Enter, or a click), each listing what the
+     field before it holds. A choice redraws the page; the fields under a changed one empty (web.diff_context). #}
+  {% macro diff_side(side, label) -%}
+  {% set boxes = diff_trails[side] %}
+  <form class="diff-side" hx-get="/databases/diff" hx-target="#content" hx-push-url="true" hx-trigger="picked">
+    <span class="diff-spine">Trail {{ label }}</span>
+    <div class="diff-side-body">
+    {% if side == "b" %}<input type="hidden" name="a" value="{{ diff_a }}"><input type="hidden" name="ga" value="{{ diff_group.a }}">{% endif %}
+    <input type="hidden" name="view" value="trails">
+    <div class="diff-fields">
+    {% set kinds = [] %}{% for key, name in diff_groups %}{% set _ = kinds.append({"path": key, "name": name, "role": "kind-" ~ key}) %}{% endfor %}
+    {{ ui.pick_field("Kind of " ~ label, "g" ~ side, "diff-kind-" ~ side, kinds, value=diff_group[side], placeholder="Kind…", required=true,
+                     icon=true, clearable=false) }}<span class="sep">›</span>
+    {% for box in boxes %}
+    {% if not loop.first %}<span class="sep">›</span>{% endif %}
+    {{ ui.pick_field(box.title, side ~ loop.index0, "diff-" ~ side ~ "-" ~ loop.index0, box.options, value=box.picked,
+                     placeholder=box.placeholder, required=loop.first, all=not loop.first) }}
+    {% endfor %}
+    </div>
+    {% if side == "b" %}
+    {% if diff_a and diff_b == diff_start.b and diff_start.how %}
+    <p class="summary diff-created">Created by <code>{{ "/".join(diff_a.removeprefix("origin:").partition("::")[0].split("/")[-2:]) }}</code>,
+      {% for how in diff_start.how %}<span class="db-mark origin-how-{{ how }}" title="{{ HOW[how][1] }}">{{ HOW[how][0] }}</span>{% endfor %}
+      {% if diff_start.history %}{% set h = diff_start.history %} · {{ h.applied }} of {{ h.steps }} steps applied (version <code>{{ h.version }}</code>)
         {%- if h.pending %} · pending: {% for step in h.pending %}<code>{{ step }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
         {%- if h.changed %} · <span class="notes-error-text">changed since applied: {% for step in h.changed %}<code>{{ step }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
-        {%- if h.failed %} · <span class="notes-error-text">failed: {{ h.failed | join(", ") }}</span>{% endif %}</p>
-      {% endif %}
-      {{ differences(c, origin, "the files", "the database", "the database is as the files say") }}
+        {%- if h.failed %} · <span class="notes-error-text">failed: {{ h.failed | join(", ") }}</span>{% endif %}{% endif %}</p>
+    {% endif %}
+    {% endif %}
     </div>
-    {% else %}<p class="empty">Linked to no database read.</p>
+  </form>
+  {%- endmacro %}
+  <div class="tab-frame">
+  {{ ui.tabs((("trails", "Trails", "/databases/diff?view=trails"), ("profiles", "Saved profiles", "/databases/diff?view=profiles")), diff_view) }}
+  <div class="tab-body">
+  {% if diff_view == "profiles" %}
+  {% if not diff_profiles %}<p class="empty">No profile yet: compare two places in Trails, then Save profile.</p>{% endif %}
+  <div class="connection-cards">
+    {% for s in diff_profiles %}
+    <article class="connection-card diff-profile-card" hx-get="/databases/diff-profile-form?details={{ s.name | urlencode }}" hx-target="#page-dialog-body"
+             hx-trigger="click[!event.target.closest('.diff-profile-foot')]" role="button" tabindex="0" title="Details of {{ s.name }}">
+      <h3 title="{{ s.name }}">{{ ui.icon("diff") }}<span class="connection-name">{{ s.name }}</span></h3>
+      <p class="slice-of"><code>{{ s.names.a }}</code> × <code>{{ s.names.b }}</code>{% if s.ignore %} · ignoring {{ s.ignore | join(", ") }}{% endif %}</p>
+      {% if s.description %}<p class="connection-test">{{ s.description }}</p>{% endif %}
+      <footer class="diff-profile-foot">
+        <a class="diff-profile-icon" {{ ui.nav_url("/databases/diff?view=trails&profile=" ~ (s.name | urlencode)) }} aria-label="Open in Trails" data-tip="Open in Trails"><i class="bar-icon bar-icon-link"></i></a>
+        <form hx-post="/databases/diff-profile-delete" hx-target="#content" hx-confirm="Delete the profile {{ s.name }}? Its file in doc/diff/ is removed." data-confirm-title="Delete profile">
+          <input type="hidden" name="name" value="{{ s.name }}"><button type="submit" class="diff-profile-icon" aria-label="Delete" data-tip="Delete"><i class="bar-icon bar-icon-remove"></i></button></form>
+      </footer>
+    </article>
     {% endfor %}
-    {% if origin.related %}
-    <h3 class="block-subtitle">Same schema as <a {{ ui.nav("origin:" ~ origin.related) }}><code>{{ origin.related }}</code></a></h3>
-    <div class="origin-link">{{ differences(origin.comparisons["origin:" ~ origin.related], origin, "this origin", "the other", "both declare the same schema") }}</div>
-    {% endif %}
-    {% if origin.suggestions %}
-    <h3 class="block-subtitle">Suggested by its tables (the closest first)</h3>
-    {% for s in origin.suggestions %}
-    <div class="origin-link origin-suggestion"><div class="origin-link-head"><a {{ ui.nav(s.database) }}><code>{{ db_place(s.database) }}</code></a>
-      <span class="summary">{{ s.same }} of {{ s.total }} tables the same in everything · {{ s.matched }} by name</span>
-      <span class="origin-link-actions">{{ choose(origin.name, s.database, "1", "Link", "allow") }}</span></div></div>
-    {% endfor %}
-    {% endif %}
-    {% if origin.unlinked %}
-    <h3 class="block-subtitle">Unlinked by you</h3>
-    {% for database in origin.unlinked %}
-    <div class="origin-link"><div class="origin-link-head"><code>{{ db_place(database) }}</code>
-      <span class="origin-link-actions">{{ choose(origin.name, database, "", "Undo", "cancel") }}</span></div></div>
-    {% endfor %}
-    {% endif %}
-    <form class="graph-toolbar filters-line origin-link-form" hx-post="/databases/origin-link" hx-target="#content">
-      <input type="hidden" name="origin" value="{{ origin.name }}"><input type="hidden" name="linked" value="1">
-      {% call ui.form_field("Database", "A database read from the allowed connections that this origin describes: linked by hand, it wins over the other ways (history table, configuration); it can be unlinked again.", wide=False) %}
-      <select name="database" required><option value="">Choose…</option>{% for d in catalog_databases %}<option value="{{ d.path }}">{{ db_place(d.path) }}</option>{% endfor %}</select>{% endcall %}
-      <button type="submit" class="notes-button primary">Link</button>
-    </form>
-  {% endcall %}
-  {% else %}<p class="empty">The project has no SQL files, migrations nor ORM models declaring a schema.</p>
+  </div>
+  {% else %}
+  {% if diff_a and diff_b %}
+  <div class="diff-bar">
+    {% if diff_profile %}<span class="summary">Profile <b>{{ diff_profile.name }}</b>{% if diff_ignore %} · ignoring {{ diff_ignore | join(", ") }}{% endif %}</span>
+    <button type="button" class="notes-button" hx-get="/databases/diff-profile-form?profile={{ diff_profile.name | urlencode }}" hx-target="#database-dialog-body">Edit</button>
+    {% else %}<span class="summary">This comparison is not saved.</span>
+    <button type="button" class="notes-button primary" hx-get="/databases/diff-profile-form?a={{ diff_a | urlencode }}&b={{ diff_b | urlencode }}" hx-target="#database-dialog-body">Save profile</button>{% endif %}
+  </div>
+  {% endif %}
+  <div class="diff-places">{{ diff_side("a", "A") }}{{ diff_side("b", "B") }}</div>
+  {% endif %}
+  </div></div>
+  {% if diff_view == "trails" %}
+  {% if not diff_a %}<p class="empty">Choose A: a file of the project or a database.</p>
+  {% elif not diff_b %}<p class="empty">Nothing says which database {{ diff_a.removeprefix("origin:") }} created: choose B.</p>
+  {% elif diff.error %}<p class="notes-error">{{ diff.error }}</p>
+  {% else %}
+  {% set base = "/databases/diff?view=trails&a=" ~ (diff_a | urlencode) ~ "&b=" ~ (diff_b | urlencode) ~ "&show=" %}
+  <div class="tab-frame">
+  <nav class="tabs">{% for key, label in diff_tabs %}<a class="tab{% if key == diff_show %} current{% endif %}{% if not diff.tabs[key].count %} empty{% endif %}" {{ ui.nav_url(base ~ key) }}>{% if key == "only_a" %}Only in <code>{{ diff_names.a }}</code>{% elif key == "only_b" %}Only in <code>{{ diff_names.b }}</code>{% else %}{{ label }}{% endif %} <b>{{ diff.tabs[key].count }}</b></a>{% endfor %}</nav>
+  <div class="tab-body">
+  {% set shown = diff.tabs[diff_show] %}
+  {% for t in shown.tables %}
+  <section class="diff-table">
+    <h3 class="block-subtitle">{% if t.a or t.b %}<a {{ ui.nav(t.a or t.b) }}><code>{{ t.key }}</code></a>{% else %}<code>{{ t.key }}</code>{% endif %}
+      <span class="muted">{{ t.kind }}{% if t.whole %} · only in {{ diff_names.a if diff_show == "only_a" else diff_names.b }}{% endif %}</span>
+      {% if t.commits %}<a class="see-in-link diff-link" {{ ui.nav_url("/databases/evolution?a=" ~ ((t.origin ~ "@commit:" ~ t.commits[-1].hash) | urlencode) ~ "&b=" ~ ((t.origin ~ "@now") | urlencode)) }} title="The file's schema from its first commit touching this table to now">{{ ui.icon("database") }}Evolution</a>{% endif %}</h3>
+    {{ ui.diff_lines(t.lines, diff_names.a, diff_names.b) }}
+    {% if t.commits %}<p class="diff-commits">Commits: {% for c in t.commits %}<a class="diff-commit" {{ ui.nav_url("/git?commit=" ~ c.hash) }} title="{{ c.subject }} · {{ c.at | local_time }}">{{ c.short }}</a>{% endfor %}</p>{% endif %}
+  </section>
+  {% else %}<p class="empty">Nothing here: {% if diff_show == "only_a" %}{{ diff_names.b }} holds everything {{ diff_names.a }} holds{% elif diff_show == "only_b" %}{{ diff_names.a }} holds everything {{ diff_names.b }} holds{% else %}what both hold is the same{% endif %}.</p>
   {% endfor %}
+  </div></div>
+  {% endif %}
+  {% endif %}
   {% elif tab == "lint" %}
   <p class="tab-description">What in the databases' schema and in the project's migrations deserves a look: tables without a primary key, foreign keys without an index, relations only by name, destructive migration steps, and more — each rule's ? says why it matters and how to fix it. The databases read and the project's files are linted alike; the same finding in several of them is one row, Found in telling where. A finding you accept, with its reason, stays listed as accepted (the State filter shows it), kept in doc/lint/accepted.json with the project.</p>
   {# The counters of the open findings, by level and by rule: a click lists only those. #}

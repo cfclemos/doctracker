@@ -42,7 +42,7 @@
         {{ stat(db.allowed, "connections allowed", db_urls.connections) }}
         {{ stat(db.blocked, "blocked", db_urls.connections) }}
         {{ stat(db.failing, "failing", db_urls.connections) }}
-        {{ stat(db.differing, "of " ~ db.origins ~ " origins differ (Drift)", db_urls.drift) }}
+        {{ stat(db.differing, "of " ~ db.origins ~ " origins differ (Diff)", db_urls.diff) }}
       </div>
       <div class="dash-stats">
         {% for level, count in db.lint %}{{ stat(count, "lint " ~ level ~ ("" if count == 1 else "s"), db_urls.lint ~ "?f_level=" ~ level, level) }}{% endfor %}

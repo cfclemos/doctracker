@@ -942,7 +942,9 @@ async function drawDiagram(canvas, view, keep = null, data = null) {
     if (byId[focusId] || byId[`${focusId}.__init__`]) {
       const open = openFrames(view.levels);
       for (const node of whole.nodes) {
-        if (!node.frame) for (let up = node.parent; up; up = byId[up]?.parent) open.add(up);
+        if (node.frame) continue;
+        open.add(`unconnected:${node.parent || ""}`);  // the group of the boxes with no relation, where it holds them
+        for (let up = node.parent; up; up = byId[up]?.parent) open.add(up).add(`unconnected:${byId[up]?.parent || ""}`);
       }
       saveOpenFrames(view.levels, open);
     }
@@ -2314,6 +2316,61 @@ function initViews() {
 
 document.addEventListener("DOMContentLoaded", initViews);
 document.addEventListener("htmx:afterSettle", initViews);
+
+// A drawing's filters changed (their form sends with hx-swap="none"): nothing on screen is swapped. From
+// the answer, the filters' lists follow one another (the options of each pick_field and select, a select
+// turned on or off), the fields themselves left as they are; and the drawing is fetched at its new address
+// and redone in place, the old one shown until then.
+document.addEventListener("htmx:afterRequest", async (event) => {
+  const form = event.detail.elt;
+  if (!form?.matches?.(".graph-filter") || !event.detail.successful) return;
+  const row = form.closest(".graph-filters-row");
+  const fresh = new DOMParser().parseFromString(event.detail.xhr.responseText, "text/html")
+    .querySelector(".graph-filters-row[data-row-of=filters]");
+  // The page reloads itself (a change in the code, the Languages chosen) from its own address: now this one.
+  const page = form.closest("article[hx-get]");
+  const address = event.detail.pathInfo?.finalRequestPath || event.detail.pathInfo?.requestPath;
+  if (page && address && page.getAttribute("hx-get") !== address) {
+    page.setAttribute("hx-get", address);
+    htmx.process(page);
+  }
+  const canvas = row?.closest(".graph-area")?.querySelector(".graph-canvas");
+  if (!row || !fresh || !canvas) return;
+  for (const list of fresh.querySelectorAll("datalist[id]")) {
+    const here = row.querySelector(`datalist[id="${list.id}"]`);
+    if (here && here.innerHTML !== list.innerHTML) here.innerHTML = list.innerHTML;
+  }
+  for (const select of fresh.querySelectorAll("select[name]")) {
+    const here = row.querySelector(`select[name="${select.name}"]`);
+    if (!here) continue;
+    if (here.innerHTML !== select.innerHTML) here.innerHTML = select.innerHTML;
+    here.disabled = select.disabled;
+    here.title = select.title;
+  }
+  for (const input of fresh.querySelectorAll("input[type=hidden][name]")) {  // a pick_field let go by the server: emptied
+    const here = row.querySelector(`input[type=hidden][name="${input.name}"]`);
+    if (!here || here.value === input.value) continue;
+    here.value = input.value;
+    const shown = row.querySelector(`input[data-value="${here.id}"]`);
+    if (shown) {
+      shown.value = fresh.querySelector(`input[data-value="${here.id}"]`)?.value || "";
+      shown.defaultValue = shown.value;
+      const clear = shown.closest(".field-clearable")?.querySelector(".field-clear");
+      if (clear) clear.hidden = !shown.value;
+    }
+  }
+  const said = fresh.closest("html")?.querySelector(".graph-canvas")?.innerHTML || "";  // what the page says where nothing is drawn
+  if (fresh.dataset.drawingUrl === canvas.dataset.url && (canvas.dataset.url || canvas.innerHTML === said)) return;
+  canvas.dataset.url = fresh.dataset.drawingUrl;
+  canvas.dataset.focus = fresh.dataset.drawingFocus || "";
+  delete canvas.dataset.focusOpened;
+  const view = DIAGRAMS[canvas.dataset.view];
+  if (!view || !canvas.dataset.url) {  // nothing to draw (no Focus where one is needed): its message, the fields as they are
+    canvas.innerHTML = said;
+    return;
+  }
+  drawDiagram(canvas, view, null, await (await fetch(canvas.dataset.url)).json());
+});
 
 // Git page: branch graph at the top, in the style of the VS Code "Git Graph" extension, drawn as SVG:
 // one lane and one bright color per branch, filled commit dots (the checked-out HEAD hollow),

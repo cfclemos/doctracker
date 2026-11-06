@@ -197,15 +197,33 @@ document.addEventListener("input", (event) => {
   const clear = event.target.closest(".field-clearable")?.querySelector(".field-clear");
   if (!clear) return;
   clear.hidden = !event.target.value;
-  if (!event.target.value) event.target.dispatchEvent(new Event("change", { bubbles: true }));
+  if (event.target.value) return;
+  const hidden = event.target.dataset.value ? document.getElementById(event.target.dataset.value) : null;
+  if (hidden) {  // a pick_field erased: nothing chosen any more, its form sent at once
+    if (!hidden.value) return;
+    hidden.value = "";
+    event.target.defaultValue = "";
+    hidden.dispatchEvent(new Event("picked", { bubbles: true }));
+    return;
+  }
+  event.target.dispatchEvent(new Event("change", { bubbles: true }));
 });
 document.addEventListener("click", (event) => {
   const clear = event.target.closest(".field-clear");
   if (!clear) return;
   event.preventDefault();
-  const input = clear.closest(".field-clearable").querySelector("input");
+  const input = clear.closest(".field-clearable").querySelector("input:not([type=hidden])");
   input.value = "";
   clear.hidden = true;
+  const hidden = input.dataset.value ? document.getElementById(input.dataset.value) : null;
+  if (hidden) {  // a name field: emptied and applied at once, no list opened
+    input.defaultValue = "";
+    hidden.value = "";
+    fitField(input);
+    focusMenu(input).hidden = true;
+    hidden.dispatchEvent(new Event("picked", { bubbles: true }));
+    return;
+  }
   input.focus();
   input.dispatchEvent(new Event("change", { bubbles: true }));
 });
@@ -214,7 +232,7 @@ document.addEventListener("click", (event) => {
 // data-options (a datalist kept out of the browser's own list): what has the text typed in its name or
 // path, names that start with it first, each with its kind's icon, its name and its path.
 // ↑ ↓ move, Enter or a click chooses (the form then draws again), Escape closes.
-const FOCUS_CHOICES = 50;
+const FOCUS_CHOICES = 100;  // options drawn at a time; the next ones as the list is scrolled to its end
 function focusMenu(input) {
   let menu = input.parentElement.querySelector(".focus-menu");
   if (!menu) {
@@ -228,17 +246,52 @@ function focusMenu(input) {
 function showFocusChoices(input) {
   const text = input.value.trim().toLowerCase();
   const options = [...(document.getElementById(input.dataset.options)?.options || [])];
-  const found = options.filter((option) => !text || option.value.toLowerCase().includes(text))
-    .sort((a, b) => Number(!a.dataset.name.toLowerCase().startsWith(text)) - Number(!b.dataset.name.toLowerCase().startsWith(text)))
-    .slice(0, FOCUS_CHOICES);
+  const shown = input.dataset.value && text === (input.defaultValue || "").toLowerCase() ? "" : text;  // the name chosen: list all
+  const found = options.filter((option) => !shown || option.value.toLowerCase().includes(shown) || option.dataset.name.toLowerCase().includes(shown))
+    .sort((a, b) => Number(!a.dataset.name.toLowerCase().startsWith(text)) - Number(!b.dataset.name.toLowerCase().startsWith(text)));
   const menu = focusMenu(input);
-  menu.innerHTML = found.map((option, index) => `<li role="option" data-value="${escapeHtml(option.value)}"${index === 0 ? ' class="active"' : ""}>
-    <span class="icon icon-${escapeHtml(option.dataset.role)}">${escapeHtml(option.dataset.symbol)}</span>
-    <strong>${escapeHtml(option.dataset.name)}</strong><span class="focus-menu-path">${escapeHtml(option.value)}</span></li>`).join("")
-    || '<li class="focus-menu-empty">Nothing has that name</li>';
+  menu.found = found;  // every option found: drawn FOCUS_CHOICES at a time (moreFocusChoices)
+  menu.innerHTML = found.length ? "" : '<li class="focus-menu-empty">Nothing has that name</li>';
+  menu.scrollTop = 0;
+  moreFocusChoices(menu);
   menu.hidden = false;
 }
+function moreFocusChoices(menu) {
+  const drawn = menu.querySelectorAll("li[data-value]").length;
+  const next = (menu.found || []).slice(drawn, drawn + FOCUS_CHOICES);
+  menu.querySelector(".focus-menu-more")?.remove();
+  menu.insertAdjacentHTML("beforeend", next.map((option, index) => `<li role="option" data-value="${escapeHtml(option.value)}"${drawn + index === 0 ? ' class="active"' : ""}>
+    <span class="icon icon-${escapeHtml(option.dataset.role)}">${escapeHtml(option.dataset.symbol)}</span>
+    <strong>${escapeHtml(option.dataset.name)}</strong><span class="focus-menu-path">${escapeHtml(option.value)}</span></li>`).join(""));
+  const left = (menu.found || []).length - drawn - next.length;
+  if (left > 0) menu.insertAdjacentHTML("beforeend", `<li class="focus-menu-more">${left} more…</li>`);
+}
+document.addEventListener("scroll", (event) => {  // near the end of a list: its next options
+  const menu = event.target;
+  if (menu.classList?.contains("focus-menu") && menu.scrollTop + menu.clientHeight >= menu.scrollHeight - 40) moreFocusChoices(menu);
+}, true);
+// A pick_field (macros.html) grows and shrinks with what it holds (or its placeholder).
+function fitField(input) {
+  input.style.width = `${Math.max((input.value || input.placeholder).length, 4) + 4}ch`;
+}
+document.addEventListener("input", (event) => {
+  if (event.target.matches("input[data-value]")) fitField(event.target);
+});
 function chooseFocus(input, value) {
+  // A pick_field (macros.html): it shows the name, its hidden field sends the path.
+  const hidden = input.dataset.value ? document.getElementById(input.dataset.value) : null;
+  if (hidden) {
+    hidden.value = value;
+    const option = [...(document.getElementById(input.dataset.options)?.options || [])].find((o) => o.value === value);
+    input.value = value && option ? option.dataset.name : "";
+    input.defaultValue = input.value;  // what it holds now: leaving the field keeps it (see focusout)
+    const clear = input.closest(".field-clearable")?.querySelector(".field-clear");
+    if (clear) clear.hidden = !input.value;
+    fitField(input);
+    focusMenu(input).hidden = true;
+    hidden.dispatchEvent(new Event("picked", { bubbles: true }));  // its form asks for the page again
+    return;
+  }
   input.value = value;
   focusMenu(input).hidden = true;
   const clear = input.closest(".field-clearable")?.querySelector(".field-clear");
@@ -252,7 +305,15 @@ document.addEventListener("input", (event) => {
   if (event.target.matches("input[data-options]")) showFocusChoices(event.target);
 });
 document.addEventListener("focusout", (event) => {
-  if (event.target.matches("input[data-options]")) focusMenu(event.target).hidden = true;
+  if (!event.target.matches("input[data-options]")) return;
+  focusMenu(event.target).hidden = true;
+  const input = event.target;
+  if (input.dataset.value && input.value !== input.defaultValue) {  // left without a choice: as it was
+    input.value = input.defaultValue;
+    const clear = input.closest(".field-clearable")?.querySelector(".field-clear");
+    if (clear) clear.hidden = !input.value;
+    fitField(input);
+  }
 });
 document.addEventListener("mousedown", (event) => {  // before the field loses the focus
   const item = event.target.closest(".focus-menu li[data-value]");
@@ -269,8 +330,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     if (menu.hidden) return showFocusChoices(input);
-    const next = items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
-    items.forEach((item) => item.classList.toggle("active", item === next));
+    if (event.key === "ArrowDown" && at >= items.length - 2) moreFocusChoices(menu);  // the next ones, before the end
+    const all = [...menu.querySelectorAll("li[data-value]")];
+    const next = all[(at + (event.key === "ArrowDown" ? 1 : all.length - 1)) % all.length];
+    all.forEach((item) => item.classList.toggle("active", item === next));
     next?.scrollIntoView({ block: "nearest" });
   } else if (event.key === "Enter" && !menu.hidden && items[at]) {
     event.preventDefault();

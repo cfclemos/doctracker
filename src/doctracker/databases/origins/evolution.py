@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 
 from doctracker.databases.origins.collection import ORIGIN_PREFIX, as_collection
-from doctracker.databases.origins.compare import _default, _type
+from doctracker.databases.origins.compare import _default, _type, sql_key
 from doctracker.databases.origins.sql import extract_origins, read_origin
 
 MIGRATION_KINDS = ("flyway", "golang-migrate", "dbmate", "prisma", "alembic", "django migrations")
@@ -215,13 +215,15 @@ def _local(path: str) -> str:
 _RENAMED = re.compile(r"^renamed column (\S+) to (\S+) in (\S+)$")
 
 
-def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = None) -> dict:
+def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = None, align: tuple[str, str] | None = None) -> dict:
     """Where two schemas differ: the tables and views of each, aligned by name.
 
     Args:
-        a: The schema at the first moment (a collection, see `schema_at`).
+        a: The schema at the first moment (a collection, see `schema_at`), or any place's (DATABASES › Diff).
         b: The schema at the second.
         renames: Columns renamed between them (`table`, `old`, `new`), told by the steps.
+        align: `(b's, a's)`: a schema or table of B compared with one of A of another name
+            (`sales.clients` with `public.customers`); the keys are then A's.
 
     Returns:
         `tables`: every table and view of either, in name order, each with `key`, `kind`, `status`
@@ -229,30 +231,37 @@ def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = N
         (each `name`, `status` — added, removed, renamed, changed, same —, `a` and `b`: its type, null and
         default on each side, and `changes`) and `changes` (keys, indexes, checks, comment); `counts` by status.
     """
-    def tables(collection: dict) -> dict[str, dict]:
+    def keyed(path: str, aligned: bool) -> str:
+        key = _local(path).lower()
+        if aligned and align and (key == align[0].lower() or key.startswith(f"{align[0].lower()}.")):
+            key = align[1].lower() + key[len(align[0]):]
+        return key
+
+    def tables(collection: dict, aligned: bool = False) -> dict[str, dict]:
         held = {}
         for obj in collection["objects"]:
             if obj["kind"] in ("table", "view", "materialized view", "foreign table"):
-                held[_local(obj["path"]).lower()] = obj
+                held[keyed(obj["path"], aligned)] = obj
         return held
 
-    def columns(collection: dict) -> dict[str, list[dict]]:
+    def columns(collection: dict, aligned: bool = False) -> dict[str, list[dict]]:
         held: dict[str, list[dict]] = {}
         for obj in collection["objects"]:
             if obj["kind"] == "column":
-                held.setdefault(_local(obj["parent"]).lower(), []).append(obj)
+                held.setdefault(keyed(obj["parent"], aligned), []).append(obj)
         return {key: sorted(found, key=lambda c: c["data"].get("position", 0)) for key, found in held.items()}
 
-    def described(column: dict | None, dialect: str) -> dict | None:
+    def described(column: dict | None, dialect: str, keyed: tuple = ()) -> dict | None:
         if column is None:
             return None
         data = column["data"]
+        nullable = bool(data.get("nullable", True)) and column["name"].lower() not in keyed  # a key column is never null (SQLite says it may be)
         return {"type": data.get("type", ""), "nullable": bool(data.get("nullable", True)), "default": data.get("default") or "",
-                "path": column["path"], "compared": (_type(str(data.get("type", "")), dialect), bool(data.get("nullable", True)),
+                "path": column["path"], "compared": (_type(str(data.get("type", "")), dialect), nullable,
                                                     _default(data.get("default") or "", dialect))}
 
     dialect_a, dialect_b = a.get("kind") or "postgres", b.get("kind") or "postgres"
-    in_a, in_b, columns_a, columns_b = tables(a), tables(b), columns(a), columns(b)
+    in_a, in_b, columns_a, columns_b = tables(a), tables(b, True), columns(a), columns(b, True)
     renamed = {(table.lower(), old.lower()): new.lower() for table, old, new in renames or []}
     found, counts = [], {"added": 0, "removed": 0, "changed": 0, "same": 0}
     for key in sorted(set(in_a) | set(in_b)):
@@ -267,6 +276,8 @@ def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = N
             counts[entry["status"]] += 1
             found.append(entry)
             continue
+        keyed_a = tuple(c.lower() for c in (first["data"].get("primary_key") or {}).get("columns") or [])
+        keyed_b = tuple(c.lower() for c in (second["data"].get("primary_key") or {}).get("columns") or [])
         old = {c["name"].lower(): c for c in columns_a.get(key, [])}
         new = {c["name"].lower(): c for c in columns_b.get(key, [])}
         table_name = key.rsplit(".", 1)[-1]
@@ -275,13 +286,15 @@ def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = N
             before_name = next((o for o, n in moved.items() if n == name), name)
             if name in moved:  # its old name: shown with the new one
                 continue
-            before, after = described(old.get(before_name), dialect_a), described(new.get(name), dialect_b)
+            before, after = described(old.get(before_name), dialect_a, keyed_a), described(new.get(name), dialect_b, keyed_b)
             changes = []
             if before and after:
                 if before_name != name:
                     changes.append(f"renamed from {old[before_name]['name']}")
                 for index, what in enumerate(("type", "null", "default")):
-                    if before["compared"][index] != after["compared"][index]:
+                    view = entry["kind"] in ("view", "materialized view")  # a view's column: only its type, when both give one
+                    if before["compared"][index] != after["compared"][index] and (what != "type" or before["type"] and after["type"]) \
+                            and not (view and what != "type"):
                         shown = {"type": (before["type"], after["type"]), "null": ("null allowed" if before["nullable"] else "not null",
                                  "null allowed" if after["nullable"] else "not null"), "default": (before["default"] or "none", after["default"] or "none")}[what]
                         changes.append(f"{what}: {shown[0]} → {shown[1]}")
@@ -297,8 +310,10 @@ def schema_diff(a: dict, b: dict, renames: list[tuple[str, str, str]] | None = N
                                      ("index", "indexes", lambda i: i.get("name") or ", ".join(i.get("columns") or [])),
                                      ("check", "checks", lambda c: c.get("check") or ""),
                                      ("unique", "unique", lambda u: f"({', '.join(u.get('columns') or [])})")):
-            held_a = {name_of(item).lower(): name_of(item) for item in data_a.get(items) or []}
-            held_b = {name_of(item).lower(): name_of(item) for item in data_b.get(items) or []}
+            def key_of(text: str, dialect: str, what=what) -> str:  # a check by its rule, however each database writes it
+                return sql_key(text, dialect) if what == "check" else text.lower()
+            held_a = {key_of(name_of(item), dialect_a): name_of(item) for item in data_a.get(items) or []}
+            held_b = {key_of(name_of(item), dialect_b): name_of(item) for item in data_b.get(items) or []}
             entry["changes"] += [f"{what} {held_b[k]} added" for k in sorted(set(held_b) - set(held_a))]
             entry["changes"] += [f"{what} {held_a[k]} removed" for k in sorted(set(held_a) - set(held_b))]
         if (data_a.get("comment") or "") != (data_b.get("comment") or ""):

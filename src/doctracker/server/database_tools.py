@@ -12,9 +12,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from doctracker.databases import CatalogStore, ConnectionStore, Locked, collect_connection
 from doctracker.databases.code_links import code_use
-from doctracker.databases.origins import comparisons, database_object as object_with_origins, describe_origins
+from doctracker.databases.origins import compare, database_object as object_with_origins, default_b, describe_origins
 from doctracker.databases.origins.evolution import moments, renames_between, schema_at, schema_diff as diff_schemas
 from doctracker.databases.lint import LEVELS, RULES, Lint
+from doctracker.databases.diff_profiles import IGNORABLE, ProfileStore
 from doctracker.databases.slices import SliceStore, resolve as resolve_slice
 from doctracker.graph import MAX_CALL_DEPTH, er_diagram, trim_view
 from doctracker.server.state import DocState
@@ -171,6 +172,7 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         return trim_view(graph, kinds, hide_unconnected)
 
     slices = SliceStore(project_root)  # the same files the wiki keeps, doc/slices/
+    profiles = ProfileStore(project_root)  # the Diff's comparison profiles, the same files the wiki keeps (doc/diff/)
     lint = Lint(project_root, catalog, slices)  # the same rules and accepted findings (doc/lint/) as the wiki
 
     @mcp.tool()
@@ -323,8 +325,8 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
         Returns:
             Each origin's `name` (its folder or file), `kind`, `dialect`, `steps` (how many), `unread`
             (statements not understood), `objects` (how many it ends with) and `links`: the databases it
-            describes, each with `how` the link was made (`chosen` by the user, the tool's `history`
-            table, `declared` in its configuration) and what its history says (steps applied, pending).
+            describes, each with `how` the link was made (the tool's `history` table, `declared` in its
+            configuration, `related`: an ORM's models through its migrations) and what its history says (steps applied, pending).
             A dump also has `tool`, `dump` (what it writes of itself, each with its line), `generated`
             (`at`, and `source`: `dump` with its line, `git` with its commit, or none) and, for one
             database of a dump holding several (`<file>@<database>`: `@`, not `#`, which a URL cuts), `part_of` and `lines`.
@@ -347,13 +349,101 @@ def register_database_tools(mcp: MCPServer, connections: ConnectionStore, catalo
             name: The origin's name, from `database_origins`.
 
         Returns:
-            The origin with `steps`, `objects`, `links`, `unlinked`, `suggestions`, `warning` and
-            `differences` by database (`missing`, `extra`, and per table its `differences`); an ORM's
-            also by `origin:<name>`, its other origin (its models against its migrations: `related`).
+            The origin with `steps`, `objects`, `links`, `suggestions`, `warning` and `differences` by
+            database: the tabs of `database_diff` (`only_a`, `only_b`, `different`); an ORM's also by
+            `origin:<name>`, its other origin (its models against its migrations: `related`).
         """
         origin = next((o for o in state.origins if o["name"] == name), None)
         if origin is None:
             raise ToolError(f"No origin {name}. List them with database_origins.")
         described = describe_origins(state.origins, catalog, connections.connections(), project_root)[name]
+        place = f"origin:{name}"  # where it differs from each database it describes, and from its ORM's other origin
+        others = [link["database"] for link in described["links"]] + ([f"origin:{described['related']}"] if described.get("related") else [])
         return {**origin, **described,
-                "differences": comparisons(origin, described, catalog)}
+                "differences": {other: compare(catalog, place, other)["tabs"] for other in others}}
+
+    @mcp.tool()
+    @refusals_reported
+    def database_diff(a: str = "", b: str = "", profile: str = "") -> dict:
+        """Compare two places of the databases, as DATABASES › Diff shows them: an origin's schema (once
+        every step is applied) or a live database's, a whole one, a schema or one table or view; its
+        tables (columns, keys, indexes, checks), views (their query), routines (arguments, returns, code),
+        triggers, enums, types, domains and sequences.
+
+        Args:
+            profile: A saved profile's name (from `list_diff_profiles`): its A, B and what it ignores;
+                `a` and `b` then left empty.
+            a: Place A: `origin:<name>` (from `database_origins`), `origin:<name>::<schema>[.<table>]`, or a
+                live one, `db:<server>/<database>[/<schema>[.<table>]]` (see `database_level`).
+            b: Place B; empty: for an origin's place, the same place in the database the origin created.
+
+        Returns:
+            `a`, `b`, `how` B was found when left empty (and the tool's `history` there), `levels`, `error`,
+            and `tabs`: `only_a`, `only_b` and `different`, each with its `count` and `tables` (`key`,
+            `kind`, `a`, `b`, `whole`, `lines` of `mark` - A's, + B's, ~ the table's own change, and
+            `text`; `commits` that changed it in an origin).
+        """
+        found = profiles.profile(profile) if profile else None
+        if profile and found is None:
+            raise ToolError(f"No profile named {profile}. List them with list_diff_profiles.")
+        a, b = (found["a"], found["b"]) if found else (a, b)
+        if not a:
+            raise ToolError("Give a (a place) or profile.")
+        start = default_b(a, state.origins, catalog, connections.connections(), project_root) if not b else {}
+        b = b or start.get("b", "")
+        if not b:
+            raise ToolError(f"Nothing says which database {a} created: give b (see database_level).")
+        return {**compare(catalog, a, b, project_root, (found or {}).get("ignore", [])), "how": start.get("how", []),
+                "history": start.get("history")}
+
+    @mcp.tool()
+    @refusals_reported
+    def list_diff_profiles() -> list[dict]:
+        """List the comparison profiles of DATABASES › Diff: two places compared, kept with a name in doc/diff/.
+
+        Returns:
+            Each profile's `name`, `description`, `a`, `b`, `ignore` (what its comparison leaves out),
+            `created`, `changed` and `file`. Compare one with `database_diff(profile=...)`.
+        """
+        return profiles.profiles()
+
+    @mcp.tool()
+    @refusals_reported
+    def save_diff_profile(name: str, a: str, b: str, description: str = "", ignore: list[str] | None = None,
+                          previous: str = "") -> dict:
+        """Keep a comparison as a profile, shown in DATABASES › Diff › Saved profiles (a file in doc/diff/).
+
+        Args:
+            name: Its name.
+            a: Place A (see `database_diff`).
+            b: Place B.
+            description: What the comparison is for.
+            ignore: What it leaves out: `checks`, `comments`, `indexes`.
+            previous: The name of the profile it changes, when it changes or renames one.
+
+        Returns:
+            The profile as kept.
+        """
+        unknown = [key for key in ignore or [] if key not in IGNORABLE]
+        if unknown:
+            raise ToolError(f"Cannot ignore {', '.join(unknown)}: only {', '.join(IGNORABLE)}.")
+        try:
+            return profiles.save(name, a, b, description, ignore, previous)
+        except ValueError as problem:
+            raise ToolError(str(problem)) from problem
+
+    @mcp.tool()
+    @refusals_reported
+    def delete_diff_profile(name: str) -> dict:
+        """Delete a comparison profile (its file in doc/diff/).
+
+        Args:
+            name: The profile's name.
+
+        Returns:
+            `deleted`: its name.
+        """
+        if profiles.profile(name) is None:
+            raise ToolError(f"No profile named {name}.")
+        profiles.delete(name)
+        return {"deleted": name}

@@ -20,21 +20,15 @@
 {%- endmacro %}
 {# The filters architecture and classes share: a project, a focus and how far from it. #}
 {% macro filters(url, targets, placeholder) -%}
-<form class="graph-filter" hx-get="{{ url }}" hx-target="#content" hx-push-url="true"
-      hx-trigger="change">
+<form class="graph-filter" hx-get="{{ url }}" hx-swap="none" hx-headers='{"X-Part": "drawing"}' hx-push-url="true"
+      hx-trigger="{{ ui.pick_trigger }}">
   <label class="field"><span class="field-label">Project</span>
     <select name="project">
       <option value="">All</option>
       {% for group in project_groups %}<option value="{{ group.id }}"{% if params.project == group.id %} selected{% endif %}>{{ group.label }}</option>{% endfor %}
     </select>
   </label>
-  <label class="field graph-focus"><span class="field-label">Focus</span>
-    <span class="field-clearable">
-      <input name="focus" data-options="focus-targets" value="{{ params.focus or '' }}" placeholder="{{ placeholder }}" class="focus-input" autocomplete="off">
-      <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
-    </span>
-    {{ ui.focus_options("focus-targets", targets) }}
-  </label>
+  {{ ui.pick_field("Focus", "focus", "focus-targets", targets, value=params.focus or "", placeholder=placeholder) }}
   <label class="field"><span class="field-label">Depth</span>
     <select name="depth">{% for step in range(1, max_call_depth + 1) %}<option value="{{ step }}"{% if (params.depth or max_call_depth | string) == step | string %} selected{% endif %}>{{ step }}</option>{% endfor %}</select>
   </label>
@@ -46,8 +40,7 @@
               ("calls", "Functions and Calls", "/code/diagrams/calls")), view) }}
   <p class="tab-description">{{ texts[view] }}</p>
   {% if view == "architecture" %}
-  {# The filters of every tab on one line; narrower, the name fields (Focus, Path to) go to a second line;
-     narrowest, one field per line. #}
+  {# The filters of every tab on one line; a field with no room left goes, whole, to the next line. #}
   {% set bar_filters %}
   <div class="graph-toolbar filters-line">
     {{ filters("/code/diagrams/architecture", module_targets, "A module or file…") }}
@@ -79,21 +72,8 @@
   {% else %}
   {% set bar_filters %}
   <div class="graph-toolbar filters-line">
-    <form class="graph-filter" hx-get="/code/diagrams/calls" hx-target="#content" hx-push-url="true" hx-trigger="change">
-      <label class="field graph-focus"><span class="field-label">Focus</span>
-        <span class="field-clearable">
-          <input name="focus" data-options="call-targets" value="{{ params.focus or '' }}" placeholder="A name or path…" class="focus-input" autocomplete="off">
-          <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.focus %} hidden{% endif %}>×</button>
-        </span>
-        {{ ui.focus_options("call-targets", call_targets) }}
-      </label>
-      {# With Path to, the shortest calls from the focus to it, instead of its neighbourhood. #}
-      <label class="field graph-focus"><span class="field-label">Path to</span>
-        <span class="field-clearable">
-          <input name="to" data-options="call-targets" value="{{ params.to or '' }}" placeholder="Another function…" class="focus-input" autocomplete="off">
-          <button type="button" class="field-clear" aria-label="Clear" title="Clear"{% if not params.to %} hidden{% endif %}>×</button>
-        </span>
-      </label>
+    <form class="graph-filter" hx-get="/code/diagrams/calls" hx-swap="none" hx-headers='{"X-Part": "drawing"}' hx-push-url="true" hx-trigger="{{ ui.pick_trigger }}">
+      {{ ui.pick_field("Focus", "focus", "call-targets", call_targets, value=params.focus or "", placeholder="A name or path…") }}
       <label class="field"><span class="field-label">Depth</span>
         <select name="depth">
           {% for depth in range(1, max_call_depth + 1) %}
@@ -113,14 +93,13 @@
   </div>
   {% endset %}
   {# Nothing is drawn until a focus is chosen: the filters stay open and the drawing says so. #}
-  {% set caption %}{% if params.focus %}<span>Focus</span> <code>{{ params.focus }}</code>{% if params.to %} <span>Path to</span> <code>{{ params.to }}</code>{% endif %}{% endif %}{% endset %}
+  {% set caption %}{% if params.focus %}<span>Focus</span> <code>{{ params.focus }}</code>{% endif %}{% endset %}
   {% call ui.view_canvas("calls", data_url if params.focus else "", params.focus, layouts=true, filters=bar_filters, filters_open=true, details=true,
                          caption=caption | trim,
-                         empty="" if params.focus else "Choose a function, method or class in Focus to see its calls.") %}
+                         empty="" if params.focus else "Choose a function, method or class in Focus to see its calls; Direction: what it calls, what calls it, or both.") %}
     <span title="The function, method or class chosen in Focus"><i class="box call-focus"></i>focus</span>
     <span title="What the focus calls, on its right"><i class="box call-callee"></i>called by the focus</span>
     <span title="What calls the focus, on its left"><i class="box call-caller"></i>calls the focus</span>
-    <span title="On a call path between the focus and Path to"><i class="box call-path"></i>on the path</span>
     {# Each kind of relation: a click turns its lines off or on. #}
     {{ ui.relation_kinds(("calls", "refers", "template", "css-class", "route")) }}
   {% endcall %}

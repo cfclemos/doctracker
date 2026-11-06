@@ -33,8 +33,7 @@ CREATE TABLE IF NOT EXISTS relations (
   target TEXT NOT NULL, kind TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS relations_source ON relations (collection, source);
 CREATE INDEX IF NOT EXISTS relations_target ON relations (collection, target);
-CREATE TABLE IF NOT EXISTS origin_links (
-  origin TEXT NOT NULL, database TEXT NOT NULL, linked INTEGER NOT NULL, PRIMARY KEY (origin, database));
+DROP TABLE IF EXISTS origin_links;
 CREATE TABLE IF NOT EXISTS unavailable (
   collection INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE, what TEXT NOT NULL, reason TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS samples (
@@ -45,8 +44,7 @@ CREATE TABLE IF NOT EXISTS data_relations (
 """
 """Tables: `collections` (per connection, its last successful collection and a later failed one, with
 the other `databases` on the server as JSON and a `fingerprint` of what was read), `objects` (what the collection read, `data` as JSON),
-`relations` and `unavailable`; `origin_links`, the links between an origin (SQL files, migrations) and a
-database chosen by hand (`linked` 1) or taken away by hand (0); `samples`, each table's sample (`data` as
+`relations` and `unavailable`; `samples`, each table's sample (`data` as
 JSON, see `samples.table_sample`) with the `signature` of the columns it was taken from; `data_relations`,
 the `contained in` relations found through the samples, by the source's connection."""
 
@@ -476,28 +474,6 @@ class CatalogStore:
                 row.update(kind=holder["kind"], columns=n.get("column", 0), rows=data.get("rows"), size=data.get("bytes"))
             rows.append(row)
         return {"at": at, "level": level, "rows": rows}
-
-    def origin_choices(self) -> dict[tuple[str, str], bool]:
-        """The links between origins and databases chosen by hand: True linked, False taken away."""
-        with self._connect() as connection:
-            return {(origin, database): bool(linked) for origin, database, linked in connection.execute(
-                "SELECT origin, database, linked FROM origin_links")}
-
-    def choose_origin_link(self, origin: str, database: str, linked: bool | None) -> None:
-        """Link an origin to a database by hand (True), take a link away (False), or leave it to the
-        other layers again (None).
-
-        Args:
-            origin: The origin's name (its folder or file).
-            database: The database's path (`db:<server>/<database>`).
-            linked: The choice.
-        """
-        with self._connect(write=True) as connection:
-            if linked is None:
-                connection.execute("DELETE FROM origin_links WHERE origin = ? AND database = ?", (origin, database))
-            else:
-                connection.execute("INSERT OR REPLACE INTO origin_links VALUES (?, ?, ?)", (origin, database, int(linked)))
-        self._on_change()
 
     def searchable(self) -> dict[str, dict]:
         """The objects of the databases as last read, as search documents.

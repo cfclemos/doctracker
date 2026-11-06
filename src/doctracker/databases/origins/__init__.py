@@ -24,10 +24,10 @@ each origin describes) and `compare` (where they differ, both ways).
 """
 
 from doctracker.databases.origins.collection import ORIGIN_PREFIX, as_collection
-from doctracker.databases.origins.compare import compare_origin, comparisons, database_object, declared_by, found_in
+from doctracker.databases.origins.compare import DIFF_TABS, compare, database_object, declared_by, default_b, found_in, place_level
 from doctracker.databases.origins.links import HISTORY_TOOLS, describe_origins, flyway_checksum
 from doctracker.databases.origins.sql import DEFAULT_SCHEMAS, extract_origins, find_origins, guess_dialect, read_origin, split_statements
 
-__all__ = ["DEFAULT_SCHEMAS", "HISTORY_TOOLS", "ORIGIN_PREFIX", "as_collection", "compare_origin", "comparisons", "database_object", "declared_by",
-           "describe_origins", "extract_origins", "find_origins", "flyway_checksum", "found_in", "guess_dialect", "read_origin",
+__all__ = ["DEFAULT_SCHEMAS", "DIFF_TABS", "HISTORY_TOOLS", "ORIGIN_PREFIX", "as_collection", "compare", "database_object", "declared_by",
+           "default_b", "describe_origins", "extract_origins", "find_origins", "flyway_checksum", "found_in", "guess_dialect", "place_level", "read_origin",
            "split_statements"]

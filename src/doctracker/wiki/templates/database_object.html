@@ -179,7 +179,7 @@
   {% for d in item.declared_by or [] %}
   <div class="origin-link"><div class="origin-link-head"><a {{ ui.nav("origin:" ~ d.origin) }}><code>{{ d.origin }}</code></a>
     <span class="summary">{{ d.kind }} · created <code>{{ d.object.created.file.rsplit("/", 1)[-1] }}:{{ d.object.created.line }}</code>{% if d.object.changed != d.object.created %} · last changed <code>{{ d.object.changed.file.rsplit("/", 1)[-1] }}:{{ d.object.changed.line }}</code>{% endif %}</span></div>
-    {% if d.differences %}<ul class="db-list">{% for x in d.differences %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<p class="summary">As the files say.</p>{% endif %}</div>
+    {% if d.lines %}{{ ui.diff_lines(d.lines, d.names.a, d.names.b) }}{% else %}<p class="summary">As the files say.</p>{% endif %}</div>
   {% else %}<p class="empty">No origin linked to this database declares it.</p>
   {% endfor %}
 {% endcall %}
@@ -191,7 +191,7 @@
   {% for d in item.found_in %}
   <div class="origin-link"><div class="origin-link-head"><a {{ ui.nav(d.path) }}><code>{{ db_place(d.path) }}</code></a>
     <span class="summary">linked by {{ d.how | join(", ") }}</span></div>
-    {% if d.differences %}<ul class="db-list">{% for x in d.differences %}<li>{{ x }}</li>{% endfor %}</ul>{% else %}<p class="summary">As the database has it.</p>{% endif %}</div>
+    {% if d.lines %}{{ ui.diff_lines(d.lines, d.names.a, d.names.b) }}{% else %}<p class="summary">As the database has it.</p>{% endif %}</div>
   {% else %}<p class="empty">No database its file describes holds it.</p>
   {% endfor %}
 {% endcall %}
