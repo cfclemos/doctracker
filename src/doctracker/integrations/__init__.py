@@ -1,4 +1,4 @@
-"""Integrations with the agents that use doctracker (Claude Code, Codex, OpenCode), and what they share."""
+"""Integrations with the agents that use doctracker (Claude Code, OpenCode), and what they share."""
 
 import shutil
 import sys

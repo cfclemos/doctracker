@@ -140,6 +140,21 @@ async def main_branch(top: Path) -> str:
     return ""
 
 
+async def create_branch(top: Path, name: str, base: str) -> str:
+    """Create a branch from another and check it out; changes not yet committed come along.
+
+    Args:
+        top: Top folder of the repository.
+        name: The new branch.
+        base: The branch it starts from, e.g. `main`.
+
+    Returns:
+        Empty when it was created, otherwise what git said.
+    """
+    code, output, errors = await _run(top, "switch", "-c", name, base)
+    return "" if code == 0 else (errors.strip() or output.strip())
+
+
 async def merge_branch(top: Path, branch: str, into: str) -> tuple[str | None, str]:
     """Merge a branch into another with a merge commit (`--no-ff`), leaving `into` checked out.
 

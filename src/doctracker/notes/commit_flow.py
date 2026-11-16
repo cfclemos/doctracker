@@ -12,6 +12,9 @@ review of commits made outside it.
    committed (`merge_ready`).
 4. `review_outside_commits` turns each commit not made by the flow into a task of the Reviews plan.
 
+Before all this, `start_branch` creates the branch of the work from main and records it on its plan,
+feature or task, which is how `merge_ready` knows the work the branch carries.
+
 The renames and moves of classes and functions are listed at the pre-commit and recorded in the
 rename registry for every commit, made by the flow (`record_renames`) or outside it.
 """
@@ -272,6 +275,47 @@ async def merge(notes: NoteStore, project_root: Path) -> dict:
     if merge_hash is None:
         return {"error": error}
     return {"merged": {"branch": branch, "into": into, "hash": merge_hash}}
+
+
+async def start_branch(notes: NoteStore, project_root: Path, item: str, name: str) -> dict:
+    """Create the branch of a piece of work from main, check it out and record it on its planner item.
+
+    Recorded on the item, the branch tells the post-commit which work it carries, so it is merged into
+    main once that work is done (`merge_ready`).
+
+    Args:
+        notes: The store.
+        project_root: Root of the project.
+        item: The plan, feature or task the branch is for: `plan:<id>`, `feature:<id>` or `task:<id>`.
+        name: The branch, e.g. `free-ports`.
+
+    Returns:
+        `branch`, `base` and `item`, or `error` with what went wrong (nothing is recorded then).
+
+    Raises:
+        ValueError: For an unknown item, or the Reviews plan.
+    """
+    kind, item_id = parse_item(item)
+    found = notes.get_item(item)
+    if kind == "plan" and found["fixed"]:
+        raise ValueError("The Reviews plan has no branch.")
+    name = name.strip()
+    top = await working.top_level(project_root)
+    if top is None:
+        return {"error": "The project is not in a git repository."}
+    base = await working.main_branch(top)
+    if not base:
+        return {"error": "The repository has no main (or master) branch to start from."}
+    error = await working.create_branch(top, name, base)
+    if error:
+        return {"error": error}
+    if kind == "plan":
+        notes.update_plan(item_id, branches=[*found["branches"], name])
+    elif kind == "feature":
+        notes.update_feature(item_id, branch=name)
+    else:
+        notes.update_task(item_id, branch=name)
+    return {"branch": name, "base": base, "item": item}
 
 
 def clean_done(notes: NoteStore, items: list[str]) -> dict:

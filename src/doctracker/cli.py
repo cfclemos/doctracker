@@ -10,7 +10,7 @@ from doctracker import __version__
 from doctracker.config import (CONFIG_PATH, Config, ensure_gitignore, free_ports, load_config, port_free,
                                project_files, write_config)
 from doctracker.extraction.languages import LANGUAGES, NO_SOURCES, language_of
-from doctracker.integrations import autostart, claude_code, codex, opencode
+from doctracker.integrations import autostart, claude_code, opencode
 
 
 @click.group()
@@ -128,7 +128,7 @@ def restart() -> None:
 @click.argument("event")
 @click.option("--url", help="Address of the server, as `start` wrote it; by default the one in the configuration.")
 def hook(event: str, url: str | None) -> None:
-    """Answer a Claude Code or Codex hook: read its event on stdin, print the context of that moment.
+    """Answer a Claude Code hook: read its event on stdin, print the context of that moment.
 
     \f
     Never fails: a hook that cannot answer prints nothing, so the agent goes on.
@@ -188,7 +188,7 @@ def _echo_sources(project_root: Path) -> None:
 
 
 def _write_integrations(project_root: Path, config: Config) -> None:
-    """Write the Claude Code and Codex hooks and MCP servers, and the OpenCode plugin when used; print where they went.
+    """Write the Claude Code hooks and MCP server, and the OpenCode plugin when used; print where they went.
 
     Args:
         project_root: Root of the project.
@@ -198,10 +198,6 @@ def _write_integrations(project_root: Path, config: Config) -> None:
     click.echo(f"Claude Code hooks: {settings.relative_to(project_root).as_posix()}")
     mcp_config = claude_code.write_mcp_config(project_root, _base_url(config))
     click.echo(f"Claude Code MCP server: {mcp_config.relative_to(project_root).as_posix()}")
-    codex_hooks = codex.write_hooks(project_root, _base_url(config))
-    click.echo(f"Codex hooks: {codex_hooks.relative_to(project_root).as_posix()}")
-    codex_config = codex.write_mcp_config(project_root, _base_url(config))
-    click.echo(f"Codex MCP server: {codex_config.relative_to(project_root).as_posix()}")
     if opencode.uses_opencode(project_root):
         plugin = opencode.write_plugin(project_root, _base_url(config))
         click.echo(f"OpenCode plugin: {plugin.relative_to(project_root).as_posix()}")
