@@ -353,7 +353,8 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
         committing, and the classes and functions renamed or moved since the last commit (`renames`):
         name each one in the message of the commit that holds it. Ask for the diffs of the files you need
         to look at with `diffs`. Read them with what was done in the session and propose to the user the commits: which files go together (a file
-        goes in one commit, whole), the message of each (what changed and why), and the tasks each one
+        goes in one commit, whole; one purpose per commit), the message of each (a subject saying what changed,
+        then a body saying why, built from the annotations of its tasks: reasons and causes), and the tasks each one
         carries out. Then call it with those groups: it lists what is missing (a task not approved,
         criteria not met, a file twice or without changes). Bring every problem to the user, who
         decides; adjust and check again. Commit only the groups the user approved.
@@ -405,6 +406,24 @@ def register_note_tools(mcp: MCPServer, notes: NoteStore, search: SearchEngine) 
         hashes = [made["hash"] for made in report["recorded"]]
         renames = await commit_flow.record_renames(notes, project_root, search.state.entities, hashes)
         return {**report, "renames": renames, "merge": await commit_flow.merge_if_ready(notes, project_root)}
+
+    @mcp.tool()
+    @refusals_reported
+    async def start_branch(item: str, name: str) -> dict:
+        """Create the branch of a piece of work from main, check it out and record it on its planner item.
+
+        Call it once the plan is recorded, before the first edit. With the branch on its item, the
+        post-commit merges the branch into main when that work is all done and committed. Changes not
+        yet committed come along to the new branch.
+
+        Args:
+            item: The plan, feature or task the branch is for, e.g. `plan:2`.
+            name: A short name for the work, e.g. `free-ports`.
+
+        Returns:
+            `branch`, `base` (main) and `item`, or `error` with git's message (nothing recorded then).
+        """
+        return await commit_flow.start_branch(notes, project_root, item, name)
 
     @mcp.tool()
     @refusals_reported
