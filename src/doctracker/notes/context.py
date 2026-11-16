@@ -18,17 +18,11 @@ CONTEXT_KINDS = ("session", "planning", "file", "commit", "edit")
 
 ENTER_PLAN_MODE = ("call EnterPlanMode when you have it; otherwise stop and ask the user to switch the session "
                    "to plan mode, and plan only once it is.")
-"""How to enter plan mode, which only Claude Code's agent can do by itself (Codex and OpenCode switch by the user)."""
+"""How to enter plan mode, which only Claude Code's agent can do by itself (in OpenCode the user switches)."""
 
-RULE = (
-    "This project keeps its plans, guidelines and memory in doctracker (MCP server \"doctracker\"). "
-    "Record notes, decisions and progress there (create_note, annotate_task, update_task), not in files "
-    "or local memory. Before planning, changing code or writing a note, call recall(query). "
-    "Before writing or changing code or docstrings, call documentation_guide and follow it. "
-    "Before changing code, or analysing a change, judge whether it needs planning (new behaviour, several "
-    "files, a design choice, or an open plan it touches); if it does, plan in plan mode first: " + ENTER_PLAN_MODE
-)
-"""The first lines of every session: where everything is kept and how to find it."""
+RULE = ("This project keeps its plans, guidelines and memory in doctracker (MCP server \"doctracker\"). "
+        "Before planning or changing code, read workflow_guide and follow its steps.")
+"""The first lines of every session (and the MCP server's instructions): where everything is kept, and the guide."""
 
 NO_TASK_IN_PROGRESS = "No task is in progress: set one to doing (update_task) before changing planned code."
 """Said with the notes of a file while no task is being worked on."""

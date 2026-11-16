@@ -13,11 +13,15 @@ from doctracker.history import commit_diff, read_branch_graph
 from doctracker.notes.context import CONTEXT_KINDS, context_for
 from doctracker.search import AGENT_WAIT_SECONDS, DEFAULT_LIMIT, SearchEngine
 from doctracker.server.guide import documentation_guide as build_guide
+from doctracker.server.guide import workflow_guide as build_workflow
 from doctracker.server.state import DocState
 from doctracker.wiki.pages import summary
 
 GUIDE_URI = "doctracker://guide"
 """URI of the MCP resource with the documentation guide."""
+
+WORKFLOW_URI = "doctracker://workflow"
+"""URI of the MCP resource with the workflow guide."""
 
 
 def register_tools(mcp: MCPServer, state: DocState, config: Config, search: SearchEngine, connections: ConnectionStore) -> None:
@@ -325,6 +329,23 @@ Returns:
         set_config_value(project_root, config, "vllm_url", url.rstrip("/") or None, section="embeddings")
         await embeddings.reset()
         return embeddings.status()
+
+    @mcp.tool()
+    def workflow_guide() -> str:
+        """Explain how to work in this project: recall, plan, branch, work, commit, clean and merge.
+
+        Read it at the start of a session, before planning or changing code, and follow its steps.
+
+        Returns:
+            The guide in Markdown.
+        """
+        return build_workflow()
+
+    @mcp.resource(WORKFLOW_URI, name="workflow-guide", title="How to work in a project documented by doctracker",
+                  mime_type="text/markdown")
+    def workflow_resource() -> str:
+        """How to work in this project: recall, plan, branch, work, commit, clean and merge."""
+        return build_workflow()
 
     @mcp.tool()
     def documentation_guide() -> str:

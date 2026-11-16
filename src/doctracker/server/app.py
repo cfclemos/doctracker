@@ -16,6 +16,7 @@ from doctracker.config import CATALOG_DATABASE_PATH, NOTES_DATABASE_PATH, Config
 from doctracker.databases import CatalogStore, ConnectionStore, keep_collected
 from doctracker.embeddings.service import EmbeddingService
 from doctracker.notes import NoteStore
+from doctracker.notes.context import RULE
 from doctracker.search import SearchEngine
 from doctracker.server.database_tools import register_database_tools
 from doctracker.server.hooks import hook_routes
@@ -67,16 +68,7 @@ def create_app(project_root: Path, config: Config) -> Starlette:
     mcp = MCPServer(
         name="doctracker",
         version=__version__,
-        instructions=(
-            "This project keeps its plans, guidelines and memory here: record notes, decisions and progress "
-            "with these tools (create_note, annotate_task, update_task), not in files or local memory, and call "
-            "recall(query) before planning, changing code or writing a note. "
-            "Technical documentation of this project, built from its code. "
-            "Use list_entities to explore and get_entity for details. To find entities, use "
-            "hybrid_search (words and meaning), bm25_search (words) or semantic_search (meaning). "
-            "Before writing or changing code or docstrings, call documentation_guide (also available as the "
-            "doctracker://guide resource) and follow it."
-        ),
+        instructions=RULE,
     )
     connections = ConnectionStore(project_root)
     register_tools(mcp, state, config, search, connections)

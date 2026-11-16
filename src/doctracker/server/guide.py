@@ -1,4 +1,4 @@
-"""The documentation guide agents read through the MCP server."""
+"""The guides agents read through the MCP server: how to work, and how to document code."""
 
 from importlib.resources import files
 
@@ -74,3 +74,12 @@ def documentation_guide(config: Config) -> str:
         private_members="shown in the wiki" if config.show_private else "hidden from the wiki",
         example=EXAMPLES.get(config.docstring_style, EXAMPLES["google"]),
     )
+
+
+def workflow_guide() -> str:
+    """The workflow guide in Markdown: the steps of the work, from recall and plan to commit, clean and merge.
+
+    Returns:
+        The guide.
+    """
+    return files("doctracker.server").joinpath("workflow.md").read_text(encoding="utf-8")
